@@ -221,6 +221,12 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_SFA_STAGED_GRAPH": lambda: bool(
         int(os.getenv("VLLM_ASCEND_SFA_STAGED_GRAPH", "0"))
     ),
+    # Experimental singleton SFA path: capture and replay the complete target
+    # forward, including sparse loads, as one ACL graph. Disabled by default;
+    # it requires staged SFA, one request, and a worker restart.
+    "VLLM_ASCEND_SFA_FULL_GRAPH": lambda: bool(
+        int(os.getenv("VLLM_ASCEND_SFA_FULL_GRAPH", "0"))
+    ),
     # Independently capture the MTP drafter as a FULL graph while the target
     # model uses staged SFA. Disabled by default; the target staged graph and
     # resident scratch reuse do not depend on this opt-in. Non-sensitive; read

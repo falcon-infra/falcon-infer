@@ -628,7 +628,16 @@ def staged_sfa_graph_capture_sizes(
             "Staged SFA request capture sizes exceed scheduler capacity "
             f"for query_width={query_width}: {oversized}."
         )
-    return tuple(size * query_width for size in sizes)
+    token_sizes = tuple(size * query_width for size in sizes)
+    if envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH:
+        if sizes != (1,) or query_width not in (1, 2):
+            raise ValueError(
+                "SFA_FULL_GRAPH requires singleton capture and MTP width 1 or 2"
+            )
+        # Capture Q1 as well as the configured MTP shape during startup. A
+        # live request must never trigger an additional graph capture.
+        return tuple(sorted({1, *token_sizes}))
+    return token_sizes
 
 
 def _max_aclgraph_keys(
