@@ -16,6 +16,7 @@ import torch
 import torch.distributed as dist
 
 from vllm import envs
+from vllm import envs_ascend
 from vllm.compilation.cuda_graph import CUDAGraphStat
 from vllm.config import VllmConfig
 from vllm.distributed.kv_events import EventPublisherFactory, KVEventBatch
@@ -194,8 +195,6 @@ class Scheduler(SchedulerInterface):
         include_finished_set: bool = False,
         log_stats: bool = False,
     ) -> None:
-
-        from vllm import envs_ascend
 
         if envs_ascend.VLLM_ASCEND_BALANCE_SCHEDULING:
             self.balance_queue = [
