@@ -12,8 +12,9 @@ export VLLM_ASCEND_SFA_STAGED_GRAPH_CAPTURE_SIZES=1
 export VLLM_ASCEND_SFA_FULL_GRAPH=1
 ```
 
-The initial contract is DP=1 and max-num-seqs=1. Q1 and configured MTP-Q2
-shapes are captured at startup; unsupported decode routes fail instead of
-silently falling back to per-layer callbacks. Host tests do not establish NPU
+The graph owner supports bounded Q1/Q2 request lanes, internal TP/DP
+coordination, and a separate attention-only padding lane. Q1 and configured
+MTP-Q2 shapes are captured at startup; unsupported decode routes fail instead
+of silently falling back to per-layer callbacks. Host tests do not establish NPU
 capture, output parity, ABI, or performance acceptance; those remain an
 intranet validation gate.

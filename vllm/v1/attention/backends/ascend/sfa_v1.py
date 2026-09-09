@@ -103,6 +103,11 @@ from vllm.v1.attention.backends.ascend.mtp_dw_diag import (
     scratch_live_slot_aliases,
     scratch_target_safety,
 )
+from vllm.v1.attention.backends.ascend.sfa_graph_layout import (
+    FullGraphAttentionBuffers,
+    pack_decode_lanes,
+    unpack_decode_lanes,
+)
 from vllm.v1.attention.backends.ascend.target_sfa_diagnostics import (
     TARGET_SFA_DIAG_SCHEMA_VERSION,
     active_resident_state_snapshot,
@@ -1265,6 +1270,7 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             max_num_reqs + 1, dtype=torch.int32, device=device
         )
         self.actual_seq_lengths_key = torch.empty_like(self.actual_seq_lengths_query)
+        self._full_graph_tables = None
         # Staged SHRINK_LATENT=2 graph input. The address must survive metadata
         # rebuilds across decode steps, so keep one builder-owned device buffer
         # and overwrite only its contents before Graph A replay.
@@ -1659,6 +1665,32 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
         cum_query_lens = common_attn_metadata.query_start_loc[1 : num_reqs + 1]
         seq_lens = common_attn_metadata.seq_lens[:num_reqs]
         seq_lens_cpu = common_attn_metadata.seq_lens_cpu[:num_reqs]
+
+        if getattr(common_attn_metadata, "sfa_full_graph", False):
+            # Add one attention-only padding sequence. Real request lengths
+            # remain unchanged so causal Q1/Q2 attention is not extended.
+            if self._full_graph_tables is None:
+                self._full_graph_tables = FullGraphAttentionBuffers(
+                    self._dsa_max_num_reqs,
+                    block_table,
+                    indexer_block_table,
+                    cum_query_lens,
+                    seq_lens,
+                )
+            (
+                block_table,
+                indexer_block_table,
+                cum_query_lens,
+                seq_lens,
+                seq_lens_cpu,
+            ) = self._full_graph_tables.update(
+                block_table,
+                indexer_block_table,
+                cum_query_lens,
+                seq_lens,
+                seq_lens_cpu,
+                num_input_tokens,
+            )
 
         cos, sin = get_cos_and_sin_mla(input_positions, True)
 
@@ -3006,6 +3038,8 @@ class AscendSFAImpl(MLAAttentionImpl):
         if authorized_key is None or authorized_key.token_capacity != token_capacity:
             return "the runner did not authorize this staged SFA token capacity"
         graph_key = authorized_key
+        bounded_decode = graph_key.query_profile == StagedSFAQueryProfile.DECODE_BOUNDED
+        attention_capacity = graph_key.request_capacity + int(bounded_decode)
         if graph_key.max_query_len > 2:
             return "staged sparse-index preparation only supports MTP=1 or MTP=2"
         if graph_key.query_profile == StagedSFAQueryProfile.DECODE_Q1:
@@ -3024,7 +3058,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                 return (
                     "the fixed-width MTP staged SFA graph key is structurally invalid"
                 )
-        else:
+        elif not bounded_decode:
             return "the staged SFA query profile is unsupported"
 
         batch_descriptor = getattr(
@@ -3047,7 +3081,9 @@ class AscendSFAImpl(MLAAttentionImpl):
             if graph_key.query_profile == StagedSFAQueryProfile.DECODE_Q1
             else AscendAttentionState.SpecDecoding
         )
-        if attn_metadata.attn_state != expected_state:
+        if attn_metadata.attn_state != expected_state and not (
+            bounded_decode and attn_metadata.attn_state == AscendAttentionState.DecodeOnly
+        ):
             return "the attention state does not match the staged query profile"
         actual_rows = int(attn_metadata.num_actual_tokens)
         actual_requests = len(attn_metadata.decode_request_ids_compact or ())
@@ -3058,7 +3094,9 @@ class AscendSFAImpl(MLAAttentionImpl):
             or attn_metadata.num_decode_tokens != actual_rows
             or actual_requests <= 0
             or actual_requests > graph_key.request_capacity
-            or actual_rows != actual_requests * graph_key.max_query_len
+            or (not bounded_decode and actual_rows != actual_requests * graph_key.max_query_len)
+            or actual_rows < actual_requests
+            or actual_rows > actual_requests * graph_key.max_query_len
         ):
             return "the real decode layout does not match the fixed staged graph width"
         if self.dsa_shrink_latent != 2:
@@ -3155,16 +3193,16 @@ class AscendSFAImpl(MLAAttentionImpl):
         if (
             attn_metadata.cum_query_lens is None
             or attn_metadata.seq_lens is None
-            or int(attn_metadata.cum_query_lens.shape[0]) != graph_key.request_capacity
-            or int(attn_metadata.seq_lens.shape[0]) != graph_key.request_capacity
+            or int(attn_metadata.cum_query_lens.shape[0]) != attention_capacity
+            or int(attn_metadata.seq_lens.shape[0]) != attention_capacity
         ):
             return "the request metadata does not match the graph key"
         if (
             attn_metadata.block_table is None
             or attn_metadata.indexer_block_table is None
-            or int(attn_metadata.block_table.shape[0]) != graph_key.request_capacity
+            or int(attn_metadata.block_table.shape[0]) != attention_capacity
             or int(attn_metadata.indexer_block_table.shape[0])
-            != graph_key.request_capacity
+            != attention_capacity
         ):
             return "the native block-table row count does not match the graph key"
         if not staged_dummy_run and not attn_metadata.need_sparse_lmcache_payload:
@@ -3248,16 +3286,23 @@ class AscendSFAImpl(MLAAttentionImpl):
         else:
             seq_rows = np.asarray(seq_lens_cpu).reshape(-1)
         expected_request_rows = np.full(token_capacity, -1, dtype=np.int64)
+        widths = graph_key.max_query_len
+        if bounded_decode:
+            live_rows = request_rows[:actual_rows]
+            if np.any(live_rows < 0) or np.any(live_rows >= actual_requests):
+                return "invalid bounded-decode request ownership"
+            widths = np.bincount(live_rows, minlength=actual_requests)
+            if np.any(widths < 1) or np.any(widths > graph_key.max_query_len):
+                return "bounded decode exceeds the captured query width"
         expected_request_rows[:actual_rows] = np.repeat(
-            np.arange(actual_requests, dtype=np.int64),
-            graph_key.max_query_len,
+            np.arange(actual_requests, dtype=np.int64), widths
         )
         if (
             prompt_rows.size != token_capacity
             or np.any(prompt_rows[actual_rows:] != 0)
             or request_rows.size != token_capacity
             or not np.array_equal(request_rows, expected_request_rows)
-            or seq_rows.size != graph_key.request_capacity
+            or seq_rows.size != attention_capacity
         ):
             return "the CPU row metadata does not match the staged graph layout"
         return None
@@ -3514,6 +3559,26 @@ class AscendSFAImpl(MLAAttentionImpl):
                 # skip-layer graph As in the same step read fresh indices from
                 # the stable shared buffer.
                 self._update_indexcache_topk_indices(topk_indices)
+        graph_key = getattr(get_forward_context(), "staged_sfa_graph_key", None)
+        bounded_decode = (
+            graph_key is not None
+            and graph_key.query_profile == StagedSFAQueryProfile.DECODE_BOUNDED
+        )
+        if bounded_decode:
+            original_requests = row_req_indices
+            request_block_table = request_block_table[: graph_key.request_capacity]
+            (
+                topk_indices,
+                remap_boundary,
+                row_req_indices,
+                inverse,
+            ) = pack_decode_lanes(
+                topk_indices,
+                remap_boundary,
+                row_req_indices,
+                actual_seq_lengths_query[: graph_key.request_capacity],
+                graph_key.max_query_len,
+            )
         staged_mtp = int(topk_indices.shape[0]) // int(request_block_table.shape[0])
         (
             topk_indices,
@@ -3541,6 +3606,8 @@ class AscendSFAImpl(MLAAttentionImpl):
         assert selected_packed is not None
         assert selected_count_values is not None
         assert target_slot_mapping is not None
+        if bounded_decode:
+            topk_indices = unpack_decode_lanes(topk_indices, inverse, original_requests)
         return (
             ql_nope,
             q_pe,
@@ -3696,6 +3763,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         self._dsa_idx_cache_t = None
         self._staged_sfa_bridge_buffers = None
         self._full_graph_transfer = None
+        self._full_graph_transfers = {}
 
     def prepare_full_graph_layer(
         self,
@@ -3735,7 +3803,11 @@ class AscendSFAImpl(MLAAttentionImpl):
         )
         if context.staged_sfa_graph_dummy_run:
             state.remap_boundary = boundary
-        transfer = getattr(self, "_full_graph_transfer", None)
+        transfers = getattr(self, "_full_graph_transfers", None)
+        if transfers is None:
+            transfers = self._full_graph_transfers = {}
+        capacity = context.staged_sfa_graph_key.request_capacity
+        transfer = transfers.get(capacity)
         if transfer is None:
             if not context.staged_sfa_graph_dummy_run:
                 raise RuntimeError(
@@ -3746,12 +3818,11 @@ class AscendSFAImpl(MLAAttentionImpl):
                 metadata.decode_target_slot_mapping,
                 lmcache_get_or_create_config().chunk_size,
                 max_tokens,
+                request_capacity=capacity,
             )
-            self._full_graph_transfer = transfer
-        if source is not None:
-            transfer.bind(source, layer_id)
-        else:
-            transfer.clear_source()
+            transfers[capacity] = transfer
+        self._full_graph_transfer = transfer
+        transfer.bind_batch(source or (), layer_id)
         # The root replay is fenced before graph-external saves; do not expose
         # an event recorded only during startup eager warmup.
         metadata.reshape_cache_event = None
@@ -4427,8 +4498,11 @@ class AscendSFAImpl(MLAAttentionImpl):
             if attn_metadata is None or graph_key is None:
                 return
             if getattr(context, "sfa_full_graph_active", False):
+                capacity = graph_key.request_capacity
                 self._full_graph_transfer.load(
-                    selected_packed, selected_counts, target_slots
+                    selected_packed[:capacity],
+                    selected_counts[:capacity],
+                    target_slots[:capacity],
                 )
                 return
             if getattr(context, "staged_sfa_graph_dummy_run", False):

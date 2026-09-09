@@ -577,6 +577,14 @@ def staged_sfa_graph_configured(vllm_config: VllmConfig) -> bool:
     )
 
 
+def sfa_full_graph_enabled(vllm_config: VllmConfig) -> bool:
+    """Return the opt-in graph state, except for explicit eager workers."""
+    return bool(
+        envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH
+        and not getattr(vllm_config.model_config, "enforce_eager", False)
+    )
+
+
 def staged_sfa_graph_capture_sizes(
     vllm_config: VllmConfig,
 ) -> tuple[int, ...]:
@@ -629,14 +637,8 @@ def staged_sfa_graph_capture_sizes(
             f"for query_width={query_width}: {oversized}."
         )
     token_sizes = tuple(size * query_width for size in sizes)
-    if envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH:
-        if sizes != (1,) or query_width not in (1, 2):
-            raise ValueError(
-                "SFA_FULL_GRAPH requires singleton capture and MTP width 1 or 2"
-            )
-        # Capture Q1 as well as the configured MTP shape during startup. A
-        # live request must never trigger an additional graph capture.
-        return tuple(sorted({1, *token_sizes}))
+    if envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH and query_width not in (1, 2):
+        raise ValueError("SFA_FULL_GRAPH supports at most one MTP draft token")
     return token_sizes
 
 

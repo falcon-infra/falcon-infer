@@ -221,9 +221,10 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_SFA_STAGED_GRAPH": lambda: bool(
         int(os.getenv("VLLM_ASCEND_SFA_STAGED_GRAPH", "0"))
     ),
-    # Experimental singleton SFA path: capture and replay the complete target
-    # forward, including sparse loads, as one ACL graph. Disabled by default;
-    # it requires staged SFA, one request, and a worker restart.
+    # Experimental single target-forward ACL replay, including sparse loads.
+    # 0 (default): original staged islands; 1: one root graph. Requires staged
+    # SFA and bounded Q1/Q2 requests, including internal TP/DP/EP. Explicit
+    # enforce_eager takes precedence (P nodes). Non-sensitive; restart required.
     "VLLM_ASCEND_SFA_FULL_GRAPH": lambda: bool(
         int(os.getenv("VLLM_ASCEND_SFA_FULL_GRAPH", "0"))
     ),
