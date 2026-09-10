@@ -4972,7 +4972,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         if profile_seq_lens is not None
                         else SEQ_LEN_WITH_MAX_PA_WORKSPACE
                     ),
-                    query_width=max_query_len,
+                    query_width=staged_query_width,
                 )
             elif profile_seq_lens is not None:
                 seq_lens = profile_seq_lens
