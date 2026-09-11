@@ -18,3 +18,12 @@ MTP-Q2 shapes are captured at startup; unsupported decode routes fail instead
 of silently falling back to per-layer callbacks. Host tests do not establish NPU
 capture, output parity, ABI, or performance acceptance; those remain an
 intranet validation gate.
+
+Each parity engine explicitly releases its cache connector and Ascend process
+groups after generation, shuts down the engine, and waits for its identified
+workers to exit before the next engine starts. A release/exit failure aborts
+the comparison; the driver does not kill unrelated processes or change HCCL
+ports. CPU process-lifecycle regressions are covered by
+`tests/ut/tools/test_sfa_parity_shutdown.py` and
+`tests/ut/attention/test_sfa_parity_worker_shutdown.py`. These tests do not
+verify native HCCL port release on NPU hardware.
