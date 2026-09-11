@@ -27,3 +27,13 @@ ports. CPU process-lifecycle regressions are covered by
 `tests/ut/tools/test_sfa_parity_shutdown.py` and
 `tests/ut/attention/test_sfa_parity_worker_shutdown.py`. These tests do not
 verify native HCCL port release on NPU hardware.
+
+With `--compare-output`, the driver also reports descriptive `[SFA_STATS]`
+absolute distributions for every aligned decode stage: `diff_abs`,
+`eager_abs`, and `graph_abs`, including mean, population variance, maximum and
+nonzero count. Statistics are element-weighted across aligned steps and TP
+ranks, exclude padded or differently selected logical KV entries, and never
+use a floating-point tolerance gate. Alignment stops pooling after the first
+input/history divergence and reports partial coverage. `--trace-residual` may
+be combined with `--compare-output` for additional norm/attention stages; it
+can affect compiler fusion and remains diagnostic rather than acceptance.
