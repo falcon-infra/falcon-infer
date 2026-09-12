@@ -502,6 +502,8 @@ def test_short_context_remains_an_explicit_cli_override(driver, monkeypatch):
 def diagnostic_workers(mode="full", steps=3):
     metrics = {"count": steps, "total_ms": 12.0, "mean_ms": 4.0, "std_ms": 1.0, "max_ms": 6.0}
     names = ["worker.execute", "worker.sample", "target.forward"]
+    if mode == "full":
+        names.append("signature.validate")
     names.extend(f"metadata.L{i}" if mode == "full" else f"retrieve.L{i}" for i in range(8))
     if mode == "full":
         names.append("root.replay_submit")

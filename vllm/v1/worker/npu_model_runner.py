@@ -3450,6 +3450,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             and getattr(context, "staged_sfa_graph_key", None) is not None
         ):
             graph_inputs: dict[str, Any] = {}
+            prepared_call = None
             graph_kwargs = dict(
                 input_ids=input_ids,
                 positions=positions,
@@ -3470,18 +3471,20 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             request_ids=request_ids,
                             frontiers=tuple(context.staged_sfa_route.frontiers),
                         )
+                    metadata_checks = {}
                     for name, impl in impls:
                         graph_inputs[name] = impl.prepare_full_graph_layer(
-                            name, self.model_config.max_model_len, bind_source=False
+                            name,
+                            self.model_config.max_model_len,
+                            bind_source=False,
+                            metadata_checks=metadata_checks,
                         )
                     self._sfa_full_graph.bind_sources(
                         source,
                         request_ids,
                         lambda: tuple(impl._full_graph_transfer for _, impl in impls),
                     )
-                    self._sfa_full_graph.validate_inputs(
-                        graph_inputs=graph_inputs, **graph_kwargs
-                    )
+                    prepared_call = self._sfa_full_graph.prepare_run(graph_inputs=graph_inputs, **graph_kwargs)
                 except Exception as exc:
                     local_error = exc
                 if (
@@ -3510,8 +3513,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         ) from local_error
             output = self._sfa_full_graph.run(
                 self._run_sfa_full_graph_target,
-                graph_inputs=graph_inputs,
-                **graph_kwargs,
+                **({"prepared": prepared_call} if prepared_call is not None else graph_kwargs),
             )
             if not getattr(self, "_sfa_full_graph_live_replay_logged", False) and not context.staged_sfa_graph_dummy_run:
                 self._sfa_full_graph_live_replay_logged = True

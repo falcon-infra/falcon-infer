@@ -3001,6 +3001,8 @@ class AscendSFAImpl(MLAAttentionImpl):
         hidden_states: torch.Tensor,
         kv_cache: tuple[torch.Tensor, ...],
         attn_metadata: M,
+        *,
+        metadata_checks: dict | None = None,
     ) -> str | None:
         """Return why this step cannot use its authorized fixed-layout graph."""
         forward_context = get_forward_context()
@@ -3076,29 +3078,8 @@ class AscendSFAImpl(MLAAttentionImpl):
             return "the PIECEWISE descriptor does not match the staged SFA graph key"
 
         pass  # Unsupported P4 branch removed.
-        expected_state = (
-            AscendAttentionState.DecodeOnly
-            if graph_key.query_profile == StagedSFAQueryProfile.DECODE_Q1
-            else AscendAttentionState.SpecDecoding
-        )
-        if attn_metadata.attn_state != expected_state and not (
-            bounded_decode and attn_metadata.attn_state == AscendAttentionState.DecodeOnly
-        ):
-            return "the attention state does not match the staged query profile"
         actual_rows = int(attn_metadata.num_actual_tokens)
         actual_requests = len(attn_metadata.decode_request_ids_compact or ())
-        if (
-            attn_metadata.num_input_tokens != token_capacity
-            or actual_rows <= 0
-            or actual_rows > token_capacity
-            or attn_metadata.num_decode_tokens != actual_rows
-            or actual_requests <= 0
-            or actual_requests > graph_key.request_capacity
-            or (not bounded_decode and actual_rows != actual_requests * graph_key.max_query_len)
-            or actual_rows < actual_requests
-            or actual_rows > actual_requests * graph_key.max_query_len
-        ):
-            return "the real decode layout does not match the fixed staged graph width"
         if self.dsa_shrink_latent != 2:
             return "SHRINK_LATENT must be 2"
         if not staged_dummy_run and not staged_sfa_connector_supports_sparse_load():
@@ -3177,6 +3158,19 @@ class AscendSFAImpl(MLAAttentionImpl):
             return "the native Q-LoRA preprocessing path is unavailable"
         if self.q_a_layernorm is None:
             return "q_a_layernorm is unavailable"
+
+        check_key = (type(self), id(attn_metadata), graph_key, bool(self.dsa_resident_cache), staged_dummy_run)
+        if metadata_checks is not None and check_key in metadata_checks:
+            checked_metadata, reason = metadata_checks[check_key]
+            if checked_metadata is attn_metadata:
+                return reason
+        reason = self._cross_layer_metadata_ineligible_reason(
+            attn_metadata, graph_key, staged_dummy_run=staged_dummy_run
+        )
+        if metadata_checks is not None:
+            metadata_checks[check_key] = (attn_metadata, reason)
+        if reason is not None:
+            return reason
 
         required_token_tensors = (
             attn_metadata.cos,
@@ -3305,6 +3299,40 @@ class AscendSFAImpl(MLAAttentionImpl):
             or seq_rows.size != attention_capacity
         ):
             return "the CPU row metadata does not match the staged graph layout"
+        return None
+
+    def _cross_layer_metadata_ineligible_reason(
+        self,
+        attn_metadata: M,
+        graph_key: StagedSFAGraphKey,
+        *,
+        staged_dummy_run: bool,
+    ) -> str | None:
+        """Check shared attention metadata once per forward."""
+        bounded_decode = graph_key.query_profile == StagedSFAQueryProfile.DECODE_BOUNDED
+        expected_state = (
+            AscendAttentionState.DecodeOnly
+            if graph_key.query_profile == StagedSFAQueryProfile.DECODE_Q1
+            else AscendAttentionState.SpecDecoding
+        )
+        if attn_metadata.attn_state != expected_state and not (
+            bounded_decode and attn_metadata.attn_state == AscendAttentionState.DecodeOnly
+        ):
+            return "the attention state does not match the staged query profile"
+        actual_rows = int(attn_metadata.num_actual_tokens)
+        actual_requests = len(attn_metadata.decode_request_ids_compact or ())
+        if (
+            attn_metadata.num_input_tokens != graph_key.token_capacity
+            or actual_rows <= 0
+            or actual_rows > graph_key.token_capacity
+            or attn_metadata.num_decode_tokens != actual_rows
+            or actual_requests <= 0
+            or actual_requests > graph_key.request_capacity
+            or (not bounded_decode and actual_rows != actual_requests * graph_key.max_query_len)
+            or actual_rows < actual_requests
+            or actual_rows > actual_requests * graph_key.max_query_len
+        ):
+            return "the real decode layout does not match the fixed staged graph width"
         return None
 
     def _submit_sfa_save_operations(
@@ -3766,7 +3794,14 @@ class AscendSFAImpl(MLAAttentionImpl):
         self._full_graph_transfers = {}
 
     def prepare_full_graph_layer(
-        self, layer_name: str, max_tokens: int, source: Any = None, layer_id: int = 0, *, bind_source: bool = True
+        self,
+        layer_name: str,
+        max_tokens: int,
+        source: Any = None,
+        layer_id: int = 0,
+        *,
+        bind_source: bool = True,
+        metadata_checks: dict | None = None,
     ) -> dict[str, Any]:
         """Validate live metadata; optionally bind source tables before replay."""
         # The native LMCache owner is loaded lazily because graph profiling may
@@ -3785,6 +3820,7 @@ class AscendSFAImpl(MLAAttentionImpl):
             ],
             state.runtime[1],
             metadata,
+            metadata_checks=metadata_checks,
         )
         if reason is not None:
             raise RuntimeError(
