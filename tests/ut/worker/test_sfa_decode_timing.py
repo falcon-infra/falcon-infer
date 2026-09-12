@@ -240,6 +240,48 @@ def test_sampling_hooks_use_real_scoped_recorder_and_restore_on_failure(timing_m
     assert runner._sample is sample and sampler.sample is original_method
 
 
+@pytest.mark.parametrize("supported", [False, True])
+def test_worker_reads_graph_events_only_after_request_fence(supported):
+    events = []
+    bounds = object()
+    timing = SimpleNamespace(
+        close=lambda: events.append("restore"),
+        report=lambda: {},
+        last_target_events=bounds,
+    )
+    path = ROOT / "vllm/v1/worker/sfa_benchmark_worker.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "SFABenchmarkWorker")
+    method = next(node for node in cls.body if getattr(node, "name", "") == "benchmark_stop_decode_timing")
+    module = ast.parse("from __future__ import annotations")
+    module.body.append(method)
+
+    def graph_report(actual_bounds, *, full):
+        assert events == ["restore", "sync"]
+        assert actual_bounds is bounds and full
+        return {"status": "complete"}
+
+    namespace = {
+        "torch": SimpleNamespace(npu=SimpleNamespace(synchronize=lambda: events.append("sync"))),
+        "envs": SimpleNamespace(VLLM_ASCEND_SFA_FULL_GRAPH=True),
+    }
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+    support = {"status": "supported"}
+    worker = SimpleNamespace(
+        _decode_timing=timing,
+        _graph_phase_timing=SimpleNamespace(report=graph_report) if supported else None,
+        _graph_phase_support=support if supported else {"status": "unavailable", "reason": "event recorder null"},
+        _decode_timing_root_start=0,
+        _decode_timing_source_start=0,
+        model_runner=SimpleNamespace(_sfa_full_graph=SimpleNamespace(replay_count=3, source_binding_count=1)),
+        benchmark_process_info=lambda: {"rank": 0},
+    )
+    if not supported:
+        del timing.last_target_events
+    result = namespace["benchmark_stop_decode_timing"](worker)
+    assert result["graph_phases"] == ({"status": "complete"} if supported else worker._graph_phase_support)
+
+
 @pytest.mark.parametrize("processed", [False, True])
 @pytest.mark.parametrize("logprobs", [None, 1])
 def test_instrumented_rejection_forward_matches_sibling_baseline_on_cpu(processed, logprobs):
