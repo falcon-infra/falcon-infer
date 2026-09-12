@@ -56,6 +56,15 @@ output tokens. It does not install parity probes, snapshots, checkpoint
 restore, per-layer fences or replacement sampling. Prefill is excluded from
 decode timing.
 
+Defaults are now zero extra warmups and one measured request per mode
+(`--warmups 0 --repeats 1`). One-request TPOT reports `std=null`/`n/a`; it is a
+quick comparison, not a multi-request stability estimate. With `--diagnose`,
+that same request supplies inline diagnostics and TPOT includes instrumentation
+overhead; explicit multi-request runs keep diagnostics as a separate request.
+Instrumented and uninstrumented results cannot be compared together.
+
+To explicitly restore the longer benchmark, use `--warmups 1 --repeats 5`.
+
 TPOT is measured at the offline engine output boundary, from the first
 committed-token emission to the last, divided by additional committed tokens.
 It includes scheduling, IPC, MTP, sampling and cache work. The report prints
@@ -89,14 +98,18 @@ For profiler-free request diagnostics, use a separate 5000-token run:
 python tools/sfa_graph_benchmark.py --prompt-tokens 5000 --diagnose 2>&1 | tee log.log
 ```
 
-`--diagnose` is mutually exclusive with `--profile`. Normal warmup and TPOT
-requests remain uninstrumented; only one later request receives temporary
-host/current-stream timing wrappers, which are restored afterward. Scheduler
-history excludes all chunked-prefill steps, including a final one-token Q1
-chunk. Timing stop and synchronization happen after the request, with bounded
-event storage and `event_drops` reporting partial stream coverage. Results are
-printed as compact `[SFA_TIMING]` lines and saved separately from TPOT JSON;
-they are diagnostics, not performance acceptance or pure kernel timings.
+`--diagnose` is mutually exclusive with `--profile`. With the defaults, each
+engine runs only one 512-token generation, and temporary timing wrappers
+collect statistics during that same request; there is no hidden warmup or
+second diagnostic generation. Both the log and `comparison.json` flag that
+TPOT includes diagnostic overhead, so it is not a clean performance
+measurement. With explicit `--warmups 1 --repeats 5`, diagnostics instead run
+once after the ordinary measurements. Scheduler history excludes all
+chunked-prefill steps, including a final one-token Q1 chunk. Timing stop and
+synchronization happen after the request, with bounded event storage and
+`event_drops` reporting partial stream coverage. Results are printed as compact
+`[SFA_TIMING]` lines and saved separately from TPOT JSON; they are diagnostics,
+not performance acceptance or pure kernel timings.
 
 Full-graph validation is now deduplicated only within one forward. The runner
 creates a single-use `prepare_run()` handoff before the existing error

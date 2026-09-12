@@ -188,12 +188,18 @@ def distribution(values: list[float]) -> dict:
     if not values or any(not math.isfinite(v) or v <= 0 for v in values):
         raise ValueError("Timing samples must be finite and positive")
     return {
+        "count": len(values),
         "mean": statistics.mean(values),
         "median": statistics.median(values),
-        "std": statistics.pstdev(values),
+        "std": statistics.pstdev(values) if len(values) > 1 else None,
         "min": min(values),
         "max": max(values),
     }
+
+
+def single_request_diagnostics(args) -> bool:
+    """Collect diagnostics on the sole request, without a hidden second run."""
+    return args.diagnose and args.warmups == 0 and args.repeats == 1
 
 
 def diagnose_request(llm, args, ordinal: int) -> dict:
@@ -202,7 +208,9 @@ def diagnose_request(llm, args, ordinal: int) -> dict:
     workers = None
     try:
         attempted = True
-        llm.collective_rpc("benchmark_start_decode_timing", args=(args.prompt_tokens,), timeout=ENGINE_SHUTDOWN_TIMEOUT)
+        llm.collective_rpc(
+            "benchmark_start_decode_timing", args=(args.prompt_tokens,), timeout=ENGINE_SHUTDOWN_TIMEOUT
+        )
         request = generate_request(llm, args, ordinal)
     finally:
         if attempted:
@@ -238,7 +246,11 @@ def diagnose_request(llm, args, ordinal: int) -> dict:
         raise RuntimeError("Decode step counts differ across TP ranks")
     return {
         "mode": args.child,
-        "scope": "separate instrumented decode request; not a performance sample; no profiler",
+        "scope": (
+            "single instrumented decode request; TPOT includes timing overhead; no profiler"
+            if single_request_diagnostics(args)
+            else "separate instrumented decode request; not a performance sample; no profiler"
+        ),
         "request": request,
         "workers": sorted(workers, key=lambda worker: worker["rank"]),
     }
@@ -273,10 +285,16 @@ def print_decode_timing(report: dict) -> None:
         metrics = [worker["stages"].get(name, {}) for worker in workers]
 
         def normalized(key, metrics=metrics):
-            values = [metric.get(key, {}).get("total_ms", 0.0) / worker["decode_steps"] for metric, worker in zip(metrics, workers)]
+            values = [
+                metric.get(key, {}).get("total_ms", 0.0) / worker["decode_steps"]
+                for metric, worker in zip(metrics, workers)
+            ]
             return f"{statistics.mean(values):.3f}({max(values):.3f})"
 
-        calls = [metric.get("wall", {}).get("count", 0) / worker["decode_steps"] for metric, worker in zip(metrics, workers)]
+        calls = [
+            metric.get("wall", {}).get("count", 0) / worker["decode_steps"]
+            for metric, worker in zip(metrics, workers)
+        ]
         call_max = max(metric.get("wall", {}).get("max_ms", 0.0) for metric in metrics)
         device = f" stream={normalized('stream_span')}" if any("stream_span" in metric for metric in metrics) else ""
         print(
@@ -299,9 +317,15 @@ def run_child(args) -> None:
         for index in range(args.warmups):
             generate_request(llm, args, index)
         samples = []
+        diagnostic = None
+        inline_diagnostic = single_request_diagnostics(args)
         for index in range(args.repeats):
             before = worker_state(llm, args)  # RPC/fence OUTSIDE the timed request.
-            sample = generate_request(llm, args, args.warmups + index)
+            if inline_diagnostic:
+                diagnostic = diagnose_request(llm, args, args.warmups + index)
+                sample = diagnostic["request"]
+            else:
+                sample = generate_request(llm, args, args.warmups + index)
             after = worker_state(llm, args)
             sample["root_replays_per_rank"] = replay_delta(before, after, args.child)
             sample["source_binding_updates_per_rank"] = [
@@ -326,13 +350,15 @@ def run_child(args) -> None:
             "tpot_ms": distribution([s["tpot_ms"] for s in samples]),
             "workers": state,
             "profiled_measurements": False,
+            "instrumented_measurements": inline_diagnostic,
         }
         # Save measurements even if the subsequent, separate profiling fails.
         Path(args.run_dir, f"{args.child}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         if args.profile:
             generate_request(llm, args, args.warmups + args.repeats, profile=True)
         if args.diagnose:
-            diagnostic = diagnose_request(llm, args, args.warmups + args.repeats)
+            if diagnostic is None:
+                diagnostic = diagnose_request(llm, args, args.warmups + args.repeats)
             Path(args.run_dir, f"{args.child}-timing.json").write_text(
                 json.dumps(diagnostic, indent=2), encoding="utf-8"
             )
@@ -357,6 +383,9 @@ def compare_results(staged: dict, full: dict) -> dict:
         raise ValueError("Need equally sized, unprofiled measurements")
     if any(len(x["token_ids"]) != len(y["token_ids"]) for x, y in zip(a, b)):
         raise ValueError("Output lengths differ between modes")
+    instrumented = staged.get("instrumented_measurements", False)
+    if instrumented != full.get("instrumented_measurements", False):
+        raise ValueError("Cannot compare instrumented and uninstrumented measurements")
     baseline = distribution([s["tpot_ms"] for s in a])
     optimized = distribution([s["tpot_ms"] for s in b])
     return {
@@ -365,7 +394,11 @@ def compare_results(staged: dict, full: dict) -> dict:
         "tpot_reduction_percent": (1 - optimized["mean"] / baseline["mean"]) * 100,
         "decode_speedup": baseline["mean"] / optimized["mean"],
         "tokens_equal": all(x["token_ids"] == y["token_ids"] for x, y in zip(a, b)),
-        "scope": "offline engine decode incl. scheduling/IPC/MTP/sampling; excludes prefill and profiler",
+        "instrumented_measurements": instrumented,
+        "scope": (
+            "offline engine decode incl. scheduling/IPC/MTP/sampling; excludes prefill and profiler"
+            + ("; includes diagnostic timing overhead, not a clean performance measurement" if instrumented else "")
+        ),
     }
 
 
@@ -377,8 +410,8 @@ def validate_args(args) -> None:
         raise FileNotFoundError(f"Missing model configuration: {args.model}/config.json")
     if args.prompt_tokens <= 4096:
         raise ValueError("Prompt must exceed the 4096-token MTP scratch prefix")
-    if args.output_tokens < 2 or args.profile_tokens < 2 or args.warmups < 1 or args.repeats < 2:
-        raise ValueError("Need output/profile tokens >= 2, warmups >= 1, repeats >= 2")
+    if args.output_tokens < 2 or args.profile_tokens < 2 or args.warmups < 0 or args.repeats < 1:
+        raise ValueError("Need output/profile tokens >= 2, warmups >= 0, repeats >= 1")
     if args.warmups + args.repeats >= 257:
         raise ValueError("Keep warmups + repeats below 257 distinct fixture prompts")
 
@@ -389,7 +422,18 @@ def run_pair(args) -> None:
     root.mkdir(parents=True, exist_ok=True)
     args.run_dir = mkdtemp(prefix="sfa-", dir=root)
     print(f"[SFA_BENCH] results/traces: {args.run_dir}", flush=True)
-    print("[SFA_BENCH] staged vs full; performance BEFORE separate diagnostics/profile; no parity probes", flush=True)
+    if single_request_diagnostics(args):
+        print(
+            "[SFA_BENCH] staged/full: ONE request each; no warmup or extra diagnostic request; "
+            "TPOT INCLUDES diagnostic overhead; no profiler",
+            flush=True,
+        )
+    else:
+        print(
+            f"[SFA_BENCH] staged/full: {args.warmups} warmups + {args.repeats} measured requests each; "
+            "performance BEFORE optional separate diagnostics/profile",
+            flush=True,
+        )
     profile_flag = ["--profile"] if args.profile else []
     diagnose_flag = ["--diagnose"] if args.diagnose else []
     for mode in ("preflight", *args.order.split(",")):
@@ -432,9 +476,10 @@ def run_pair(args) -> None:
     Path(args.run_dir, "comparison.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     for mode in ("staged", "full"):
         timing = result[f"{mode}_tpot_ms"]
+        std = "n/a (one request)" if timing["std"] is None else f"{timing['std']:.3f}"
         print(
-            f"[SFA_BENCH] {mode} TPOT mean={timing['mean']:.3f} median={timing['median']:.3f} "
-            f"std={timing['std']:.3f} ms/token",
+            f"[SFA_BENCH] {mode} requests={timing['count']} TPOT mean={timing['mean']:.3f} "
+            f"median={timing['median']:.3f} std={std} ms/token",
             flush=True,
         )
     print(
@@ -445,7 +490,10 @@ def run_pair(args) -> None:
         flush=True,
     )
     if not result["tokens_equal"]:
-        print("[SFA_BENCH] WARNING: outputs differ; MTP acceptance/routing may confound the speed comparison", flush=True)
+        print(
+            "[SFA_BENCH] WARNING: outputs differ; MTP acceptance/routing may confound the speed comparison",
+            flush=True,
+        )
     if args.profile:
         for mode in ("staged", "full"):
             # Separate non-daemon process, AFTER both engines have exited.
@@ -473,11 +521,17 @@ def main() -> None:
     parser.add_argument("--devices", default=DEFAULT_DEVICES)
     parser.add_argument("--prompt-tokens", type=int, default=BENCHMARK_PROMPT_TOKENS)
     parser.add_argument("--output-tokens", type=int, default=512)
-    parser.add_argument("--warmups", type=int, default=1)
-    parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--warmups", type=int, default=0, help="Extra warmup requests per mode (default: 0)")
+    parser.add_argument("--repeats", type=int, default=1, help="Measured requests per mode (default: 1)")
     diagnostic = parser.add_mutually_exclusive_group()
-    diagnostic.add_argument("--profile", action="store_true", help="Also capture separate decode-only traces in both modes")
-    diagnostic.add_argument("--diagnose", action="store_true", help="Separate decode timing in the log, without profiling")
+    diagnostic.add_argument(
+        "--profile", action="store_true", help="Also capture separate decode-only traces in both modes"
+    )
+    diagnostic.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Log decode timings without profiling; with 0 warmups/1 repeat, instrument that sole request",
+    )
     parser.add_argument("--profile-tokens", type=int, default=32)
     parser.add_argument("--profile-dir", type=Path, default=Path("profile"))
     parser.add_argument("--order", choices=("staged,full", "full,staged"), default="staged,full")
