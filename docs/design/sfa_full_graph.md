@@ -69,3 +69,16 @@ audits every rank conservatively: `ONE_EXECUTE_PER_ROOT` only proves one
 outermost known ACL execute API in each CPU root scope, while
 `SPLIT_DETECTED` fails and `UNVERIFIED` is not a pass. Device-side graph
 coverage and KV correctness still require manual MindStudio/NPU inspection.
+
+If the CPU trace check fails after export, do not rerun the model. Recheck the
+existing profile data only:
+
+```bash
+python tools/sfa_graph_trace.py --latest profile 2>&1 | tee -a log.log
+```
+
+Use `--run-dir profile/sfa-...` for an older run and `--ranks N` for another
+TP size. This command does not import vLLM or torch_npu, recapture or re-export
+anything; it only regenerates `*-trace-check.json` and leaves trace and
+performance files unchanged. Numeric strings and JSON numbers are normalized
+with decimal precision, while malformed timing is reported as `UNVERIFIED`.
