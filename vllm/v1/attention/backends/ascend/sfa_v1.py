@@ -3766,13 +3766,9 @@ class AscendSFAImpl(MLAAttentionImpl):
         self._full_graph_transfers = {}
 
     def prepare_full_graph_layer(
-        self,
-        layer_name: str,
-        max_tokens: int,
-        source: Any = None,
-        layer_id: int = 0,
+        self, layer_name: str, max_tokens: int, source: Any = None, layer_id: int = 0, *, bind_source: bool = True
     ) -> dict[str, Any]:
-        """Resolve metadata and bind sparse source tables before root replay."""
+        """Validate live metadata; optionally bind source tables before replay."""
         # The native LMCache owner is loaded lazily because graph profiling may
         # run before the worker connector has been constructed.
         from lmcache.integration.vllm.utils import lmcache_get_or_create_config
@@ -3822,7 +3818,8 @@ class AscendSFAImpl(MLAAttentionImpl):
             )
             transfers[capacity] = transfer
         self._full_graph_transfer = transfer
-        transfer.bind_batch(source or (), layer_id)
+        if bind_source:
+            transfer.bind_batch(source or (), layer_id)
         # The root replay is fenced before graph-external saves; do not expose
         # an event recorded only during startup eager warmup.
         metadata.reshape_cache_event = None

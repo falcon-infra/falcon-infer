@@ -113,3 +113,114 @@ def test_capture_failure_restores_context_and_profile_reset(graph_module):
         wrapper.seal(("q1", "q2"))
     wrapper.clear()
     assert not wrapper.entries and not wrapper.sealed
+
+
+@pytest.mark.parametrize("layers", [1, 8, 80])
+def test_unchanged_sources_do_not_even_enumerate_layers(graph_module, layers):
+    module, context, _, _ = graph_module
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=2)
+    wrapper = module.SFAFullGraph()
+
+    class Source:
+        def __eq__(self, other):
+            raise AssertionError("Must compare snapshot identity, not tensor values")
+
+    sources = (Source(), Source())
+    transfers = tuple(SimpleNamespace(bind_batch=Mock()) for _ in range(layers))
+    enumerate_layers = Mock(return_value=transfers)
+    assert wrapper.bind_sources(sources, ("a", "b"), enumerate_layers)
+    for _ in range(300):
+        assert not wrapper.bind_sources(tuple(list(sources)), ("a", "b"), enumerate_layers)
+    enumerate_layers.assert_called_once()
+    for index, transfer in enumerate(transfers):
+        transfer.bind_batch.assert_called_once_with(sources, index)
+    assert wrapper.source_binding_count == 1
+
+
+@pytest.mark.parametrize("change", ["new_source", "window", "restore", "reorder", "request", "empty", "remove"])
+def test_source_changes_always_rebind_all_layers(graph_module, change):
+    module, context, _, _ = graph_module
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=2)
+    wrapper = module.SFAFullGraph()
+    source = SimpleNamespace(total_tokens=4096)
+    other = SimpleNamespace(total_tokens=4096)
+    transfers = tuple(SimpleNamespace(bind_batch=Mock()) for _ in range(8))
+    sources, requests = (source, other), ("a", "b")
+    wrapper.bind_sources(sources, requests, lambda: transfers)
+    if change in ("new_source", "restore"):
+        sources = (SimpleNamespace(total_tokens=4096), other)
+    elif change == "window":
+        sources = (SimpleNamespace(total_tokens=4352), other)
+    elif change == "reorder":
+        sources, requests = (other, source), ("b", "a")
+    elif change == "request":
+        requests = ("new-a", "b")
+    elif change == "empty":
+        sources, requests = (), ()
+    else:
+        sources, requests = (source, None), ("a", "b")
+    assert wrapper.bind_sources(sources, requests, lambda: transfers)
+    for index, transfer in enumerate(transfers):
+        assert transfer.bind_batch.call_count == 2
+        transfer.bind_batch.assert_called_with(sources, index)
+    assert not wrapper.bind_sources(sources, requests, Mock(side_effect=AssertionError("layer loop")))
+
+
+def test_bindings_follow_shared_capacity_not_graph_key(graph_module):
+    module, context, _, _ = graph_module
+    wrapper = module.SFAFullGraph()
+    source_a, source_b = object(), object()
+    transfer = SimpleNamespace(bind_batch=Mock())
+    lazy = Mock(return_value=(transfer,))
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1, name="q1")
+    assert wrapper.bind_sources((source_a,), ("a",), lazy)
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1, name="q2")
+    assert not wrapper.bind_sources((source_a,), ("a",), lazy)
+    assert wrapper.bind_sources((source_b,), ("b",), lazy)
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1, name="q1")
+    assert wrapper.bind_sources((source_a,), ("a",), lazy)
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=2, name="r2")
+    assert wrapper.bind_sources((source_a,), ("a",), lazy)
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1, name="q1")
+    assert not wrapper.bind_sources((source_a,), ("a",), lazy)
+    assert lazy.call_count == 4
+
+
+def test_failed_partial_binding_invalidates_previous_binding(graph_module):
+    module, context, _, _ = graph_module
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1)
+    wrapper = module.SFAFullGraph()
+    transfers = tuple(SimpleNamespace(bind_batch=Mock()) for _ in range(3))
+    source_a, source_b = object(), object()
+    wrapper.bind_sources((source_a,), ("a",), lambda: transfers)
+    transfers[1].bind_batch.side_effect = RuntimeError("invalid source layer")
+    with pytest.raises(RuntimeError, match="invalid source layer"):
+        wrapper.bind_sources((source_b,), ("b",), lambda: transfers)
+    assert not wrapper.source_bindings
+    transfers[1].bind_batch.side_effect = None
+    assert wrapper.bind_sources((source_a,), ("a",), lambda: transfers)
+    assert transfers[0].bind_batch.call_count == 3
+    assert transfers[2].bind_batch.call_count == 2
+
+
+def test_capture_reset_forces_rebinding_even_for_identical_sources(graph_module):
+    module, context, _, _ = graph_module
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1)
+    wrapper = module.SFAFullGraph()
+    source = object()
+    lazy = Mock(return_value=(SimpleNamespace(bind_batch=Mock()),))
+    wrapper.bind_sources((source,), ("a",), lazy)
+    wrapper.clear()
+    assert not wrapper.source_bindings and wrapper.source_binding_count == 0
+    assert wrapper.bind_sources((source,), ("a",), lazy)
+    assert lazy.call_count == 2
+
+
+@pytest.mark.parametrize("sources,requests", [((None, None), ("a", "b")), ((None,), ()), ((), ("a",))])
+def test_invalid_source_lanes_fail_before_binding(graph_module, sources, requests):
+    module, context, _, _ = graph_module
+    context.staged_sfa_graph_key = SimpleNamespace(request_capacity=1)
+    lazy = Mock()
+    with pytest.raises(ValueError, match="source lanes"):
+        module.SFAFullGraph().bind_sources(sources, requests, lazy)
+    lazy.assert_not_called()

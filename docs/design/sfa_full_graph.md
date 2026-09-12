@@ -82,3 +82,14 @@ TP size. This command does not import vLLM or torch_npu, recapture or re-export
 anything; it only regenerates `*-trace-check.json` and leaves trace and
 performance files unchanged. Numeric strings and JSON numbers are normalized
 with decimal precision, while malformed timing is reported as `UNVERIFIED`.
+
+The benchmark defaults to a 30000-token input context (not 30000 generated
+tokens); use `--prompt-tokens 4351` to repeat the earlier short-context case.
+Prefill remains chunked at 512 tokens. Full-graph source binding compares
+ordered request IDs and immutable `PreparedSparseSource` snapshot identities
+before enumerating transfers. Unchanged sources skip every layer's
+`bind_batch`; newly published windows, replacements/restores, changed lanes
+and empty batches rebind. `full.json` records
+`source_binding_updates_per_rank` beside root replay counts, sampled outside
+timed requests. This does not suppress graph-internal KV loads or metadata
+address checks; it only removes unchanged source-table rebinding work.

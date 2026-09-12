@@ -40,6 +40,23 @@ class SFAFullGraphEntry:
     signature: Any
 
 
+@dataclass(frozen=True)
+class SFASourceBinding:
+    request_ids: tuple[str, ...]
+    sources: tuple[Any, ...]
+
+    def matches(self, request_ids: tuple[str, ...], sources: tuple[Any, ...]) -> bool:
+        # PreparedSparseSource is an immutable, request-owned snapshot. A store,
+        # restore or pointer-table replacement publishes a NEW snapshot. Never
+        # compare its dataclass values: tensor equality would run device work.
+        # Retaining the objects also prevents Python id/address reuse (ABA).
+        return (
+            self.request_ids == request_ids
+            and len(self.sources) == len(sources)
+            and all(old is new for old, new in zip(self.sources, sources))
+        )
+
+
 class SFAFullGraph:
     """Startup-only capture; exactly one replay per authorized target forward.
 
@@ -52,12 +69,37 @@ class SFAFullGraph:
         self.sealed = False
         self.replay_count = 0
         self.graph_pool = None
+        self.source_bindings: dict[int, SFASourceBinding] = {}
+        self.source_binding_count = 0
 
     def clear(self) -> None:
         """Discard graphs before profiling's temporary KV storage is released."""
         self.entries.clear()
         self.sealed = False
         self.replay_count = 0
+        self.source_bindings.clear()
+        self.source_binding_count = 0
+
+    def bind_sources(
+        self,
+        sources: tuple[Any, ...],
+        request_ids: tuple[str, ...],
+        transfers: Callable[[], tuple[Any, ...]],
+    ) -> bool:
+        """Rebind layers only when the request-owned source batch changes."""
+        capacity = get_forward_context().staged_sfa_graph_key.request_capacity
+        if len(sources) > capacity or len(request_ids) != len(sources):
+            raise ValueError("Full SFA source lanes do not match request IDs/capacity")
+        previous = self.source_bindings.get(capacity)
+        if previous is not None and previous.matches(request_ids, sources):
+            return False
+        # Invalidate partial writes before trying to bind a replacement batch.
+        self.source_bindings.pop(capacity, None)
+        for layer_id, transfer in enumerate(transfers()):
+            transfer.bind_batch(sources, layer_id)
+        self.source_bindings[capacity] = SFASourceBinding(request_ids, sources)
+        self.source_binding_count += 1
+        return True
 
     def seal(self, keys: tuple[Hashable, ...]) -> int:
         """Require precisely one startup graph per authorized shape."""
