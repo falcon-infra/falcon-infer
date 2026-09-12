@@ -60,7 +60,8 @@ Defaults are now zero extra warmups and one measured request per mode
 (`--warmups 0 --repeats 1`). One-request TPOT reports `std=null`/`n/a`; it is a
 quick comparison, not a multi-request stability estimate. With `--diagnose`,
 that same request supplies inline diagnostics and TPOT includes instrumentation
-overhead; explicit multi-request runs keep diagnostics as a separate request.
+overhead. Explicit multi-request diagnostics use a separate host-timing request,
+but captured timing markers remain in all requests.
 Instrumented and uninstrumented results cannot be compared together.
 
 To explicitly restore the longer benchmark, use `--warmups 1 --repeats 5`.
@@ -103,13 +104,31 @@ engine runs only one 512-token generation, and temporary timing wrappers
 collect statistics during that same request; there is no hidden warmup or
 second diagnostic generation. Both the log and `comparison.json` flag that
 TPOT includes diagnostic overhead, so it is not a clean performance
-measurement. With explicit `--warmups 1 --repeats 5`, diagnostics instead run
-once after the ordinary measurements. Scheduler history excludes all
+measurement. With explicit `--warmups 1 --repeats 5`, host diagnostics instead
+run once after the ordinary measurements, but captured markers remain in all
+requests. Omit `--diagnose` for clean performance measurements. Scheduler history excludes all
 chunked-prefill steps, including a final one-token Q1 chunk. Timing stop and
 synchronization happen after the request, with bounded event storage and
 `event_drops` reporting partial stream coverage. Results are printed as compact
 `[SFA_TIMING]` lines and saved separately from TPOT JSON; they are diagnostics,
 not performance acceptance or pure kernel timings.
+
+Captured events are recorded inside existing opaque SFA and TP operations at
+startup capture; replay adds no per-layer Python callbacks or graph splits. A
+startup smoke check replays a tiny graph twice and rejects stale or unavailable
+captured timestamps before loading weights. Coarse current-stream events cover
+target-forward, root-replay, logits and MTP boundaries. Fine sampling and
+staged-retrieval events are sampled on the first four decode forwards and then
+every 32 forwards, while host wall/CPU statistics cover every decode forward.
+
+`graph_last.L0` through `graph_last.L7` describe only the last live target
+decode. They expose pre/indexer/select/transfer/attention/post phases, the
+`pre_to_post` and `after_post` gaps, and `graph_last.TP.*` collective spans.
+Missing or duplicate phases are `INCOMPLETE`/`unobserved`, never zero; nested
+phases and TP spans must not be added, and these are not whole-request averages
+or isolated kernel timings. Sampling rows use the existing scoped rejection
+recorder and call original sampler operations exactly once without tensor
+inspection or forced readiness.
 
 Full-graph validation is now deduplicated only within one forward. The runner
 creates a single-use `prepare_run()` handoff before the existing error

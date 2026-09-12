@@ -42,6 +42,7 @@ def benchmark_environment(mode: str, devices: str) -> dict[str, str]:
     # production switch differs; comparing to enforce_eager overstates gains.
     environment["VLLM_ASCEND_SFA_FULL_GRAPH"] = str(int(mode == "full"))
     environment["LMCACHE_LOG_LEVEL"] = "WARNING"
+    environment["PD_SERVING_PERF"] = "0"
     for name in ("ASCEND_LAUNCH_BLOCKING", "CUDA_LAUNCH_BLOCKING"):
         environment.pop(name, None)
     return environment
@@ -57,6 +58,8 @@ def benchmark_options(args) -> dict:
         max_model_len=args.prompt_tokens + max(args.output_tokens, args.profile_tokens + PROFILE_SKIP_TOKENS) + 32,
         disable_log_stats=True,
     )
+    if args.diagnose:
+        options["additional_config"]["sfa_benchmark_graph_timing"] = True
     if args.profile:
         options["profiler_config"] = {
             "profiler": "torch",
@@ -249,7 +252,7 @@ def diagnose_request(llm, args, ordinal: int) -> dict:
         "scope": (
             "single instrumented decode request; TPOT includes timing overhead; no profiler"
             if single_request_diagnostics(args)
-            else "separate instrumented decode request; not a performance sample; no profiler"
+            else "separate instrumented decode request; all graphs carry timing markers; no profiler"
         ),
         "request": request,
         "workers": sorted(workers, key=lambda worker: worker["rank"]),
@@ -262,7 +265,8 @@ def print_decode_timing(report: dict) -> None:
     print(
         f"[SFA_TIMING] {mode} diagnostic-only: decode={request['decode_ms']:.3f}ms "
         f"committed={request['decode_tokens']} forwards={steps} "
-        f"committed/forward={request['decode_tokens'] / steps:.3f}; excluded from TPOT comparison",
+        f"committed/forward={request['decode_tokens'] / steps:.3f}; "
+        f"{report.get('scope', 'instrumented request; no profiler')}",
         flush=True,
     )
     for worker in workers:
@@ -276,7 +280,8 @@ def print_decode_timing(report: dict) -> None:
         )
     print(
         f"[SFA_TIMING] {mode} ms/forward: wall/self=rank mean(max rank); "
-        "cpu=exclusive thread CPU; call_max=slowest call; stream=mean(max rank) current-stream span. "
+        "cpu=exclusive thread CPU; call_max=slowest call; stream=mean(max rank) per recorded interval, "
+        "fine sampling/retrieval events: first 4 forwards then every 32. "
         "Nested wall times and stream spans MUST NOT be added together.",
         flush=True,
     )
@@ -296,13 +301,59 @@ def print_decode_timing(report: dict) -> None:
             for metric, worker in zip(metrics, workers)
         ]
         call_max = max(metric.get("wall", {}).get("max_ms", 0.0) for metric in metrics)
-        device = f" stream={normalized('stream_span')}" if any("stream_span" in metric for metric in metrics) else ""
+        device = ""
+        spans = [metric["stream_span"] for metric in metrics if metric.get("stream_span", {}).get("count", 0)]
+        if spans:
+            means = [metric["total_ms"] / metric["count"] for metric in spans]
+            counts = [metric["count"] for metric in spans]
+            device = (
+                f" stream={statistics.mean(means):.3f}({max(means):.3f}) "
+                f"stream_samples={min(counts)}..{max(counts)}"
+            )
         print(
             f"[SFA_TIMING] {mode} {name} calls/fwd={min(calls):.2f}..{max(calls):.2f} "
             f"wall={normalized('wall')} self={normalized('self_wall')} "
             f"cpu={normalized('self_cpu')} call_max={call_max:.3f}{device}",
             flush=True,
         )
+
+    print_graph_phases(mode, workers)
+
+
+def print_graph_phases(mode: str, workers: list[dict]) -> None:
+    reports = [worker.get("graph_phases", {}) for worker in workers]
+    if not any(reports):
+        return
+    complete = sum(report.get("status") == "complete" for report in reports)
+    print(
+        f"[SFA_TIMING] {mode} graph_phases LAST_DECODE_ONLY complete_ranks={complete}/{len(workers)}; "
+        "ms=rank mean(max rank); nested phases/TP spans MUST NOT be added; "
+        "not whole-request averages or isolated kernel times",
+        flush=True,
+    )
+    for worker, report in zip(workers, reports):
+        if report.get("status") != "complete":
+            print(
+                f"[SFA_TIMING] {mode} graph_phases rank={worker['rank']} INCOMPLETE "
+                f"missing={report.get('missing', [])} reason={report.get('reason', '')}",
+                flush=True,
+            )
+
+    def metric(name):
+        entries = [report.get("stages", {}).get(name) for report in reports]
+        if any(entry is None for entry in entries):
+            return "unobserved"
+        values = [entry["total_ms"] for entry in entries]
+        return f"{statistics.mean(values):.3f}({max(values):.3f})"
+
+    for layer in range(8):
+        phases = " ".join(
+            f"{phase}={metric(f'L{layer}.{phase}')}"
+            for phase in ("pre", "indexer", "select", "pre_to_post", "transfer", "attention", "post", "after_post")
+        )
+        print(f"[SFA_TIMING] {mode} graph_last.L{layer} {phases}", flush=True)
+    for phase in ("all_reduce", "all_gather", "reduce_scatter"):
+        print(f"[SFA_TIMING] {mode} graph_last.TP.{phase} span={metric(f'TP.{phase}')}", flush=True)
 
 
 def run_child(args) -> None:
@@ -350,7 +401,8 @@ def run_child(args) -> None:
             "tpot_ms": distribution([s["tpot_ms"] for s in samples]),
             "workers": state,
             "profiled_measurements": False,
-            "instrumented_measurements": inline_diagnostic,
+            # Captured timing events persist even outside the host-hook request.
+            "instrumented_measurements": args.diagnose,
         }
         # Save measurements even if the subsequent, separate profiling fails.
         Path(args.run_dir, f"{args.child}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -431,7 +483,11 @@ def run_pair(args) -> None:
     else:
         print(
             f"[SFA_BENCH] staged/full: {args.warmups} warmups + {args.repeats} measured requests each; "
-            "performance BEFORE optional separate diagnostics/profile",
+            + (
+                "TPOT INCLUDES captured timing markers; separate host diagnostics; no profiler"
+                if args.diagnose
+                else "performance BEFORE optional separate profiling"
+            ),
             flush=True,
         )
     profile_flag = ["--profile"] if args.profile else []
