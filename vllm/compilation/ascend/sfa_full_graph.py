@@ -112,7 +112,7 @@ class SFAFullGraph:
         return len(self.entries)
 
     def validate_inputs(self, *, graph_inputs: Any = None, **kwargs: Any) -> Any:
-        """Validate replay addresses before workers enter graph collectives."""
+        """Validate replay addresses before entering captured model collectives."""
         context = get_forward_context()
         key = context.staged_sfa_graph_key
         signature = tensor_signature((kwargs, graph_inputs))

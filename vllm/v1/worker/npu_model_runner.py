@@ -163,6 +163,7 @@ from vllm.v1.attention.backends.ascend.utils import (
     unwrap_staged_sfa_connector_metadata,
     using_paged_attention,
 )
+from vllm.compilation.ascend.sfa_fail_stop import exit_failed_sfa_worker, uses_local_sfa_fail_stop
 from vllm.compilation.ascend.sfa_full_graph import SFAFullGraph
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.selector import get_attn_backend  # type: ignore
@@ -3483,18 +3484,30 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     )
                 except Exception as exc:
                     local_error = exc
-                # All workers, including idle DP replicas, must agree before
-                # any peer enters captured TP/EP collectives.
-                failed = torch.tensor([int(local_error is not None)], dtype=torch.int32)
-                for group in (get_tp_group(), get_dp_group()):
-                    if group.world_size > 1:
-                        dist.all_reduce(
-                            failed, op=dist.ReduceOp.MAX, group=group.cpu_group
+                if (
+                    not context.staged_sfa_graph_dummy_run
+                    and uses_local_sfa_fail_stop(self.vllm_config.parallel_config)
+                ):
+                    if local_error is not None:
+                        logger.critical(
+                            "[SFA full graph] source/metadata preparation failed; "
+                            "exiting worker to notify the local executor supervisor",
+                            exc_info=(type(local_error), local_error, local_error.__traceback__),
                         )
-                if failed.item():
-                    raise RuntimeError(
-                        "[SFA full graph] source/metadata preparation failed on this or a peer worker"
-                    ) from local_error
+                        exit_failed_sfa_worker(local_error)
+                else:
+                    # Capture and unsupported executor topologies still agree
+                    # before entering EP/TP collectives (including idle DP ranks).
+                    failed = torch.tensor([int(local_error is not None)], dtype=torch.int32)
+                    for group in (get_tp_group(), get_dp_group()):
+                        if group.world_size > 1:
+                            dist.all_reduce(
+                                failed, op=dist.ReduceOp.MAX, group=group.cpu_group
+                            )
+                    if failed.item():
+                        raise RuntimeError(
+                            "[SFA full graph] source/metadata preparation failed on this or a peer worker"
+                        ) from local_error
             output = self._sfa_full_graph.run(
                 self._run_sfa_full_graph_target,
                 graph_inputs=graph_inputs,

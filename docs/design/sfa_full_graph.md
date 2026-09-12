@@ -83,6 +83,16 @@ anything; it only regenerates `*-trace-check.json` and leaves trace and
 performance files unchanged. Numeric strings and JSON numbers are normalized
 with decimal precision, while malformed timing is reported as `UNVERIFIED`.
 
+For live single-node TP-only DP1/PP1 `mp` workers, source or metadata
+preparation failures use error-only fail-stop: the worker logs the original
+traceback and raises `SystemExit`, allowing the existing process-sentinel
+supervisor to stop owned peers, including blocked workers. A five-second daemon
+cleanup timer is armed only on failure. Healthy forwards perform no failure
+collective, timer or health polling. Startup capture, multi-node/multi-DP jobs
+and other executors retain synchronous TP/DP error agreement. This is fail-stop
+requiring engine restart, not forward recovery; the CPU tests do not verify
+native HCCL cancellation.
+
 The benchmark defaults to a 30000-token input context (not 30000 generated
 tokens); use `--prompt-tokens 4351` to repeat the earlier short-context case.
 Prefill remains chunked at 512 tokens. Full-graph source binding compares
