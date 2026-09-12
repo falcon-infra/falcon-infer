@@ -37,6 +37,7 @@ def args(tmp_path):
         warmups=1,
         repeats=5,
         profile=True,
+        diagnose=False,
         profile_dir=tmp_path / "profile",
         run_dir=str(tmp_path),
         order="staged,full",
@@ -496,3 +497,94 @@ def test_short_context_remains_an_explicit_cli_override(driver, monkeypatch):
     monkeypatch.setattr(driver, "run_pair", lambda options: seen.append(options))
     driver.main()
     assert seen[0].prompt_tokens == 4351
+
+
+def diagnostic_workers(mode="full", steps=3):
+    metrics = {"count": steps, "total_ms": 12.0, "mean_ms": 4.0, "std_ms": 1.0, "max_ms": 6.0}
+    names = ["worker.execute", "worker.sample", "target.forward"]
+    names.extend(f"metadata.L{i}" if mode == "full" else f"retrieve.L{i}" for i in range(8))
+    if mode == "full":
+        names.append("root.replay_submit")
+    return [
+        dict(
+            rank=rank,
+            decode_steps=steps,
+            root_replays=steps if mode == "full" else 0,
+            source_binding_updates=1,
+            query_tokens_histogram={2: steps},
+            sampled_tokens_histogram={2: steps},
+            prefill_steps_excluded=10,
+            device_intervals_dropped=0,
+            stages={name: {key: dict(metrics) for key in ("wall", "self_wall", "self_cpu")} for name in names},
+        )
+        for rank in range(8)
+    ]
+
+
+def test_diagnose_has_no_mid_request_rpcs_or_profiler(driver, args, monkeypatch):
+    args.profile, args.diagnose = False, True
+    events = []
+
+    def rpc(method, **kwargs):
+        events.append(method)
+        return diagnostic_workers()
+
+    llm = SimpleNamespace(collective_rpc=rpc)
+    monkeypatch.setattr(driver, "generate_request", lambda *a: {"decode_ms": 80, "decode_tokens": 6, "tpot_ms": 80 / 6})
+    result = driver.diagnose_request(llm, args, 6)
+    assert events == ["benchmark_start_decode_timing", "benchmark_stop_decode_timing"]
+    assert len(result["workers"]) == 8
+    assert "no profiler" in result["scope"]
+
+
+def test_diagnostic_generation_error_attempts_stop_and_preserves_original(driver, args, monkeypatch):
+    llm = SimpleNamespace(collective_rpc=Mock(side_effect=[None, RuntimeError("stop failed")]))
+    monkeypatch.setattr(driver, "generate_request", Mock(side_effect=ValueError("original failure")))
+    with pytest.raises(ValueError, match="original failure") as error:
+        driver.diagnose_request(llm, args, 6)
+    assert "stop failed" in error.value.__notes__[0]
+    assert llm.collective_rpc.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_rank", "duplicate_rank", "missing_target", "missing_root", "rank_skew", "missing_layer", "callback"]
+)
+def test_diagnose_rejects_incomplete_coverage(driver, args, monkeypatch, failure):
+    reports = diagnostic_workers()
+    if failure == "missing_rank":
+        reports.pop()
+    elif failure == "duplicate_rank":
+        reports[-1]["rank"] = 0
+    elif failure == "missing_target":
+        reports[-1]["stages"].pop("target.forward")
+    elif failure == "missing_root":
+        reports[-1]["root_replays"] = 0
+    elif failure == "missing_layer":
+        reports[-1]["stages"].pop("metadata.L7")
+    elif failure == "callback":
+        reports[-1]["stages"]["retrieve.L3"] = {"wall": {"count": 1}}
+    else:
+        reports[-1] = diagnostic_workers(steps=4)[-1]
+    llm = SimpleNamespace(collective_rpc=Mock(side_effect=[None, reports]))
+    monkeypatch.setattr(driver, "generate_request", lambda *a: sample())
+    with pytest.raises(RuntimeError):
+        driver.diagnose_request(llm, args, 6)
+
+
+def test_diagnostic_log_is_compact_includes_all_ranks_and_no_tokens(driver, capsys):
+    driver.print_decode_timing(
+        {"mode": "full", "workers": diagnostic_workers(), "request": {"decode_ms": 80, "decode_tokens": 6}}
+    )
+    output = capsys.readouterr().out
+    assert len(output) < 5000
+    assert all(f"rank={rank} " in output for rank in range(8))
+    assert "committed/forward=2.000" in output
+
+
+def test_diagnose_and_profile_are_mutually_exclusive(driver, args, monkeypatch):
+    args.profile = args.diagnose = True
+    with pytest.raises(ValueError, match="OR --profile"):
+        driver.validate_args(args)
+    monkeypatch.setattr(sys, "argv", ["benchmark", "--diagnose", "--profile"])
+    with pytest.raises(SystemExit):
+        driver.main()

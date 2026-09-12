@@ -83,6 +83,21 @@ anything; it only regenerates `*-trace-check.json` and leaves trace and
 performance files unchanged. Numeric strings and JSON numbers are normalized
 with decimal precision, while malformed timing is reported as `UNVERIFIED`.
 
+For profiler-free request diagnostics, use a separate 5000-token run:
+
+```bash
+python tools/sfa_graph_benchmark.py --prompt-tokens 5000 --diagnose 2>&1 | tee log.log
+```
+
+`--diagnose` is mutually exclusive with `--profile`. Normal warmup and TPOT
+requests remain uninstrumented; only one later request receives temporary
+host/current-stream timing wrappers, which are restored afterward. Scheduler
+history excludes all chunked-prefill steps, including a final one-token Q1
+chunk. Timing stop and synchronization happen after the request, with bounded
+event storage and `event_drops` reporting partial stream coverage. Results are
+printed as compact `[SFA_TIMING]` lines and saved separately from TPOT JSON;
+they are diagnostics, not performance acceptance or pure kernel timings.
+
 For live single-node TP-only DP1/PP1 `mp` workers, source or metadata
 preparation failures use error-only fail-stop: the worker logs the original
 traceback and raises `SystemExit`, allowing the existing process-sentinel

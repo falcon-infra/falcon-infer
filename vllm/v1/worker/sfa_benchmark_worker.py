@@ -68,6 +68,43 @@ class SFABenchmarkWorker(NPUWorker):
         """Identify owned workers even if the subsequent graph-state gate fails."""
         return {"rank": self.rank, "pid": os.getpid()}
 
+    def benchmark_start_decode_timing(self, prompt_tokens: int) -> dict:
+        from vllm.distributed.kv_transfer import get_kv_transfer_group
+
+        from vllm.v1.worker.sfa_decode_timing import install_decode_timing
+
+        if getattr(self, "_decode_timing", None) is not None:
+            raise RuntimeError("Decode timing is already active")
+        if self.model_runner.use_async_scheduling:
+            raise RuntimeError("Decode timing requires synchronous benchmark scheduling")
+        torch.npu.synchronize()
+        self._decode_timing_root_start = self.model_runner._sfa_full_graph.replay_count
+        self._decode_timing_source_start = self.model_runner._sfa_full_graph.source_binding_count
+        self._decode_timing = install_decode_timing(
+            self,
+            get_kv_transfer_group(),
+            prompt_tokens=prompt_tokens,
+            event_factory=lambda: torch.npu.Event(enable_timing=True),
+        )
+        return self.benchmark_process_info()
+
+    def benchmark_stop_decode_timing(self) -> dict:
+        timing = self._decode_timing
+        if timing is None:
+            raise RuntimeError("Decode timing is not active")
+        try:
+            timing.close()
+            torch.npu.synchronize()
+            result = timing.report()
+            result.update(self.benchmark_process_info())
+            graph = self.model_runner._sfa_full_graph
+            result["root_replays"] = graph.replay_count - self._decode_timing_root_start
+            result["source_binding_updates"] = graph.source_binding_count - self._decode_timing_source_start
+            return result
+        finally:
+            timing.close()
+            self._decode_timing = None
+
     def benchmark_release_resources(self) -> dict:
         from vllm.distributed.kv_transfer import ensure_kv_transfer_shutdown
 
