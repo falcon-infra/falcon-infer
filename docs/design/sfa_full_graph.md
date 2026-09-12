@@ -109,6 +109,15 @@ memoized for that forward only; layer-local KV layout checks remain active.
 metadata is cached across forwards, and the post-replay completion fence is
 unchanged.
 
+The asynchronous lifetime owner replaces that fence with a completion event:
+replay returns without a CPU stream synchronization, while each source batch
+retains independent allocator references until the event completes. Replaced
+or finished requests enter a nonblocking retirement queue; reset and shutdown
+drain leases before allocator teardown. Pointer uploads and replay stay on one
+runner stream, failed submissions retain leases, and a bounded backlog fails
+closed rather than freeing in-flight memory. Native NPU stream/allocator
+validation remains required; CPU ownership tests do not prove it.
+
 For live single-node TP-only DP1/PP1 `mp` workers, source or metadata
 preparation failures use error-only fail-stop: the worker logs the original
 traceback and raises `SystemExit`, allowing the existing process-sentinel

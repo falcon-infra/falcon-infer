@@ -40,6 +40,9 @@ def graph_module(monkeypatch):
         module = ModuleType(name)
         module.__dict__.update(attrs)
         monkeypatch.setitem(sys.modules, name, module)
+    lifetime = ModuleType("vllm.compilation.ascend.sfa_source_lifetime")
+    lifetime.SFASourceLease = Mock(side_effect=lambda sources: SimpleNamespace(close=Mock()))
+    monkeypatch.setitem(sys.modules, lifetime.__name__, lifetime)
     captures = []
     stream = SimpleNamespace(synchronize=Mock())
 
@@ -56,6 +59,8 @@ def graph_module(monkeypatch):
             NPUGraph=lambda: SimpleNamespace(replay=Mock()),
             graph=capture,
             current_stream=lambda: stream,
+            synchronize=Mock(),
+            Event=lambda: SimpleNamespace(record=Mock(), query=Mock(return_value=True)),
         ),
         raising=False,
     )

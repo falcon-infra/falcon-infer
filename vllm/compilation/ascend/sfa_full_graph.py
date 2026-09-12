@@ -13,6 +13,10 @@ from vllm.config import CUDAGraphMode
 from vllm.forward_context import get_forward_context
 from vllm.platforms import current_platform
 
+from vllm.compilation.ascend.sfa_source_lifetime import SFASourceLease
+
+MAX_PENDING_SOURCE_RETIREMENTS = 64
+
 
 def tensor_signature(value: Any) -> Any:
     """Describe inputs, inspecting each shared tensor once within this call."""
@@ -60,6 +64,8 @@ class SFAValidatedCall:
 class SFASourceBinding:
     request_ids: tuple[str, ...]
     sources: tuple[Any, ...]
+    lease: Any = None
+    completion: Any = None
 
     def matches(self, request_ids: tuple[str, ...], sources: tuple[Any, ...]) -> bool:
         # PreparedSparseSource is an immutable, request-owned snapshot. A store,
@@ -88,15 +94,45 @@ class SFAFullGraph:
         self.source_bindings: dict[int, SFASourceBinding] = {}
         self.source_binding_count = 0
         self._generation = 0
+        self.retired_sources: list[SFASourceBinding] = []
+        self._submission_failed = False
+        self._stream = None
 
     def clear(self) -> None:
         """Discard graphs before profiling's temporary KV storage is released."""
+        if self.entries or self.source_bindings or self.retired_sources:
+            torch.npu.synchronize()
+        for binding in (*self.source_bindings.values(), *self.retired_sources):
+            if binding.lease is not None:
+                binding.lease.close()
         self.entries.clear()
         self.sealed = False
         self.replay_count = 0
         self.source_bindings.clear()
         self.source_binding_count = 0
         self._generation += 1
+        self.retired_sources.clear()
+        self._submission_failed = False
+        self._stream = None
+
+    def collect_retired_sources(self) -> None:
+        if self._submission_failed:
+            raise RuntimeError("Full SFA submission failed; source leases retained until shutdown")
+        pending = []
+        for binding in self.retired_sources:
+            if binding.completion.query():
+                binding.lease.close()
+            else:
+                pending.append(binding)
+        self.retired_sources = pending
+
+    def release_requests(self, request_ids: set[str]) -> None:
+        if request_ids:
+            for capacity, binding in tuple(self.source_bindings.items()):
+                if request_ids.intersection(binding.request_ids):
+                    self.retired_sources.append(self.source_bindings.pop(capacity))
+        if self.retired_sources:
+            self.collect_retired_sources()
 
     def bind_sources(
         self,
@@ -108,14 +144,43 @@ class SFAFullGraph:
         capacity = get_forward_context().staged_sfa_graph_key.request_capacity
         if len(sources) > capacity or len(request_ids) != len(sources):
             raise ValueError("Full SFA source lanes do not match request IDs/capacity")
+        self.collect_retired_sources()
         previous = self.source_bindings.get(capacity)
         if previous is not None and previous.matches(request_ids, sources):
             return False
+        stream = torch.npu.current_stream()
+        if self._stream is not None and self._stream != stream:
+            raise RuntimeError("Full SFA metadata, pointer uploads and replay must use the same stream")
+        self._stream = stream
+        if len(self.retired_sources) >= MAX_PENDING_SOURCE_RETIREMENTS:
+            raise RuntimeError("Full SFA source retirements are not completing; refusing unbounded retention")
+        lease = SFASourceLease(sources)
+        try:
+            completion = torch.npu.Event()
+        except BaseException:
+            lease.close()
+            raise
+        binding = SFASourceBinding(request_ids, sources, lease, completion)
         # Invalidate partial writes before trying to bind a replacement batch.
         self.source_bindings.pop(capacity, None)
-        for layer_id, transfer in enumerate(transfers()):
-            transfer.bind_batch(sources, layer_id)
-        self.source_bindings[capacity] = SFASourceBinding(request_ids, sources)
+        if previous is not None:
+            self.retired_sources.append(previous)
+        try:
+            for layer_id, transfer in enumerate(transfers()):
+                transfer.bind_batch(sources, layer_id)
+        except BaseException:
+            self.retired_sources.append(binding)
+            try:
+                completion.record(stream)
+            except BaseException:
+                self._submission_failed = True
+            raise
+        self.source_bindings[capacity] = binding
+        try:
+            completion.record(stream)
+        except BaseException:
+            self._submission_failed = True
+            raise
         self.source_binding_count += 1
         return True
 
@@ -126,6 +191,9 @@ class SFAFullGraph:
                 f"Incomplete full SFA capture: expected={keys}, "
                 f"actual={tuple(self.entries)}"
             )
+        if self._stream is not None:
+            torch.npu.synchronize()
+            self._stream = None
         self.sealed = True
         return len(self.entries)
 
@@ -146,6 +214,8 @@ class SFAFullGraph:
 
     def prepare_run(self, *, graph_inputs: Any = None, **kwargs: Any) -> SFAValidatedCall:
         """Validate once, before the runner's existing error agreement."""
+        if self._submission_failed:
+            raise RuntimeError("Full SFA submission failed; cannot replay again")
         signature = self.validate_inputs(graph_inputs=graph_inputs, **kwargs)
         context = get_forward_context()
         key = context.staged_sfa_graph_key
@@ -171,7 +241,8 @@ class SFAFullGraph:
         elif kwargs or graph_inputs is not None:
             raise RuntimeError("Cannot replace already validated full SFA graph inputs")
         if (
-            not isinstance(prepared, SFAValidatedCall)
+            self._submission_failed
+            or not isinstance(prepared, SFAValidatedCall)
             or prepared.owner is not self
             or prepared.generation != self._generation
             or prepared.context is not context
@@ -210,10 +281,20 @@ class SFAFullGraph:
             self.entries[key] = SFAFullGraphEntry(graph, output, signature)
             compilation_counter.num_cudagraph_captured += 1
             return output
+        binding = self.source_bindings.get(getattr(key, "request_capacity", None))
+        if hasattr(key, "request_capacity") and binding is None:
+            raise RuntimeError("Full SFA replay requires a bound source batch, including empty lanes")
+        stream = torch.npu.current_stream()
+        if self._stream is not None and self._stream != stream:
+            raise RuntimeError("Full SFA replay stream differs from pointer upload stream")
+        self._stream = stream
         with torch.profiler.record_function("sfa_full_graph::target_replay"):
-            entry.graph.replay()
-        # One model-boundary fence protects shared CPU source leases and staged
-        # output/save consumers. There are no per-layer host waits or callbacks.
-        torch.npu.current_stream().synchronize()
+            try:
+                entry.graph.replay()
+                if binding is not None:
+                    binding.completion.record(stream)
+            except BaseException:
+                self._submission_failed = True
+                raise
         self.replay_count += 1
         return entry.output
