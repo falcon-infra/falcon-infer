@@ -138,6 +138,17 @@ or isolated kernel timings. Sampling rows use the existing scoped rejection
 recorder and call original sampler operations exactly once without tensor
 inspection or forced readiness.
 
+The `MinTokensLogitsProcessor` keeps `min_tokens` and stop-token semantics
+unchanged while caching the actual speculative mask's immutable pinned-host/NPU
+index buffers. Cache hits emit layout/mask timing rows but no H2D upload; mask,
+request/batch, draft-length, stream or device changes allocate a fresh source
+and issue one nonblocking upload without overwriting an in-flight DMA buffer or
+adding a completion wait. A growing output history alone does not invalidate an
+unchanged mask. This optimization is active without `--diagnose`; its host
+allocation/fill/upload/mask rows are diagnostic-only. Ordinary NumPy-backed
+host memory remains forbidden for the async copy, and a local host wait is not
+itself evidence of a whole-request TPOT gain.
+
 Full-graph validation is now deduplicated only within one forward. The runner
 creates a single-use `prepare_run()` handoff before the existing error
 agreement/fail-stop boundary; the handoff owns the actual kwargs, context,
