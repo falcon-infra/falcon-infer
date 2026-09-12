@@ -37,3 +37,35 @@ use a floating-point tolerance gate. Alignment stops pooling after the first
 input/history divergence and reports partial coverage. `--trace-residual` may
 be combined with `--compare-output` for additional norm/attention stages; it
 can affect compiler fusion and remains diagnostic rather than acceptance.
+
+## Eight-layer performance and MindStudio profile
+
+Use `tools/sfa_graph_benchmark.py`, not the numerical parity driver, for the
+performance experiment:
+
+```bash
+set -o pipefail
+python tools/sfa_graph_benchmark.py --profile 2>&1 | tee log.log
+```
+
+The driver starts and closes two fresh TP8/DP1 engines sequentially: `staged`
+(`VLLM_ASCEND_SFA_FULL_GRAPH=0`) and `full` (`=1`). Both retain staged graph
+and PIECEWISE compilation; the baseline is not enforce-eager. The workload is
+the eight-layer dummy-weight fixture with MTP1, a 4351-token prompt and 512
+output tokens. It does not install parity probes, snapshots, checkpoint
+restore, per-layer fences or replacement sampling. Prefill is excluded from
+decode timing.
+
+TPOT is measured at the offline engine output boundary, from the first
+committed-token emission to the last, divided by additional committed tokens.
+It includes scheduling, IPC, MTP, sampling and cache work. The report prints
+mean/median/std, reduction and speedup, but has no hard-coded performance pass
+threshold; differing dummy outputs are reported because MTP acceptance or
+routing can confound timing.
+
+With `--profile`, each engine makes a separate decode-only profiler request
+after its timed requests. Both engines exit before trace parsing. The checker
+audits every rank conservatively: `ONE_EXECUTE_PER_ROOT` only proves one
+outermost known ACL execute API in each CPU root scope, while
+`SPLIT_DETECTED` fails and `UNVERIFIED` is not a pass. Device-side graph
+coverage and KV correctness still require manual MindStudio/NPU inspection.
