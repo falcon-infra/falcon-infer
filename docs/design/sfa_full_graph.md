@@ -56,6 +56,15 @@ output tokens. It does not install parity probes, snapshots, checkpoint
 restore, per-layer fences or replacement sampling. Prefill is excluded from
 decode timing.
 
+Each full-graph capture capacity has two target topologies. Before a forward,
+the runner classifies every scheduled request width once on the CPU. An all-Q2
+MTP batch uses `spec_fixed`, the original uniform request-major planner layout;
+Q1-only and mixed Q1/Q2 batches use `decode_bounded`, with device-only lane
+packing and restoration. Without MTP, all-Q1 uses the corresponding uniform
+path. Both topologies retain one root replay, share source tables/resident
+state, and preserve idle-DP participation; capture startup and graph memory
+include both variants.
+
 Defaults are now zero extra warmups and one measured request per mode
 (`--warmups 0 --repeats 1`). One-request TPOT reports `std=null`/`n/a`; it is a
 quick comparison, not a multi-request stability estimate. With `--diagnose`,
@@ -118,6 +127,11 @@ synchronization happen after the request, with bounded event storage and
 not performance acceptance or pure kernel timings. Actual capture/replay,
 synchronization and unrelated device errors still stop startup rather than
 being swallowed as capability limitations.
+
+Per-rank diagnostic output includes `graph_profiles`, counting the selected
+`spec_fixed` and `decode_bounded` topology without reading device tensors. The
+counter is diagnostic only; root replay counts and total TPOT remain the
+comparison contract.
 
 Captured events are recorded inside existing opaque SFA and TP operations at
 startup capture; replay adds no per-layer Python callbacks or graph splits. A

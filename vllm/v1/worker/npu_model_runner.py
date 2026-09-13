@@ -38,6 +38,7 @@ import vllm.envs_ascend as envs_ascend
 from vllm.ascend_forward_context import (
     MoECommType,
     StagedSFAGraphKey,
+    StagedSFAQueryProfile,
     get_mc2_tokens_capacity,
     select_moe_comm_method,
     set_ascend_forward_context,
@@ -2191,8 +2192,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             batch_desc,
                         ),
                         full_graph=(
-                            sfa_full_graph_enabled(self.vllm_config)
-                            and staged_sfa_graph_key is not None
+                            staged_sfa_graph_key is not None
+                            and staged_sfa_graph_key.query_profile
+                            == StagedSFAQueryProfile.DECODE_BOUNDED
                         ),
                     )
                     if enable_sp() and num_tokens_padded == num_tokens_unpadded:
@@ -2220,8 +2222,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             else None
                         ),
                         full_graph=(
-                            sfa_full_graph_enabled(self.vllm_config)
-                            and staged_sfa_graph_key is not None
+                            staged_sfa_graph_key is not None
+                            and staged_sfa_graph_key.query_profile
+                            == StagedSFAQueryProfile.DECODE_BOUNDED
                         ),
                     )
                 )
@@ -4247,7 +4250,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             if query_width == 1
             else AscendAttentionState.SpecDecoding
         )
-        is_decode_state = self.attn_state == expected_state
+        is_decode_state = self.attn_state == expected_state or (
+            full_graph and self.attn_state == AscendAttentionState.DecodeOnly
+        )
         possible_cold_resume = False
         if (
             not (is_decode_state and graph_configured)
@@ -4357,10 +4362,18 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         ):
             return native(StagedSFARouteReason.UNSUPPORTED_BATCH)
         scheduled = np.asarray(num_scheduled_tokens).reshape(-1)
-        if scheduled.shape != (num_reqs,) or not np.all(
-            ((scheduled >= 1) & (scheduled <= query_width))
-            if full_graph
-            else scheduled == query_width
+        uniform_query_len = (
+            query_width
+            if scheduled.shape == (num_reqs,)
+            and np.all(scheduled == query_width)
+            else 0
+        )
+        if scheduled.shape != (num_reqs,) or (
+            not uniform_query_len
+            and (
+                not full_graph
+                or not np.all((scheduled >= 1) & (scheduled <= query_width))
+            )
         ):
             return native(StagedSFARouteReason.NON_Q1)
         if metadata_reason in (
@@ -4425,6 +4438,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             metadata_reason,
             frontiers=frontiers,
             cold_compact_resumes=cold_resumes,
+            uniform_query_len=uniform_query_len,
         )
 
     def _synchronize_staged_sfa_capture_unsafe_loads(self) -> None:
@@ -4505,6 +4519,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 reason,
                 frontiers=local_route.frontiers,
                 cold_compact_resumes=local_route.cold_compact_resumes,
+                uniform_query_len=local_route.uniform_query_len,
             )
 
         if (
@@ -4533,6 +4548,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         graph_key = (
             StagedSFAGraphKey.bounded_decode(capacity // query_width, query_width)
             if sfa_full_graph_enabled(self.vllm_config)
+            and local_route.uniform_query_len != query_width
             else StagedSFAGraphKey.exact_q1(capacity)
             if query_width == 1
             else StagedSFAGraphKey.fixed_spec(
@@ -4558,6 +4574,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             graph_key=graph_key,
             frontiers=local_route.frontiers,
             cold_compact_resumes=local_route.cold_compact_resumes,
+            uniform_query_len=local_route.uniform_query_len,
         )
 
     def _apply_staged_sfa_route(
@@ -4943,6 +4960,15 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             dp_route_action=dp_route_action,
         )
         staged_sfa_graph_dummy_run = staged_sfa_dummy_batch_size is not None
+        staged_dummy_key = self._staged_sfa_dummy_graph_key(
+            staged_sfa_dummy_batch_size,
+            dp_idle=dp_idle,
+        )
+        bounded_dummy_layout = (
+            staged_dummy_key is not None
+            and staged_dummy_key.query_profile
+            == StagedSFAQueryProfile.DECODE_BOUNDED
+        )
         if dummy_route_action is not None and not staged_sfa_graph_dummy_run:
             fallback_action = (
                 dp_route_action
@@ -5049,6 +5075,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     if staged_sfa_graph_dummy_run
                     else batch_desc.num_reqs
                 ),
+                full_graph=bounded_dummy_layout,
             )
 
             pad_attn = cudagraph_runtime_mode == CUDAGraphMode.FULL
@@ -5062,10 +5089,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     if staged_sfa_graph_dummy_run
                     else max_query_len
                 ),
-                full_graph=(
-                    sfa_full_graph_enabled(self.vllm_config)
-                    and staged_sfa_graph_dummy_run
-                ),
+                full_graph=bounded_dummy_layout,
                 ubatch_slices=ubatch_slices_padded if pad_attn else ubatch_slices,
                 for_cudagraph_capture=is_graph_capturing,
                 num_scheduled_tokens_np=num_scheduled_tokens,
@@ -5124,16 +5148,6 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             ):
                 return self.drafter.model.compute_logits(hidden_states[dummy_indices])
 
-        staged_dummy_key = None
-        if staged_sfa_dummy_batch_size is not None:
-            staged_dummy_key = (
-                StagedSFAGraphKey.exact_q1(staged_sfa_dummy_batch_size)
-                if staged_query_width == 1
-                else StagedSFAGraphKey.fixed_spec(
-                    staged_sfa_dummy_batch_size // staged_query_width,
-                    staged_query_width,
-                )
-            )
         with set_ascend_forward_context(
             attn_metadata,
             self.vllm_config,
@@ -6721,6 +6735,72 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         for _layer_name, impl in self._collect_staged_sfa_impls():
             impl.reset_staged_sfa_capture()
 
+    def _staged_sfa_capture_keys(
+        self, token_capacity: int
+    ) -> tuple[StagedSFAGraphKey, ...]:
+        """Uniform and ragged layouts have distinct graphs at one capacity."""
+        width = self.decode_threshold
+        if token_capacity % width:
+            raise ValueError("SFA capture capacity must be divisible by the query width")
+        uniform = (
+            StagedSFAGraphKey.exact_q1(token_capacity)
+            if width == 1
+            else StagedSFAGraphKey.fixed_spec(token_capacity // width, width)
+        )
+        if not sfa_full_graph_enabled(self.vllm_config):
+            return (uniform,)
+        # Keep the bounded variant for mixed/Q1 MTP batches and idle DP peers.
+        return (
+            uniform,
+            StagedSFAGraphKey.bounded_decode(token_capacity // width, width),
+        )
+
+    def _staged_sfa_dummy_graph_key(
+        self, token_capacity: int | None, *, dp_idle: bool
+    ) -> StagedSFAGraphKey | None:
+        if token_capacity is None:
+            return None
+        capture_key = getattr(self, "_sfa_capture_graph_key", None)
+        if capture_key is not None and not dp_idle:
+            if capture_key.token_capacity != token_capacity:
+                raise RuntimeError(
+                    "SFA dummy capacity differs from the selected capture key"
+                )
+            return capture_key
+        # Idle DP participants use private zero-length attention tables rather
+        # than mutating the live tables used by the uniform graph.
+        return self._staged_sfa_capture_keys(token_capacity)[-1]
+
+    def _warmup_and_capture(
+        self,
+        desc: BatchDescriptor,
+        cudagraph_runtime_mode: CUDAGraphMode,
+        profile_seq_lens: int | None = None,
+        allow_microbatching: bool = False,
+        num_warmups: int | None = None,
+    ):
+        kwargs = dict(
+            cudagraph_runtime_mode=cudagraph_runtime_mode,
+            profile_seq_lens=profile_seq_lens,
+            allow_microbatching=allow_microbatching,
+            num_warmups=num_warmups,
+        )
+        if not (
+            sfa_full_graph_enabled(self.vllm_config)
+            and desc.num_tokens in self._staged_sfa_graph_capture_sizes
+            and not desc.uniform
+            and cudagraph_runtime_mode == CUDAGraphMode.PIECEWISE
+        ):
+            return NPUModelRunnerState._warmup_and_capture(self, desc, **kwargs)
+        previous_key = getattr(self, "_sfa_capture_graph_key", None)
+        try:
+            for key in self._staged_sfa_capture_keys(desc.num_tokens):
+                self._sfa_capture_graph_key = key
+                # Each topology needs its own eager warmup before root capture.
+                NPUModelRunnerState._warmup_and_capture(self, desc, **kwargs)
+        finally:
+            self._sfa_capture_graph_key = previous_key
+
     def capture_model(self) -> int:
         staged_graph_configured = staged_sfa_graph_configured(self.vllm_config)
         if staged_graph_configured and getattr(
@@ -6766,17 +6846,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     f"sizes={capture_sizes}"
                 )
             graph_keys = tuple(
-                (
-                    StagedSFAGraphKey.bounded_decode(size // query_width, query_width)
-                    if sfa_full_graph_enabled(self.vllm_config)
-                    else StagedSFAGraphKey.exact_q1(size)
-                    if query_width == 1
-                    else StagedSFAGraphKey.fixed_spec(
-                        size // query_width,
-                        query_width,
-                    )
-                )
+                key
                 for size in capture_sizes
+                for key in self._staged_sfa_capture_keys(size)
             )
             for layer_name, impl in self._staged_sfa_impls:
                 try:
@@ -6815,7 +6887,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 False,
             ):
                 draft_graph_count = self.drafter.seal_staged_mtp_draft_graphs(
-                    tuple(graph_key.request_capacity for graph_key in graph_keys)
+                    tuple(
+                        dict.fromkeys(
+                            graph_key.request_capacity for graph_key in graph_keys
+                        )
+                    )
                 )
             capture_label = (
                 "[SFA full graph] captured target outer graphs "
