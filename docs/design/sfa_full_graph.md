@@ -158,6 +158,25 @@ retains only constant-time graph-key/lifecycle checks on live replay;
 and source leases still update before replay, and the post-replay completion
 fence/lifetime protection is unchanged.
 
+Full decode also reuses unchanged history boundaries. A builder-owned CPU
+shadow computes the same `min(floor((seq_len - 1) / window) * window, frontier)`
+values using CPU metadata, without per-step NumPy allocation/unique/validation
+passes. Only changed values or row layouts issue an H2D copy. Frontier growth
+or shrink, padding, Q1/Q2 layout and graph-capacity changes are still applied;
+eager/staged/dummy writes invalidate the shadow. In the CPU regression fixture,
+511 consecutive steps cross three windows and issue three uploads, not 511.
+Top-k and selected KV are never cached by this optimization. The staged
+benchmark keeps its original boundary path.
+
+LMCache resolves warm source readiness once per step; only cold bootstrap
+requires another resolution after publication. This is not a cross-step source
+cache: equal-length replacements, index residency and pending loads remain live.
+MTP draft suffixes are initialized at their first payload instead of before the
+target replay. This permits CPU setup to overlap already-submitted target work;
+it does not remove draft work or stream dependencies. Cancelled unused suffixes
+perform no connector setup. Compare total TPOT and MTP timing, not just reduced
+`source.prepare`/`metadata.L0` times.
+
 The asynchronous lifetime owner replaces that fence with a completion event:
 replay returns without a CPU stream synchronization, while each source batch
 retains independent allocator references until the event completes. Replaced

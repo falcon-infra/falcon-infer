@@ -108,6 +108,9 @@ from vllm.v1.attention.backends.ascend.sfa_graph_layout import (
     pack_decode_lanes,
     unpack_decode_lanes,
 )
+from vllm.v1.attention.backends.ascend.sfa_remap_boundary import (
+    SFARemapBoundaryBuffer,
+)
 from vllm.v1.attention.backends.ascend.target_sfa_diagnostics import (
     TARGET_SFA_DIAG_SCHEMA_VERSION,
     active_resident_state_snapshot,
@@ -527,18 +530,38 @@ def _prepare_sfa_remap_boundary(
     is_dummy_run: bool,
     index_topk: int,
     cached_tokens: tuple[int, ...] | None = None,
+    reuse_unchanged: bool = False,
 ) -> torch.Tensor:
-    """Fill the stable Graph-A remap-boundary input once per step.
+    """Prepare the stable Graph-A remap-boundary input for this step.
 
     Connector metadata and request/row mapping are host objects and therefore
     cannot be frozen into the captured runnable. Resolve them eagerly on CPU,
     then copy the final per-row boundary into the builder-owned NPU tensor.
+    Full replay may reuse unchanged values; other paths invalidate that shadow.
     """
     boundary = attn_metadata.decode_remap_boundary
     if boundary is None:
         raise RuntimeError("[SFA sparse remap] boundary storage is unavailable.")
     if attn_metadata.decode_remap_boundary_ready:
         return boundary
+
+    buffer = getattr(attn_metadata, "decode_remap_boundary_buffer", None)
+    if buffer is not None:
+        if reuse_unchanged and cached_tokens is not None and not is_dummy_run:
+            buffer.update(
+                attn_metadata.decode_req_indices_cpu,
+                attn_metadata.prompt_lens_cpu_rows,
+                attn_metadata.seq_lens_cpu,
+                cached_tokens,
+                _decode_window_save_window_size(),
+                index_topk,
+                attn_metadata.decode_scratch_capacity,
+            )
+            attn_metadata.decode_remap_boundary_ready = True
+            return boundary
+        # Eager, staged and dummy preparation share this allocation. Any
+        # external write must invalidate the full-graph CPU shadow first.
+        buffer.invalidate()
 
     prompt_rows = attn_metadata.prompt_lens_cpu_rows
     row_req_indices = attn_metadata.decode_req_indices_cpu
@@ -1054,6 +1077,7 @@ class AscendSFAMetadata:
     prompt_lens_cpu_rows: Any = None
     decode_remap_boundary: torch.Tensor | None = None
     decode_remap_boundary_ready: bool = False
+    decode_remap_boundary_buffer: SFARemapBoundaryBuffer | None = None
 
 
 M = TypeVar("M", bound=AscendSFAMetadata)
@@ -1278,6 +1302,9 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             vllm_config.scheduler_config.max_num_batched_tokens,
             dtype=torch.int32,
             device=device,
+        )
+        self.decode_remap_boundary_buffer = SFARemapBoundaryBuffer(
+            self.decode_remap_boundary
         )
         self.decode_valid_row_indices = torch.empty_like(self.decode_remap_boundary)
         self.decode_req_indices_compact = torch.empty_like(self.decode_remap_boundary)
@@ -1847,6 +1874,7 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             prompt_lens_cpu_rows=rows if plens_cpu is not None else None,
             decode_remap_boundary=self.decode_remap_boundary[:num_input_tokens],
             decode_remap_boundary_ready=False,
+            decode_remap_boundary_buffer=self.decode_remap_boundary_buffer,
             num_decode_tokens=num_decode_rows,
         )
 
@@ -3825,6 +3853,7 @@ class AscendSFAImpl(MLAAttentionImpl):
             is_dummy_run=context.staged_sfa_graph_dummy_run,
             index_topk=self.index_topk,
             cached_tokens=context.staged_sfa_route.frontiers,
+            reuse_unchanged=True,
         )
         if context.staged_sfa_graph_dummy_run:
             state.remap_boundary = boundary

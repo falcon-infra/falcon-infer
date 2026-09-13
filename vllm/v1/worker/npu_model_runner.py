@@ -3473,6 +3473,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             request_ids=request_ids,
                             frontiers=tuple(context.staged_sfa_route.frontiers),
                         )
+                    # Startup-only static validation shares one temporary memo.
+                    # Live preparation updates dynamic boundaries and selects
+                    # preallocated transfers; it does not walk tensor layouts.
                     metadata_checks = {}
                     for name, impl in impls:
                         graph_inputs[name] = impl.prepare_full_graph_layer(
