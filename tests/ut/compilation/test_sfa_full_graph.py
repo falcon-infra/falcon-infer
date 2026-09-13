@@ -100,7 +100,7 @@ def test_no_live_capture_or_changed_keyword_addresses(graph_module):
     wrapper.seal(("q2",))
     context.staged_sfa_graph_dummy_run = False
     with pytest.raises(RuntimeError, match="address or layout"):
-        wrapper.run(Mock(), positions=x.clone())
+        wrapper.validate_inputs(positions=x.clone())
     context.staged_sfa_graph_key = "q1"
     with pytest.raises(RuntimeError, match="live capture is prohibited"):
         wrapper.run(Mock(), positions=x)
@@ -231,7 +231,7 @@ def test_invalid_source_lanes_fail_before_binding(graph_module, sources, request
     lazy.assert_not_called()
 
 
-def test_runner_handoff_checks_inputs_once_per_forward_and_keeps_fence(graph_module, monkeypatch):
+def test_runner_handoff_does_not_walk_inputs_or_fence_on_live_replay(graph_module, monkeypatch):
     module, context, captures, stream = graph_module
     graph = module.SFAFullGraph()
     x = torch.ones(2)
@@ -243,11 +243,11 @@ def test_runner_handoff_checks_inputs_once_per_forward_and_keeps_fence(graph_mod
     for _ in range(20):
         prepared = graph.prepare_run(input_ids=x)
         assert graph.run(Mock(side_effect=AssertionError("target Python")), prepared=prepared) is output
-    assert validate.call_count == 20
+    validate.assert_not_called()
     assert captures[0][0].replay.call_count == 20
-    assert stream.synchronize.call_count == 20
+    assert stream.synchronize.call_count == 0
     with pytest.raises(RuntimeError, match="address or layout"):
-        graph.prepare_run(input_ids=x.clone())
+        graph.validate_inputs(input_ids=x.clone())
 
 
 @pytest.mark.parametrize("change", ["consume", "owner", "clear", "key", "context", "entry", "kwargs", "eager"])

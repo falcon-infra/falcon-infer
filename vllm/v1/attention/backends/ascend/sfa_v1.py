@@ -3803,29 +3803,22 @@ class AscendSFAImpl(MLAAttentionImpl):
         bind_source: bool = True,
         metadata_checks: dict | None = None,
     ) -> dict[str, Any]:
-        """Validate live metadata; optionally bind source tables before replay."""
-        # The native LMCache owner is loaded lazily because graph profiling may
-        # run before the worker connector has been constructed.
-        from lmcache.integration.vllm.utils import lmcache_get_or_create_config
-        from lmcache.v1.npu_connector.sparse_graph import SparseGraphTransfer
+        """Update live boundaries; validate fixed graph inputs only at startup."""
 
         context = get_forward_context()
         state = self._staged_sfa_capture_state
         if state.runtime is None:
             raise RuntimeError(f"Full SFA graph layer was not warmed up: {layer_name}")
         metadata = context.attn_metadata[layer_name]
-        reason = self._cross_layer_ineligible_reason(
-            self._staged_sfa_bridge_buffers[0][
-                : context.staged_sfa_graph_key.token_capacity
-            ],
-            state.runtime[1],
-            metadata,
-            metadata_checks=metadata_checks,
-        )
-        if reason is not None:
-            raise RuntimeError(
-                f"Full SFA graph metadata is ineligible for {layer_name}: {reason}"
+        if context.staged_sfa_graph_dummy_run:
+            reason = self._cross_layer_ineligible_reason(
+                self._staged_sfa_bridge_buffers[0][: context.staged_sfa_graph_key.token_capacity],
+                state.runtime[1],
+                metadata,
+                metadata_checks=metadata_checks,
             )
+            if reason is not None:
+                raise RuntimeError(f"Full SFA graph metadata is ineligible for {layer_name}: {reason}")
         boundary = _prepare_sfa_remap_boundary(
             metadata,
             metadata.req_ids,
@@ -3845,6 +3838,9 @@ class AscendSFAImpl(MLAAttentionImpl):
                 raise RuntimeError(
                     "Full SFA graph transfer was not allocated at startup"
                 )
+            from lmcache.integration.vllm.utils import lmcache_get_or_create_config
+            from lmcache.v1.npu_connector.sparse_graph import SparseGraphTransfer
+
             transfer = SparseGraphTransfer(
                 tuple(state.runtime[1][:2]),
                 metadata.decode_target_slot_mapping,
@@ -3859,6 +3855,8 @@ class AscendSFAImpl(MLAAttentionImpl):
         # Graph-external saves use store_stream.wait_stream(current_stream).
         # Do not expose an event recorded only during startup eager warmup.
         metadata.reshape_cache_event = None
+        if not context.staged_sfa_graph_dummy_run:
+            return {}
         fields = (
             "cos",
             "sin",

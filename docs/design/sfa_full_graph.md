@@ -149,16 +149,14 @@ allocation/fill/upload/mask rows are diagnostic-only. Ordinary NumPy-backed
 host memory remains forbidden for the async copy, and a local host wait is not
 itself evidence of a whole-request TPOT gain.
 
-Full-graph validation is now deduplicated only within one forward. The runner
-creates a single-use `prepare_run()` handoff before the existing error
-agreement/fail-stop boundary; the handoff owns the actual kwargs, context,
-graph key and generation, and cannot be reused, replaced or used after a
-capture reset. Shared tensor signatures and common attention metadata are
-memoized for that forward only; layer-local KV layout checks remain active.
-`signature.validate` therefore runs once per full target forward, while
-`metadata.shared_check` reports the shared eligibility checks. No mutable
-metadata is cached across forwards, and the post-replay completion fence is
-unchanged.
+Full-graph fixed configuration, KV layouts, shared metadata eligibility and
+input signatures are validated during startup warmup/capture, not on each
+decode. The runner/builder owns stable allocations: contents may update in
+place, while replacing storage requires clear and recapture. `prepare_run()`
+retains only constant-time graph-key/lifecycle checks on live replay;
+`validate_inputs()` remains an explicit diagnostic. Dynamic history boundaries
+and source leases still update before replay, and the post-replay completion
+fence/lifetime protection is unchanged.
 
 The asynchronous lifetime owner replaces that fence with a completion event:
 replay returns without a CPU stream synchronization, while each source batch

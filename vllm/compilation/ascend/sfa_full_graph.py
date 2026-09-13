@@ -213,13 +213,17 @@ class SFAFullGraph:
         return signature
 
     def prepare_run(self, *, graph_inputs: Any = None, **kwargs: Any) -> SFAValidatedCall:
-        """Validate once, before the runner's existing error agreement."""
+        """Select the captured entry; inspect layouts only during startup."""
         if self._submission_failed:
             raise RuntimeError("Full SFA submission failed; cannot replay again")
-        signature = self.validate_inputs(graph_inputs=graph_inputs, **kwargs)
         context = get_forward_context()
         key = context.staged_sfa_graph_key
-        return SFAValidatedCall(self, self._generation, context, key, self.entries.get(key), signature, kwargs)
+        entry = self.entries.get(key)
+        if context.staged_sfa_graph_dummy_run or entry is None:
+            signature = self.validate_inputs(graph_inputs=graph_inputs, **kwargs)
+        else:
+            signature = entry.signature
+        return SFAValidatedCall(self, self._generation, context, key, entry, signature, kwargs)
 
     def run(
         self,
