@@ -3,10 +3,13 @@
 """CPU contracts for the native online TP4 x DP2 SFA reproducer."""
 
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
+from urllib.error import HTTPError
 
 import pytest
 
@@ -54,6 +57,8 @@ def test_server_reproduces_native_serving_topology(repro, args):
     assert argument(full, "--worker-cls") == (
         "vllm.v1.worker.sfa_benchmark_worker.SFABenchmarkWorker"
     )
+    assert "--no-async-scheduling" not in full
+    assert "--async-scheduling" not in full
     assert argument(full, "--hf-overrides") == json.dumps({"num_hidden_layers": 8})
     assert argument(full, "--max-num-seqs") == "16"
     assert argument(full, "--max-num-batched-tokens") == "4096"
@@ -153,6 +158,72 @@ def test_diagnostics_disable_other_recorder_and_serialize_prompt(repro, args, mo
     )
     repro.timing_rpc(args, "benchmark_start_decode_timing")
     assert captured[0][1]["args"] == ["30000"]
+
+
+@pytest.mark.parametrize("with_server_log", [False, True])
+def test_rpc_error_preserves_http_body_and_worker_trace(
+    repro, args, monkeypatch, tmp_path, with_server_log
+):
+    error = HTTPError(
+        "http://127.0.0.1:9000/collective_rpc",
+        500,
+        "Internal Server Error",
+        {},
+        io.BytesIO(b'{"detail":"Worker failed during diagnostic setup"}'),
+    )
+    opener = SimpleNamespace(open=Mock(side_effect=error))
+    monkeypatch.setattr(
+        repro.urllib.request,
+        "build_opener",
+        Mock(return_value=opener),
+    )
+    log_path = tmp_path / "server.log"
+    log_path.write_text(
+        "old line\n" * 10000 + "RuntimeError: actual worker exception\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError) as caught:
+        repro.timing_rpc(
+            args,
+            "benchmark_start_decode_timing",
+            server_log=log_path if with_server_log else None,
+        )
+    assert caught.value.__cause__ is error
+    message = str(caught.value)
+    assert "benchmark_start_decode_timing failed: HTTP 500" in message
+    assert "Worker failed during diagnostic setup" in message
+    if with_server_log:
+        assert str(log_path) in message
+        assert "RuntimeError: actual worker exception" in message
+        assert len(message) < 8192
+    request = opener.open.call_args.args[0]
+    assert json.loads(request.data)["args"] == ["30000"]
+
+
+def test_unreadable_server_log_does_not_hide_rpc_error(repro, args, monkeypatch, tmp_path):
+    error = HTTPError(
+        "http://127.0.0.1:9000/collective_rpc",
+        500,
+        "Internal Server Error",
+        {},
+        io.BytesIO(b"failed"),
+    )
+    monkeypatch.setattr(repro, "request_json", Mock(side_effect=error))
+    with pytest.raises(RuntimeError, match="HTTP 500") as caught:
+        repro.timing_rpc(
+            args,
+            "benchmark_stop_decode_timing",
+            server_log=tmp_path / "missing.log",
+        )
+    assert "Unable to read" in str(caught.value)
+
+
+def test_timing_summary_exposes_actual_async_policy(repro, capsys):
+    repro.print_timing(
+        "full",
+        {"results": [{"async_scheduling": True}, {"async_scheduling": True}]},
+    )
+    assert "full async_workers=2/2" in capsys.readouterr().out
 
 
 def test_diagnostic_summary_separates_dp_and_failure_agreement(repro, capsys):

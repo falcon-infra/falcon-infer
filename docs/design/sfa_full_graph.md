@@ -247,3 +247,14 @@ reproduction. The native LMCache configuration validator rejects that
 combination before inference. `--diagnose` adds host timings, not a profile;
 omit it for clean latency measurements. Server logs are retained under
 `profile/sfa-serving-*/{staged,full}/server.log`.
+
+Serving diagnostics preserve the server's existing scheduling policy; they do
+not add `--no-async-scheduling`. With async outputs, the recorder measures
+worker launch/prepare/forward/sampling scopes without reading token tensors or
+forcing deferred output completion. `sampled_tokens_histogram` is empty and
+`sampled_tokens_histogram_available=false`; output-token counts and TPOT remain
+the client benchmark's responsibility. `async_workers=N/M` reports the actual
+policy returned by the RPC. Host spans exclude deferred readback completion and
+must not be summed as non-overlapping full-token latency. If a diagnostic RPC
+fails, the reproducer includes its method, HTTP response body and a bounded tail
+of the corresponding server log.

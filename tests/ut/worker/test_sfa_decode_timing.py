@@ -70,6 +70,13 @@ def test_route_histogram_counts_selected_profile_without_tensor_reads(timing_mod
     assert runner._staged_sfa_live_route is original
 
 
+def test_async_report_marks_deferred_output_histogram_unavailable(timing_module):
+    report = timing_module.DecodeTiming(async_scheduling=True).report()
+    assert report["async_scheduling"] is True
+    assert report["sampled_tokens_histogram_available"] is False
+    assert report["sampled_tokens_histogram"] == {}
+
+
 def test_exclusive_wall_and_cpu_do_not_double_count(timing_module, monkeypatch):
     ticks = iter([0, 1_000_000, 4_000_000, 10_000_000])
     cpu = iter([0, 1_000_000, 2_000_000, 3_000_000])
@@ -159,7 +166,8 @@ def test_scope_failure_keeps_original_exception_and_unwinds_stack(timing_module)
     assert set(timing.report()["stages"]) == {"parent", "child"}
 
 
-def test_worker_rpc_paths_install_and_restore_native_timing(monkeypatch):
+@pytest.mark.parametrize("async_scheduling", [False, True])
+def test_worker_rpc_paths_install_and_restore_native_timing(monkeypatch, async_scheduling):
     install = Mock()
     timing = SimpleNamespace(close=Mock(), report=Mock(return_value={"decode_steps": 3}))
     install.return_value = timing
@@ -184,7 +192,10 @@ def test_worker_rpc_paths_install_and_restore_native_timing(monkeypatch):
     exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
     graph = SimpleNamespace(replay_count=100, source_binding_count=5)
     worker = SimpleNamespace(
-        model_runner=SimpleNamespace(_sfa_full_graph=graph, use_async_scheduling=False),
+        model_runner=SimpleNamespace(
+            _sfa_full_graph=graph,
+            use_async_scheduling=async_scheduling,
+        ),
         benchmark_process_info=lambda: {"rank": 1, "pid": 123},
     )
     assert namespace["benchmark_start_decode_timing"](worker, "5000") == {"rank": 1, "pid": 123}
