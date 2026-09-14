@@ -220,3 +220,30 @@ and empty batches rebind. `full.json` records
 `source_binding_updates_per_rank` beside root replay counts, sampled outside
 timed requests. This does not suppress graph-internal KV loads or metadata
 address checks; it only removes unchanged source-table rebinding work.
+
+### Online serving reproduction
+
+For the serving regression, use the native TP4 x DP2 + EP reproducer on one
+eight-NPU host rather than the TP8/DP1 offline benchmark:
+
+```bash
+set -o pipefail
+python tools/sfa_serving_repro.py --diagnose --prompt-tokens 131614 \
+  --output-tokens 1000 2>&1 | tee log.log
+grep -aE '\[SFA_SERVING(_TIMING)?\]' log.log
+```
+
+Both modes use the eight-layer dummy model, recompute scheduler, serving graph
+buckets, and one active request routed to DP0 while DP1 is idle. Cold-compact
+loading uses a strict shared CPU cache with a rank0 store and passive TP readers;
+`save_only_first_rank=true` is applied together with the shared-cache flags.
+The 8-GiB CPU-cache budget is per DP group, so the two local groups need about
+16 GiB of free `/dev/shm` in total. No remote cache is used. These cache flags
+are identical between modes; only `VLLM_ASCEND_SFA_FULL_GRAPH` differs.
+
+The offline benchmark deliberately keeps independent per-rank CPU caches and
+`save_only_first_rank=false`; do not copy that policy into serving cold-compact
+reproduction. The native LMCache configuration validator rejects that
+combination before inference. `--diagnose` adds host timings, not a profile;
+omit it for clean latency measurements. Server logs are retained under
+`profile/sfa-serving-*/{staged,full}/server.log`.

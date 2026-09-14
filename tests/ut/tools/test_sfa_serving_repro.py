@@ -73,6 +73,27 @@ def test_server_reproduces_native_serving_topology(repro, args):
     assert full_env["PD_SERVING_PERF"] == "1"
 
 
+@pytest.mark.parametrize("mode", ["staged", "full"])
+@pytest.mark.parametrize("diagnose", [False, True])
+def test_serving_cold_compact_policy_is_shared_and_strict(repro, args, mode, diagnose):
+    environment = repro.serving_environment(mode, args.devices, diagnose=diagnose)
+    assert environment["LMCACHE_ENABLE_DSA_COLD_COMPACT_LOAD"] == "true"
+    assert environment["LMCACHE_ENABLE_SHARED_CPU_CACHE"] == "true"
+    assert environment["LMCACHE_SHARED_CPU_CACHE_STRICT"] == "true"
+    assert json.loads(environment["LMCACHE_EXTRA_CONFIG"]) == {
+        "save_only_first_rank": True
+    }
+
+
+def test_serving_cache_policy_does_not_change_offline_benchmark(repro, args):
+    before = repro.benchmark_environment("full", args.devices)
+    repro.serving_environment("full", args.devices, diagnose=True)
+    after = repro.benchmark_environment("full", args.devices)
+    assert after == before
+    assert after["LMCACHE_ENABLE_SHARED_CPU_CACHE"] == "false"
+    assert json.loads(after["LMCACHE_EXTRA_CONFIG"])["save_only_first_rank"] is False
+
+
 def test_client_is_one_request_without_hidden_probe_or_warmup(repro, args, tmp_path):
     command = repro.client_command(args, tmp_path)
     assert argument(command, "--num-prompts") == "1"
