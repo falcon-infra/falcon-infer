@@ -88,6 +88,7 @@ def routing():
         "_staged_sfa_local_route",
         "_staged_sfa_live_route",
         "_apply_staged_sfa_route",
+        "_coordinate_sfa_full_graph_preparation",
         "_staged_sfa_capture_keys",
         "_staged_sfa_dummy_graph_key",
         "_warmup_and_capture",

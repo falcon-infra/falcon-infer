@@ -187,7 +187,8 @@ def test_worker_rpc_paths_install_and_restore_native_timing(monkeypatch):
         model_runner=SimpleNamespace(_sfa_full_graph=graph, use_async_scheduling=False),
         benchmark_process_info=lambda: {"rank": 1, "pid": 123},
     )
-    assert namespace["benchmark_start_decode_timing"](worker, 5000) == {"rank": 1, "pid": 123}
+    assert namespace["benchmark_start_decode_timing"](worker, "5000") == {"rank": 1, "pid": 123}
+    assert install.call_args.kwargs["prompt_tokens"] == 5000
     graph.replay_count += 3
     graph.source_binding_count += 1
     result = namespace["benchmark_stop_decode_timing"](worker)
