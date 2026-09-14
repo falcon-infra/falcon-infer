@@ -263,3 +263,18 @@ policy returned by the RPC. Host spans exclude deferred readback completion and
 must not be summed as non-overlapping full-token latency. If a diagnostic RPC
 fails, the reproducer includes its method, HTTP response body and a bounded tail
 of the corresponding server log.
+
+In `--diagnose` mode each worker also watches host RPC progress, including idle
+DP dummy batches and gaps after asynchronous output submission. After 30 seconds
+without progress it emits at most one `[SFA_SERVING_STALL]` JSON snapshot with
+DP/TP identity, the last RPC phase, root-replay count and selected host thread
+stacks. A daemon checks every five seconds; it adds no per-layer hooks, device
+queries, barriers or tensor reads. This observes a host stall and does not prove
+which device operation is at fault. The observer is absent from clean/offline
+runs and is removed when timing stops. Snapshots are copied from server logs
+during cleanup even when engine death prevents the stop-timing RPC. Use
+`--order full` to diagnose the full-only case without rerunning staged.
+
+The driver rejects incomplete generation even if the client labels the stream
+successful: the response must contain exactly the requested output-token count.
+An interrupted one-token response is not a valid zero-TPOT measurement.

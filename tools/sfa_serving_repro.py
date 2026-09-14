@@ -240,6 +240,25 @@ def server_log_tail(log_path: Path) -> str:
         return f"Unable to read {log_path}: {exc}"
 
 
+def print_stall_snapshots(mode: str, log_path: Path) -> None:
+    """Forward bounded worker snapshots even after engine death breaks RPC."""
+    marker = "[SFA_SERVING_STALL] "
+    try:
+        with log_path.open(encoding="utf-8", errors="replace") as log:
+            for line in log:
+                if marker in line:
+                    print(
+                        f"[SFA_SERVING_STALL] mode={mode} "
+                        + line.split(marker, 1)[1].rstrip(),
+                        flush=True,
+                    )
+    except OSError as exc:
+        print(
+            f"[SFA_SERVING] Unable to read stall snapshots from {log_path}: {exc}",
+            flush=True,
+        )
+
+
 def timing_rpc(
     args: argparse.Namespace,
     method: str,
@@ -288,6 +307,20 @@ def run_mode(args: argparse.Namespace, mode: str, root: Path) -> dict:
                 check=True,
                 env=client_environment(),
             )
+            result = json.loads(
+                (mode_dir / "client.json").read_text(encoding="utf-8")
+            )
+            if (
+                result.get("completed") != 1
+                or result.get("failed")
+                or result.get("output_lens") != [args.output_tokens]
+            ):
+                raise RuntimeError(
+                    f"{mode} incomplete generation: expected one request with "
+                    f"{args.output_tokens} output tokens; completed={result.get('completed')} "
+                    f"failed={result.get('failed')} output_lens={result.get('output_lens')}.\n"
+                    f"Server log: {log_path}\n{server_log_tail(log_path)}"
+                )
             if args.diagnose:
                 timing = timing_rpc(args, "benchmark_stop_decode_timing", server_log=log_path)
                 (mode_dir / "timing.json").write_text(
@@ -295,10 +328,11 @@ def run_mode(args: argparse.Namespace, mode: str, root: Path) -> dict:
                 )
                 print_timing(mode, timing)
         finally:
-            stop_server(process)
-    result = json.loads((mode_dir / "client.json").read_text(encoding="utf-8"))
-    if result.get("completed") != 1 or result.get("failed"):
-        raise RuntimeError(f"{mode} client did not complete exactly one request: {result}")
+            try:
+                stop_server(process)
+            finally:
+                if args.diagnose:
+                    print_stall_snapshots(mode, log_path)
     return result
 
 
@@ -386,7 +420,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--output-dir", type=Path, default=Path("profile"))
     parser.add_argument(
-        "--order", choices=("staged,full", "full,staged"), default="staged,full"
+        "--order",
+        choices=("staged,full", "full,staged", "staged", "full"),
+        default="staged,full",
     )
     parser.add_argument(
         "--diagnose",
@@ -399,6 +435,14 @@ def main() -> None:
     root = Path(mkdtemp(prefix="sfa-serving-", dir=args.output_dir.resolve()))
     print(f"[SFA_SERVING] results: {root}", flush=True)
     results = {mode: run_mode(args, mode, root) for mode in args.order.split(",")}
+    if len(results) == 1:
+        mode, result = next(iter(results.items()))
+        print(
+            f"[SFA_SERVING] {mode} completed: output_lens={result['output_lens']} "
+            f"TPOT={result.get('mean_tpot_ms')}ms; single-mode run, no speedup comparison",
+            flush=True,
+        )
+        return
     comparison = compare_results(results["staged"], results["full"])
     comparison["config"] = {
         "model": args.model,

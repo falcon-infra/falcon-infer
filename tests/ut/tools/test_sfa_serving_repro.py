@@ -125,6 +125,53 @@ def test_client_loads_local_tokenizer_but_requests_server_alias(
     )
 
 
+@pytest.mark.parametrize("mode", ["full", "staged"])
+def test_single_mode_diagnostic_does_not_claim_speedup(
+    repro, args, tmp_path, monkeypatch, capsys, mode
+):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sfa_serving_repro.py",
+            "--model",
+            args.model,
+            "--output-dir",
+            str(tmp_path / "results"),
+            "--order",
+            mode,
+            "--diagnose",
+        ],
+    )
+    run = Mock(return_value={"output_lens": [512], "mean_tpot_ms": 42})
+    compare = Mock(side_effect=AssertionError("single mode has no comparison"))
+    monkeypatch.setattr(repro, "run_mode", run)
+    monkeypatch.setattr(repro, "compare_results", compare)
+    repro.main()
+    assert run.call_count == 1 and run.call_args.args[1] == mode
+    compare.assert_not_called()
+    assert "single-mode run, no speedup comparison" in capsys.readouterr().out
+
+
+def test_stall_snapshots_survive_later_engine_error(repro, tmp_path, capsys):
+    log = tmp_path / "server.log"
+    reports = [
+        json.dumps({"dp_rank": rank, "last_phase": "execute_dummy_batch.enter"})
+        for rank in (0, 1)
+    ]
+    log.write_text(
+        "\n".join("(Worker) [SFA_SERVING_STALL] " + report for report in reports)
+        + "\n"
+        + "later engine error\n" * 10000,
+        encoding="utf-8",
+    )
+    repro.print_stall_snapshots("full", log)
+    output = capsys.readouterr().out
+    assert output.count("[SFA_SERVING_STALL] mode=full") == 2
+    assert all(report in output for report in reports)
+    assert "later engine error" not in output
+
+
 def test_comparison_requires_paired_token_lengths_and_reports_regression(repro):
     staged = {
         "input_lens": [30000],

@@ -316,6 +316,15 @@ def install_decode_timing(worker, connector, *, prompt_tokens: int, event_factor
                 device=True,
                 sample_device=True,
             )
+        config = getattr(worker, "vllm_config", None)
+        if (
+            config is not None
+            and config.additional_config.get("sfa_benchmark_serving") is True
+        ):
+            from vllm.v1.worker.sfa_serving_stall import ServingStallDiagnostic
+
+            stall = ServingStallDiagnostic(worker, timing).start()
+            timing.patches.callback(stall.close)
     except BaseException:
         timing.close()
         raise
