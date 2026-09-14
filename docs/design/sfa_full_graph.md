@@ -233,6 +233,11 @@ python tools/sfa_serving_repro.py --diagnose --prompt-tokens 131614 \
 grep -aE '\[SFA_SERVING(_TIMING)?\]' log.log
 ```
 
+The client loads its tokenizer from the local `--model` directory, with
+`--trust-remote-code` matching the server. `sfa-serving-repro` is only the API
+model alias, not a model/tokenizer repository to download; the local model
+directory must include tokenizer files.
+
 Both modes use the eight-layer dummy model, recompute scheduler, serving graph
 buckets, and one active request routed to DP0 while DP1 is idle. Cold-compact
 loading uses a strict shared CPU cache with a rank0 store and passive TP readers;

@@ -112,6 +112,19 @@ def test_client_is_one_request_without_hidden_probe_or_warmup(repro, args, tmp_p
     assert "--num-warmups" not in command
 
 
+@pytest.mark.parametrize("model_directory", ["GLM-5.1-w4a8", "custom model"])
+def test_client_loads_local_tokenizer_but_requests_server_alias(
+    repro, args, tmp_path, model_directory
+):
+    args.model = str(tmp_path / model_directory)
+    command = repro.client_command(args, tmp_path)
+    assert argument(command, "--tokenizer") == args.model
+    assert "--trust-remote-code" in command
+    assert argument(command, "--model") == argument(
+        repro.server_command(args, "full"), "--served-model-name"
+    )
+
+
 def test_comparison_requires_paired_token_lengths_and_reports_regression(repro):
     staged = {
         "input_lens": [30000],
