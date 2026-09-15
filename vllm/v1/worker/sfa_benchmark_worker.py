@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Eight-layer fixture; optional diagnostics, disabled in clean performance runs."""
+"""SFA fixture or real-checkpoint benchmark; optional request diagnostics."""
 
 import os
 from unittest.mock import patch
@@ -15,7 +15,7 @@ from vllm.v1.worker.sfa_parity_worker import SFAParityWorker, deterministic_dumm
 
 
 class SFABenchmarkWorker(NPUWorker):
-    """Only explicitly selected by tools/sfa_graph_benchmark.py.
+    """Only explicitly selected by the offline/serving benchmark drivers.
 
     Deliberately NOT a subclass of SFAParityWorker. Reuse its startup-only
     quantization adjustment, not its load_model, forward wrappers, snapshots,
@@ -49,14 +49,26 @@ class SFABenchmarkWorker(NPUWorker):
             raise ValueError(
                 "Use the isolated SFA benchmark drivers and their exact TP/DP topology"
             )
-        # This method only reads/replaces vllm_config.quant_config. It installs
-        # no hooks and needs no parity request/reference state.
-        coordinated_check(
-            lambda: SFAParityWorker._prepare_quant_config(self),
-            group=get_tp_group(),
-            phase="benchmark startup MTP quantization",
+        full_model = (
+            self.vllm_config.additional_config.get("sfa_benchmark_full_model") is True
         )
-        original = DummyModelLoader.load_weights
+        if full_model:
+            if (
+                not serving_repro
+                or self.vllm_config.load_config.load_format
+                not in ("auto", "safetensors")
+            ):
+                raise ValueError(
+                    "Full-model benchmarks require the serving driver and real checkpoint weights"
+                )
+        else:
+            # Only the truncated dummy fixture needs its MTP quantization
+            # entries remapped. Real checkpoints keep their original config.
+            coordinated_check(
+                lambda: SFAParityWorker._prepare_quant_config(self),
+                group=get_tp_group(),
+                phase="benchmark startup MTP quantization",
+            )
 
         graph_timing = self.vllm_config.additional_config.get("sfa_benchmark_graph_timing", False)
         if graph_timing:
@@ -80,11 +92,16 @@ class SFABenchmarkWorker(NPUWorker):
                     flush=True,
                 )
 
-        def load(loader, model, model_config):
-            deterministic_dummy_load(original, loader, model, model_config)
-
-        with patch.object(DummyModelLoader, "load_weights", load):
+        if full_model:
             super().load_model()
+        else:
+            original = DummyModelLoader.load_weights
+
+            def load(loader, model, model_config):
+                deterministic_dummy_load(original, loader, model, model_config)
+
+            with patch.object(DummyModelLoader, "load_weights", load):
+                super().load_model()
         if graph_timing:
             from vllm.forward_context import get_forward_context
 

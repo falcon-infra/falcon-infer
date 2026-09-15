@@ -389,8 +389,9 @@ def test_parent_never_continues_after_preflight_or_engine_failure(driver, args, 
 @pytest.mark.parametrize("diagnose", [False, True])
 @pytest.mark.parametrize("supported", [False, True])
 @pytest.mark.parametrize("serving", [False, True])
+@pytest.mark.parametrize("full_model", [False, True])
 def test_worker_uses_only_fixture_loading_not_parity_execution(
-    monkeypatch, diagnose, supported, serving
+    monkeypatch, diagnose, supported, serving, full_model
 ):
     pytest.importorskip("torch")
     events = []
@@ -401,7 +402,11 @@ def test_worker_uses_only_fixture_loading_not_parity_execution(
 
     class NPU:
         def load_model(self):
-            Dummy().load_weights(None, None)
+            if full_model:
+                assert self.vllm_config.quant_config is checkpoint_quant
+                events.append("checkpoint weights")
+            else:
+                Dummy().load_weights(None, None)
             events.append("production load")
             self.model_runner = object()
 
@@ -449,11 +454,15 @@ def test_worker_uses_only_fixture_loading_not_parity_execution(
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     worker = module.SFABenchmarkWorker()
+    checkpoint_quant = object()
     worker.vllm_config = SimpleNamespace(
+        quant_config=checkpoint_quant,
+        load_config=SimpleNamespace(load_format="auto" if full_model else "dummy"),
         additional_config={
             "sfa_benchmark": True,
             "sfa_benchmark_graph_timing": diagnose,
             "sfa_benchmark_serving": serving,
+            "sfa_benchmark_full_model": full_model,
         },
         parallel_config=SimpleNamespace(
             tensor_parallel_size=4 if serving else 8,
@@ -463,9 +472,20 @@ def test_worker_uses_only_fixture_loading_not_parity_execution(
         ),
     )
     original = Dummy.load_weights
+    if full_model and not serving:
+        with pytest.raises(ValueError, match="Full-model benchmarks require"):
+            worker.load_model()
+        assert not events
+        return
     worker.load_model()
-    expected = ["quant remap"] + (["event support check"] if diagnose else [])
-    expected += ["original weights", "integer weights", "production load"]
+    expected = ([] if full_model else ["quant remap"]) + (
+        ["event support check"] if diagnose else []
+    )
+    expected += (
+        ["checkpoint weights"]
+        if full_model
+        else ["original weights", "integer weights"]
+    ) + ["production load"]
     expected += ["install capture probes"] if diagnose and supported else []
     assert events == expected
     assert getattr(worker, "_graph_phase_timing", None) == ("probes" if diagnose and supported else None)

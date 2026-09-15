@@ -39,6 +39,8 @@ def args(tmp_path):
         output_tokens=512,
         port=9000,
         diagnose=False,
+        full_model=False,
+        cpu_cache_gb=None,
     )
 
 
@@ -78,6 +80,53 @@ def test_server_reproduces_native_serving_topology(repro, args):
     assert full_env["PD_SERVING_PERF"] == "1"
 
 
+@pytest.mark.parametrize("layers", [61, 78, 79])
+def test_full_model_preserves_checkpoint_layers_and_serving_topology(
+    repro, args, layers
+):
+    args.full_model = True
+    Path(args.model, "config.json").write_text(
+        json.dumps({"num_hidden_layers": layers}), encoding="utf-8"
+    )
+    repro.validate_args(args)
+    assert repro.model_layers(args) == layers
+    staged, full = [repro.server_command(args, mode) for mode in ("staged", "full")]
+    assert staged == full
+    assert "--hf-overrides" not in full
+    assert argument(full, "--load-format") == "auto"
+    assert argument(full, "--tensor-parallel-size") == "4"
+    assert argument(full, "--data-parallel-size") == "2"
+    assert json.loads(argument(full, "--additional-config"))["sfa_benchmark_full_model"] is True
+
+
+@pytest.mark.parametrize("cache_gb,expected", [(None, 32), (48, 48)])
+def test_full_model_cache_budget_and_uncapped_sparse_transfer(
+    repro, args, cache_gb, expected
+):
+    args.full_model = True
+    for mode in ("staged", "full"):
+        environment = repro.serving_environment(
+            mode,
+            args.devices,
+            diagnose=True,
+            full_model=True,
+            cpu_cache_gb=cache_gb,
+        )
+        assert environment["LMCACHE_MAX_LOCAL_CPU_SIZE"] == str(expected)
+        assert environment["LMCACHE_ENABLE_SHARED_CPU_CACHE"] == "true"
+        assert environment["LMCACHE_ASCEND_SPARSE_TRANSFER_TOPK"] == "0"
+
+
+@pytest.mark.parametrize("layers", [None, 0, -1, True, "79"])
+def test_full_model_requires_valid_original_layer_count(repro, args, layers):
+    args.full_model = True
+    Path(args.model, "config.json").write_text(
+        json.dumps({"num_hidden_layers": layers}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="num_hidden_layers"):
+        repro.validate_args(args)
+
+
 @pytest.mark.parametrize("mode", ["staged", "full"])
 @pytest.mark.parametrize("diagnose", [False, True])
 def test_serving_cold_compact_policy_is_shared_and_strict(repro, args, mode, diagnose):
@@ -110,6 +159,7 @@ def test_client_is_one_request_without_hidden_probe_or_warmup(repro, args, tmp_p
     assert argument(command, "--percentile-metrics") == "ttft,tpot,itl,e2el"
     assert "--ignore-eos" in command and "--save-detailed" in command
     assert "--num-warmups" not in command
+    assert argument(command, "--temperature") == "0"
 
 
 @pytest.mark.parametrize("model_directory", ["GLM-5.1-w4a8", "custom model"])

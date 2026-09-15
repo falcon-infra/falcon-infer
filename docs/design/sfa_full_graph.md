@@ -242,6 +242,15 @@ The client loads its tokenizer from the local `--model` directory, with
 model alias, not a model/tokenizer repository to download; the local model
 directory must include tokenizer files.
 
+By default both modes use an eight-layer dummy model. To load all checkpoint
+layers and real weights, pass `--full-model`; this removes the layer override,
+uses `--load-format auto`, preserves checkpoint quantization, disables the
+debug sparse-transfer top-k cap, and sizes the shared CPU cache at 32 GiB per
+DP group by default. `--cpu-cache-gb` overrides that per-group budget. Full
+checkpoint weights, KV caches and graphs must fit on the eight-NPU host; no
+capacity or performance guarantee is implied. The client uses temperature zero
+in both modes, and layer/weight/cache settings are recorded in comparison.json.
+
 Both modes use the eight-layer dummy model, recompute scheduler, serving graph
 buckets, and one active request routed to DP0 while DP1 is idle. Cold-compact
 loading uses a strict shared CPU cache with a rank0 store and passive TP readers;
