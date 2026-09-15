@@ -106,6 +106,7 @@ def routing():
     runner.attn_state = states.SpecDecoding
     runner.vllm_config = SimpleNamespace(lora_config=None)
     runner.parallel_config = SimpleNamespace(data_parallel_size=4)
+    runner._staged_sfa_dp_bounded_decode = False
     runner._staged_sfa_graph_capture_sizes = (2, 4, 8)
     ns["NPUModelRunnerState"] = SimpleNamespace(
         _warmup_and_capture=Mock(return_value="captured")

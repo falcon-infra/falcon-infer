@@ -63,7 +63,11 @@ Q1-only and mixed Q1/Q2 batches use `decode_bounded`, with device-only lane
 packing and restoration. Without MTP, all-Q1 uses the corresponding uniform
 path. Both topologies retain one root replay, share source tables/resident
 state, and preserve idle-DP participation; capture startup and graph memory
-include both variants.
+include both variants. DP ranks also vote on the bounded-layout requirement in
+the existing batch-coordination row: an idle or ragged peer forces every rank
+to use `decode_bounded`, while an all-busy uniform cohort can return to
+`spec_fixed` on the next step. The vote is refreshed each iteration and does
+not add a separate collective; TP-only execution is unchanged.
 
 Defaults are now zero extra warmups and one measured request per mode
 (`--warmups 0 --repeats 1`). One-request TPOT reports `std=null`/`n/a`; it is a
