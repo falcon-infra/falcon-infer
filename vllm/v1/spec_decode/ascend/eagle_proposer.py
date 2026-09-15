@@ -59,6 +59,9 @@ from vllm.utils.math_utils import cdiv
 from vllm.utils.platform_utils import is_pin_memory_available
 from vllm.v1.attention.backends.ascend.attention_mask import AttentionMaskBuilder
 from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
+from vllm.v1.attention.backends.ascend.sfa_remap_boundary import (
+    prepare_native_sparse_boundaries,
+)
 from vllm.v1.attention.backends.ascend.utils import AscendCommonAttentionMetadata
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.core.sched.output import SchedulerOutput
@@ -719,6 +722,18 @@ class SpecDecodeBaseProposer(EagleProposer):
         per_layer_attn_metadata: Any,
         runtime_inputs: dict[str, Any],
     ) -> Any:
+        if (
+            self.method == "mtp"
+            and envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH
+            and get_forward_context().cudagraph_runtime_mode != CUDAGraphMode.FULL
+        ):
+            prepare_native_sparse_boundaries(
+                (
+                    (name, layer.impl)
+                    for name, layer in self._draft_attn_layers.items()
+                ),
+                per_layer_attn_metadata,
+            )
         context = getattr(self, "_mtp_draft_diag_context", None)
         if self.method != "mtp" or context is None:
             return self.model(**model_kwargs)
