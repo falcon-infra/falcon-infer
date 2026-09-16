@@ -327,6 +327,8 @@ class AsyncSFAModelRunner(NPUModelRunner):
         ):
             return False
         # Both possible acceptance counts must leave the existing boundary exact.
+        if s.window == 0:
+            return frontiers == s.boundary
         return (
             _boundary(s.bases + 1, frontiers, s.window) == s.boundary
             and _boundary(high, frontiers, s.window) == s.boundary
@@ -338,6 +340,19 @@ class AsyncSFAModelRunner(NPUModelRunner):
             self._ensure_host_staging_ready()
             self._async_snapshot = None
             super()._update_states(scheduler_output)
+
+    def _staged_sfa_local_route(self, **kwargs):
+        pending, snapshot = self._async_pending, self._async_snapshot
+        if (
+            pending is not None
+            and kwargs.get("request_ids") is not None
+            and tuple(kwargs["request_ids"]) == snapshot.ids
+        ):
+            kwargs["_validated_sparse_route"] = (
+                pending.kv_connector_metadata,
+                (StagedSFARouteReason.ELIGIBLE, snapshot.frontiers, ()),
+            )
+        return super()._staged_sfa_local_route(**kwargs)
 
     def _prepare_inputs(self, scheduler_output, num_scheduled_tokens):
         if self._async_pending is None:
