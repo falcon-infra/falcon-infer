@@ -30,3 +30,19 @@ def test_live_prepare_run_uses_builder_signature_instead_of_walking_inputs():
     ]
     assert len(calls_validate) == 1
     assert any(isinstance(node, ast.Attribute) and node.attr == "signature" for node in ast.walk(method))
+
+
+def test_shared_indexer_layer_guards_are_not_collapsed_by_metadata_memoization():
+    path = Path(__file__).resolve().parents[3] / "vllm/v1/attention/backends/ascend/sfa_v1.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_cross_layer_ineligible_reason"
+    )
+    body = ast.unparse(method)
+    assert "has_indexer" in body
+    assert "topk_indices_buffer" in body
+    assert "indexer_block_table" in body or "indexer" in body
