@@ -228,6 +228,11 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_SFA_FULL_GRAPH": lambda: bool(
         int(os.getenv("VLLM_ASCEND_SFA_FULL_GRAPH", "0"))
     ),
+    # Experimental device MTP preparation for unchanged full-SFA decode
+    # batches. Requires async MTP=1 and a V1 worker restart.
+    "VLLM_ASCEND_SFA_ASYNC_MTP_PREP": lambda: bool(
+        int(os.getenv("VLLM_ASCEND_SFA_ASYNC_MTP_PREP", "0"))
+    ),
     # Independently capture the MTP drafter as a FULL graph while the target
     # model uses staged SFA. Disabled by default; the target staged graph and
     # resident scratch reuse do not depend on this opt-in. Non-sensitive; read
