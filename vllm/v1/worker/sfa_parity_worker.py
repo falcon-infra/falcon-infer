@@ -44,6 +44,7 @@ from vllm.v1.attention.backends.ascend.sfa_prefill_checkpoint import (
 )
 from vllm.v1.attention.backends.ascend.sfa_v1 import AscendSFAImpl
 from vllm.v1.worker.npu_worker import NPUWorker
+from vllm.v1.worker.sfa_fixture import prepare_dummy_quant_config
 
 TARGET_LAYERS = 8
 QUERY_WIDTH = 2
@@ -597,28 +598,7 @@ class SFAParityWorker(NPUWorker):
         return output
 
     def _prepare_quant_config(self) -> None:
-        # Test-worker-only import; normal serving keeps the checkpoint config.
-        from vllm.model_executor.layers.quantization.ascend.modelslim_config import AscendModelSlimConfig
-
-        config = self.vllm_config
-        if (
-            config.load_config.load_format != "dummy"
-            or config.model_config.hf_config.num_hidden_layers != TARGET_LAYERS
-        ):
-            raise ValueError("MTP quantization remapping is only for the eight-layer dummy parity fixture")
-        speculative = config.speculative_config
-        if speculative is None or speculative.num_speculative_tokens != 1:
-            raise ValueError("SFA parity requires MTP=1")
-        draft = speculative.draft_model_config.hf_config
-        if draft.model_type != "deepseek_mtp" or not isinstance(config.quant_config, AscendModelSlimConfig):
-            raise ValueError("SFA parity requires a DeepSeek MTP draft with Ascend ModelSlim quantization")
-        original = json.loads((Path(config.model_config.model) / "config.json").read_text(encoding="utf-8"))
-        description = remap_mtp_quant_description(
-            config.quant_config.quant_description, original["num_hidden_layers"], draft.num_nextn_predict_layers
-        )
-        # Reconstruct to refresh FA/indexer layer lists and shared-head/packed
-        # aliases as well. Existing target layer 0..7 descriptions stay intact.
-        config.quant_config = AscendModelSlimConfig(description)
+        prepare_dummy_quant_config(self.vllm_config)
 
     def _prepare_probes(self):
         runner = self.model_runner

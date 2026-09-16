@@ -13,7 +13,7 @@ def test_live_prepare_layer_does_not_call_static_checker_or_return_inputs():
     source = ast.get_source_segment(path.read_text(encoding="utf-8"), method)
     assert source is not None
     assert "if context.staged_sfa_graph_dummy_run" in source
-    assert "if not context.staged_sfa_graph_dummy_run:\n            return {}" in source
+    assert "if not context.staged_sfa_graph_dummy_run:\n            return None" in source
 
 
 def test_live_prepare_run_uses_builder_signature_instead_of_walking_inputs():
