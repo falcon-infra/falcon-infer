@@ -42,6 +42,18 @@ def test_proposer_reuses_fixed_q2_outputs_between_preparation_stages():
     assert "FIXED_Q2" in warmup
 
 
+def test_async_token_kernel_uses_contiguous_interleaved_store():
+    path = ROOT / "vllm/model_executor/layers/ascend/triton/spec_decode/async_mtp.py"
+    source = _methods(path, {"prepare_async_mtp_tokens_kernel"})[
+        "prepare_async_mtp_tokens_kernel"
+    ]
+    assert "tokens =" in source
+    assert "tokens // 2" in source
+    assert "active_tokens" in source
+    assert "input_ids + tokens" in source
+    assert "2 * rows" not in source
+
+
 def test_runner_passes_metadata_and_reuses_identity_logits_view():
     path = ROOT / "vllm/v1/worker/npu_model_runner.py"
     methods = _methods(
