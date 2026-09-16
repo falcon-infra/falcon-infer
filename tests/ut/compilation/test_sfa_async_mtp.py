@@ -35,6 +35,9 @@ def test_async_runner_has_explicit_eligibility_and_reconciliation_boundaries():
     assert "self._reconcile()" in methods["_model_forward"]
     assert "self._remember" in methods["_model_forward"]
     assert "_async_counts_epoch" in methods["_eligible"]
+    assert "synchronize_input_prep" in methods
+    assert "_ensure_host_staging_ready" in methods
+    assert "_pad_query_start_loc_for_fia" in methods
 
 
 def test_runner_opt_in_is_v1_only_and_default_off():

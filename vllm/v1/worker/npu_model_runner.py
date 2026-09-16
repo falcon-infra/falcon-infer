@@ -1973,6 +1973,17 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             [h for h in aux_hidden_states], dim=-1
                         )
                 else:
+                    # One-draft padded MTP retains every token in order. The
+                    # proposer copies these views into its own buffers on this
+                    # stream, so avoid an extra index gather here.
+                    if (
+                        self.drafter.method == "mtp"
+                        and self.num_spec_tokens == 1
+                        and not self.use_cp
+                        and not self.drafter.needs_extra_input_slots
+                        and not self.vllm_config.speculative_config.disable_padded_drafter_batch
+                    ):
+                        token_indices = slice(0, token_indices.numel())
                     target_token_ids = self.input_ids.gpu[token_indices]
                     target_positions = self._get_positions(token_indices)
                     if self.use_aux_hidden_state_outputs:

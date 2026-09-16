@@ -1540,7 +1540,9 @@ class SpecDecodeBaseProposer(EagleProposer):
 
         inputs_embeds = None
 
-        used_update_positions = self.positions[token_indices_to_sample]
+        used_update_positions = None
+        if use_staged_mtp_draft_graph or self.num_speculative_tokens > 1:
+            used_update_positions = self.positions[token_indices_to_sample]
 
         if use_staged_mtp_draft_graph:
             common_attn_metadata = self._bind_staged_mtp_metadata_arena(
@@ -1608,14 +1610,11 @@ class SpecDecodeBaseProposer(EagleProposer):
         # Clone the data so that when calculating the data at position 2 and position 3
         # in the merged graph, it does not affect position 1
         # FIXME(lilinsiman)
-        if not use_staged_mtp_draft_graph:
+        if not use_staged_mtp_draft_graph and self.num_speculative_tokens > 1:
             common_attn_metadata.block_table_tensor = (
                 common_attn_metadata.block_table_tensor.clone()
             )
-            if (
-                self.num_speculative_tokens > 1
-                and common_attn_metadata.indexer_block_table_tensor is not None
-            ):
+            if common_attn_metadata.indexer_block_table_tensor is not None:
                 common_attn_metadata.indexer_block_table_tensor = (
                     common_attn_metadata.indexer_block_table_tensor.clone()
                 )
@@ -2444,6 +2443,37 @@ class SpecDecodeBaseProposer(EagleProposer):
                 )
 
         return common_attn_metadata, attn_metadata
+
+    def warmup_next_mtp_tokens(self):
+        """Compile ordinary one-draft layouts with private startup buffers."""
+        num_reqs = self.runner.max_num_reqs
+        backup = torch.zeros(num_reqs, dtype=torch.int32, device=self.device)
+        output = torch.empty_like(backup)
+        counts = torch.empty(num_reqs, dtype=torch.int64, device=self.device)
+        grid = (
+            min(
+                triton.cdiv(num_reqs, _PREPARE_INPUTS_BLOCK_SIZE),
+                get_vectorcore_num(),
+            ),
+        )
+        for width in (1, 2):
+            sampled = torch.zeros(
+                (num_reqs, width),
+                dtype=torch.int32,
+                device=self.device,
+            )
+            prepare_next_mtp_tokens_kernel[grid](
+                sampled,
+                backup,
+                output,
+                counts,
+                num_reqs,
+                self.runner.input_batch.vocab_size,
+                sampled.stride(0),
+                sampled.stride(1),
+                WIDTH=width,
+                BLOCK_SIZE=_PREPARE_INPUTS_BLOCK_SIZE,
+            )
 
     def prepare_next_token_ids_padded(
         self,
