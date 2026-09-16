@@ -118,6 +118,8 @@ class SFAFullGraph:
     def collect_retired_sources(self) -> None:
         if self._submission_failed:
             raise RuntimeError("Full SFA submission failed; source leases retained until shutdown")
+        if not self.retired_sources:
+            return
         pending = []
         for binding in self.retired_sources:
             if binding.completion.query():
