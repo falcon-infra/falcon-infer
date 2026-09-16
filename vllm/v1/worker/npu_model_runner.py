@@ -1637,19 +1637,43 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 for req_id, row in batch.req_id_to_index.items()
             )
         ):
-            # Fresh device outputs have fixed alternating destinations. Preserve
-            # padding and compute-stream ordering with two nonblocking copies.
-            rows = self.input_ids.gpu[:total_num_scheduled_tokens].view(
-                num_reqs,
-                2,
-            )
-            rows[:, 0].copy_(sampled[:, 0], non_blocking=True)
-            rows[:, 1].copy_(draft[:, 0], non_blocking=True)
+            self._prepare_fixed_mtp_input_ids(num_reqs)
             return
         super()._prepare_input_ids(
             scheduler_output,
             total_num_scheduled_tokens,
             cu_num_tokens,
+        )
+
+    def _prepare_fixed_mtp_input_ids(self, num_reqs: int) -> None:
+        """Populate a validated one-draft layout with two stream-ordered copies."""
+        rows = self.input_ids.gpu[: 2 * num_reqs].view(num_reqs, 2)
+        rows[:, 0].copy_(
+            self.input_batch.prev_sampled_token_ids[:, 0],
+            non_blocking=True,
+        )
+        rows[:, 1].copy_(self._draft_token_ids[:, 0], non_blocking=True)
+
+    def _fixed_spec_decode_metadata(
+        self,
+        num_reqs: int,
+        index_dtype: np.dtype,
+    ) -> SpecDecodeMetadata:
+        """Build metadata for a validated one-draft layout."""
+        drafts, sampled, targets, bonus, logits32, logits64 = (
+            self._fixed_mtp_metadata
+        )
+        bonus = bonus[:num_reqs]
+        return SpecDecodeMetadata(
+            draft_token_ids=self.input_ids.gpu[bonus],
+            num_draft_tokens=[1] * num_reqs,
+            cu_num_draft_tokens=drafts[:num_reqs],
+            cu_num_sampled_tokens=sampled[:num_reqs],
+            target_logits_indices=targets[:num_reqs],
+            bonus_logits_indices=bonus,
+            logits_indices=(
+                logits64 if index_dtype == np.int64 else logits32
+            )[: 2 * num_reqs],
         )
 
     def _calc_spec_decode_metadata(
@@ -1673,21 +1697,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 self._fixed_decode_cu_num_tokens[:num_reqs],
             )
         ):
-            drafts, sampled, targets, bonus, logits32, logits64 = fixed
-            bonus = bonus[:num_reqs]
-            # Structural indices are immutable; token IDs must stay fresh.
-            return SpecDecodeMetadata(
-                draft_token_ids=self.input_ids.gpu[bonus],
-                num_draft_tokens=num_draft_tokens.tolist(),
-                cu_num_draft_tokens=drafts[:num_reqs],
-                cu_num_sampled_tokens=sampled[:num_reqs],
-                target_logits_indices=targets[:num_reqs],
-                bonus_logits_indices=bonus,
-                logits_indices=(
-                    logits64
-                    if cu_num_scheduled_tokens.dtype == np.int64
-                    else logits32
-                )[: 2 * num_reqs],
+            return self._fixed_spec_decode_metadata(
+                num_reqs,
+                cu_num_scheduled_tokens.dtype,
             )
         # Inputs:
         # cu_num_scheduled_tokens:  [  4, 104, 107, 207, 209]
