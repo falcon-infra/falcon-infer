@@ -1658,6 +1658,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self,
         num_reqs: int,
         index_dtype: np.dtype,
+        draft_token_ids: torch.Tensor,
     ) -> SpecDecodeMetadata:
         """Build metadata for a validated one-draft layout."""
         drafts, sampled, targets, bonus, logits32, logits64 = (
@@ -1665,7 +1666,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         )
         bonus = bonus[:num_reqs]
         return SpecDecodeMetadata(
-            draft_token_ids=self.input_ids.gpu[bonus],
+            draft_token_ids=draft_token_ids,
             num_draft_tokens=[1] * num_reqs,
             cu_num_draft_tokens=drafts[:num_reqs],
             cu_num_sampled_tokens=sampled[:num_reqs],
@@ -1700,6 +1701,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             return self._fixed_spec_decode_metadata(
                 num_reqs,
                 cu_num_scheduled_tokens.dtype,
+                self.input_ids.gpu[fixed[3][:num_reqs]],
             )
         # Inputs:
         # cu_num_scheduled_tokens:  [  4, 104, 107, 207, 209]

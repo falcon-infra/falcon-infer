@@ -25,6 +25,7 @@ from vllm.utils.ascend import (
 from vllm.model_executor.layers.ascend.rotary_embedding import get_cos_and_sin_mla
 from vllm.model_executor.layers.ascend.triton.spec_decode.async_mtp import (
     prepare_async_mtp_kernel,
+    prepare_async_mtp_tokens_kernel,
 )
 from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
 from vllm.v1.attention.backends.ascend.sfa_v1 import (
@@ -72,6 +73,7 @@ class AsyncSFAModelRunner(NPUModelRunner):
         self._async_live_execute = False
         self._async_host_write = None
         self._async_query_layout = None
+        self._async_padded_logits = None
         super().__init__(*args, **kwargs)
         if not (
             HAS_TRITON
@@ -119,6 +121,23 @@ class AsyncSFAModelRunner(NPUModelRunner):
                     tables[1].stride(0),
                     groups[0].block_size,
                     groups[1].block_size,
+                    BLOCK=32,
+                )
+            tokens = self.input_ids.gpu.new_zeros(2 * self.max_num_reqs)
+            for dtype in (torch.int32, torch.int64):
+                draft = torch.zeros(
+                    self.max_num_reqs,
+                    dtype=dtype,
+                    device=self.device,
+                )
+                prepare_async_mtp_tokens_kernel[
+                    (triton.cdiv(self.max_num_reqs, 32),)
+                ](
+                    tokens[: self.max_num_reqs].clone(),
+                    draft,
+                    tokens,
+                    tokens.new_empty(self.max_num_reqs),
+                    self.max_num_reqs,
                     BLOCK=32,
                 )
             self.drafter.warmup_next_mtp_tokens()
@@ -270,6 +289,8 @@ class AsyncSFAModelRunner(NPUModelRunner):
             or tuple(draft.shape) != (len(ids), 1)
             or not isinstance(sampled, torch.Tensor)
             or tuple(sampled.shape) != (len(ids), 1)
+            or sampled.stride(0) != 1
+            or draft.stride(0) != 1
             or sampled.dtype != self.input_ids.gpu.dtype
             or sampled.dtype != torch.int32
             or draft.dtype not in (torch.int32, torch.int64)
@@ -326,17 +347,37 @@ class AsyncSFAModelRunner(NPUModelRunner):
         n = self.input_batch.num_reqs
         self.attn_state, self.with_prefill = AscendAttentionState.SpecDecoding, False
         # Eligibility already validated request order, tensor layout and Q2.
-        self._prepare_fixed_mtp_input_ids(n)
+        draft_ids = self.input_ids.gpu.new_empty(n)
+        prepare_async_mtp_tokens_kernel[(triton.cdiv(n, 32),)](
+            self.input_batch.prev_sampled_token_ids,
+            self._draft_token_ids,
+            self.input_ids.gpu,
+            draft_ids,
+            n,
+            BLOCK=32,
+        )
         spec = self._fixed_spec_decode_metadata(
             n,
             self._fixed_decode_cu_num_tokens.dtype,
+            draft_ids,
         )
         self.logits_indices = spec.logits_indices
         logits_indices = spec.logits_indices
         if lmhead_tp_enable():
-            logits_indices = torch.nn.functional.pad(
-                logits_indices, (0, self.max_num_reqs * self.uniform_decode_query_len - logits_indices.shape[0])
+            key = (
+                n,
+                logits_indices.dtype,
+                logits_indices.device,
+                self.max_num_reqs * self.uniform_decode_query_len,
             )
+            cached = self._async_padded_logits
+            if cached is None or cached[0] != key:
+                cached = key, torch.nn.functional.pad(
+                    logits_indices,
+                    (0, key[3] - 2 * n),
+                )
+                self._async_padded_logits = cached
+            logits_indices = cached[1]
         return logits_indices, spec, 2 * n
 
     def _reconcile(self):
