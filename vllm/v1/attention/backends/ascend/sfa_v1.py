@@ -571,9 +571,10 @@ def _prepare_sfa_remap_boundary(
             )
             attn_metadata.decode_remap_boundary_ready = True
             return boundary
-        # Eager, staged and dummy preparation share this allocation. Any
-        # external write must invalidate the full-graph CPU shadow first.
-        buffer.invalidate()
+        # Eager and staged preparation may write externally. Prepared dummy
+        # values instead go through the owned async staging pool.
+        if not reuse_unchanged:
+            buffer.invalidate()
 
     prompt_rows = attn_metadata.prompt_lens_cpu_rows
     row_req_indices = attn_metadata.decode_req_indices_cpu
@@ -687,7 +688,10 @@ def _prepare_sfa_remap_boundary(
         getattr(attn_metadata, "decode_scratch_capacity", None),
     )
 
-    boundary.copy_(torch.from_numpy(boundary_rows))
+    if reuse_unchanged and buffer is not None:
+        buffer.update_prepared(tuple(map(int, boundary_rows)))
+    else:
+        boundary.copy_(torch.from_numpy(boundary_rows))
     attn_metadata.decode_remap_boundary_ready = True
     return boundary
 
@@ -3887,7 +3891,11 @@ class AscendSFAImpl(MLAAttentionImpl):
         )
 
     def prepare_full_graph_metadata(
-        self, metadata: M, context: Any
+        self,
+        metadata: M,
+        context: Any,
+        *,
+        reuse_dummy: bool = False,
     ) -> torch.Tensor:
         """Refresh shared full-graph metadata without selecting transfers."""
         boundary = _prepare_sfa_remap_boundary(
@@ -3896,10 +3904,36 @@ class AscendSFAImpl(MLAAttentionImpl):
             is_dummy_run=context.staged_sfa_graph_dummy_run,
             index_topk=self.index_topk,
             cached_tokens=context.staged_sfa_route.frontiers,
-            reuse_unchanged=True,
+            reuse_unchanged=not context.staged_sfa_graph_dummy_run or reuse_dummy,
         )
         metadata.reshape_cache_event = None
         return boundary
+
+    @staticmethod
+    def full_graph_metadata_inputs(metadata: M) -> dict[str, Any]:
+        """Return stable metadata fields used to validate an idle replay."""
+        fields = (
+            "cos",
+            "sin",
+            "slot_mapping",
+            "indexer_slot_mapping",
+            "cum_query_lens",
+            "seq_lens",
+            "block_table",
+            "indexer_block_table",
+            "decode_remap_boundary",
+            "decode_req_indices",
+            "decode_selected_tokens",
+            "decode_selected_counts",
+            "decode_target_slot_mapping",
+            "decode_union_mapping_workspace",
+            "decode_shard_packed_workspace",
+            "decode_shard_mapping_workspace",
+            "decode_shard_counts_workspace",
+            "resident_state_indices",
+            "resident_state_generations",
+        )
+        return {name: getattr(metadata, name) for name in fields}
 
     def prepare_full_graph_layer(
         self,
@@ -3956,28 +3990,7 @@ class AscendSFAImpl(MLAAttentionImpl):
             transfer.bind_batch(source or (), layer_id)
         if not context.staged_sfa_graph_dummy_run:
             return None
-        fields = (
-            "cos",
-            "sin",
-            "slot_mapping",
-            "indexer_slot_mapping",
-            "cum_query_lens",
-            "seq_lens",
-            "block_table",
-            "indexer_block_table",
-            "decode_remap_boundary",
-            "decode_req_indices",
-            "decode_selected_tokens",
-            "decode_selected_counts",
-            "decode_target_slot_mapping",
-            "decode_union_mapping_workspace",
-            "decode_shard_packed_workspace",
-            "decode_shard_mapping_workspace",
-            "decode_shard_counts_workspace",
-            "resident_state_indices",
-            "resident_state_generations",
-        )
-        inputs = {name: getattr(metadata, name) for name in fields}
+        inputs = self.full_graph_metadata_inputs(metadata)
         inputs["kv_caches"] = state.runtime[1]
         return inputs
 

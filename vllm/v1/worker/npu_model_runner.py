@@ -3664,7 +3664,10 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             and getattr(context, "staged_sfa_graph_key", None) is not None
         ):
             graph_inputs: dict[str, Any] | None = (
-                {} if context.staged_sfa_graph_dummy_run else None
+                {}
+                if context.staged_sfa_graph_dummy_run
+                and not self._sfa_full_graph.sealed
+                else None
             )
             prepared_call = None
             graph_kwargs = dict(
@@ -3700,23 +3703,37 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                                 bind_source=False,
                                 metadata_checks=metadata_checks,
                             )
-                        transfers = tuple(
-                            impl._full_graph_transfer for _, impl in impls
+                        self._sfa_full_graph.register_transfers(
+                            capacity,
+                            tuple(impl._full_graph_transfer for _, impl in impls),
                         )
-                        if self._sfa_full_graph.sealed:
-                            # DP idle forwards may use dummy metadata after
-                            # startup; they must not replace sealed tables.
-                            registered = self._sfa_full_graph.get_transfers(capacity)
-                            if len(registered) != len(transfers) or any(
-                                old is not new
-                                for old, new in zip(registered, transfers)
-                            ):
+                    elif context.staged_sfa_graph_dummy_run:
+                        registered = self._sfa_full_graph.get_transfers(capacity)
+                        if len(registered) != len(impls):
+                            raise RuntimeError(
+                                "Full SFA transfer bundle changed after startup"
+                            )
+                        metadata_groups = {}
+                        for (name, impl), transfer in zip(impls, registered):
+                            if impl._staged_sfa_capture_state.runtime is None:
+                                raise RuntimeError(
+                                    f"Full SFA graph layer was not warmed up: {name}"
+                                )
+                            if impl._full_graph_transfers.get(capacity) is not transfer:
                                 raise RuntimeError(
                                     "Full SFA transfer bundle changed after startup"
                                 )
-                        else:
-                            self._sfa_full_graph.register_transfers(
-                                capacity, transfers
+                            metadata = context.attn_metadata[name]
+                            if id(metadata) not in metadata_groups:
+                                metadata_groups[id(metadata)] = [metadata, impl, []]
+                            metadata_groups[id(metadata)][2].append(name)
+                        for metadata, impl, names in metadata_groups.values():
+                            self._sfa_full_graph.validate_idle_metadata(
+                                names,
+                                impl.full_graph_metadata_inputs(metadata),
+                            )
+                            impl.prepare_full_graph_metadata(
+                                metadata, context, reuse_dummy=True
                             )
                     else:
                         self._sfa_full_graph.get_transfers(capacity)
@@ -5347,6 +5364,27 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 staged_sfa_graph_dummy_run=staged_sfa_graph_dummy_run,
             )
 
+            if (
+                dp_idle
+                and staged_sfa_graph_dummy_run
+                and sfa_full_graph_enabled(self.vllm_config)
+                and isinstance(attn_metadata, dict)
+            ):
+                # Idle DP ranks must not write synthetic K/index entries into
+                # physical blocks owned by paused or waiting requests.
+                for metadata in {
+                    id(value): value for value in attn_metadata.values()
+                }.values():
+                    for field_name in ("slot_mapping", "indexer_slot_mapping"):
+                        value = getattr(metadata, field_name, None)
+                        if value is not None:
+                            value.fill_(-1)
+                    if getattr(metadata, "decode_remap_boundary", None) is not None:
+                        metadata.block_table.zero_()
+                        if metadata.indexer_block_table is not None:
+                            metadata.indexer_block_table.zero_()
+                        metadata.seq_lens.zero_()
+
         assert num_tokens_padded <= self.max_num_tokens
         input_ids = self.input_ids.gpu[:num_tokens_padded]
         inputs_embeds = None
@@ -5429,7 +5467,10 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             ),
             staged_sfa_graph_key=staged_dummy_key,
         ):
-            if staged_dummy_key is not None and self._staged_sfa_impls:
+            if staged_dummy_key is not None and self._staged_sfa_impls and not (
+                sfa_full_graph_enabled(self.vllm_config)
+                and self._sfa_full_graph.sealed
+            ):
                 first_layer_name, first_impl = self._staged_sfa_impls[0]
                 first_impl.bootstrap_cross_layer(first_layer_name)
             outputs = self._model_forward(

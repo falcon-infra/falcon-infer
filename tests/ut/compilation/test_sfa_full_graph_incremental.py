@@ -55,3 +55,28 @@ def test_sfa_layer_separates_metadata_refresh_from_transfer_selection():
     assert "reshape_cache_event = None" in metadata
     assert "prepare_full_graph_metadata" in layer
     assert "bind_source" in layer
+
+
+def test_idle_replay_reuses_prepared_boundary_staging_without_live_validation():
+    remap = ROOT / "vllm/v1/attention/backends/ascend/sfa_remap_boundary.py"
+    sfa = ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py"
+    buffer_source = remap.read_text(encoding="utf-8")
+    prepare_source = sfa.read_text(encoding="utf-8")
+    assert "def update_prepared" in buffer_source
+    assert "def _commit" in buffer_source
+    assert "buffer.update_prepared" in prepare_source
+    assert "reuse_dummy" in prepare_source
+
+
+def test_sealed_idle_validation_is_layer_grouped_and_signature_checked():
+    graph = ROOT / "vllm/compilation/ascend/sfa_full_graph.py"
+    runner = ROOT / "vllm/v1/worker/npu_model_runner.py"
+    validate = _function(graph, "validate_idle_metadata")
+    run = _function(graph, "prepare_run")
+    forward = _function(runner, "_model_forward")
+    assert "expected_by_layer" in validate
+    assert "tensor_signature(inputs)" in validate
+    assert "self.sealed and entry is not None" in run
+    assert "metadata_groups" in forward
+    assert "validate_idle_metadata" in forward
+    assert "reuse_dummy=True" in forward

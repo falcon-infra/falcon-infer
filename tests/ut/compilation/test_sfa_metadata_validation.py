@@ -28,7 +28,7 @@ def test_live_prepare_run_uses_builder_signature_instead_of_walking_inputs():
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "validate_inputs"
     ]
-    assert len(calls_validate) == 1
+    assert len(calls_validate) == 2
     assert any(isinstance(node, ast.Attribute) and node.attr == "signature" for node in ast.walk(method))
 
 
