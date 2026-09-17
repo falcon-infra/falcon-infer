@@ -44,6 +44,35 @@ def test_async_runner_has_explicit_eligibility_and_reconciliation_boundaries():
     assert "self._staged_sfa_layer_names" in methods["_remember"]
 
 
+def test_continuing_mtp_clears_previous_cold_resume_proof():
+    tree = ast.parse(RUNNER.read_text(encoding="utf-8"))
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AsyncSFAModelRunner"
+    )
+    method = next(
+        node
+        for node in cls.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_build_attention_metadata"
+    )
+    assignments = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "cold_compact_resumes"
+            for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1
+    assignment = assignments[0]
+    assert isinstance(assignment.value, ast.Tuple)
+    assert not assignment.value.elts
+
+
 def test_runner_opt_in_is_v1_only_and_default_off():
     env = (ROOT / "vllm/envs_ascend.py").read_text(encoding="utf-8")
     worker = (ROOT / "vllm/v1/worker/npu_worker.py").read_text(encoding="utf-8")
