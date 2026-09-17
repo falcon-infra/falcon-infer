@@ -96,6 +96,7 @@ from vllm.distributed.kv_transfer.lmcache_diagnostics import (
 from vllm.distributed.parallel_state import (
     get_dcp_group,
     get_dp_group,
+    get_ep_group,
     get_pcp_group,
     get_pp_group,
     get_tp_group,
@@ -167,7 +168,11 @@ from vllm.v1.attention.backends.ascend.utils import (
     unwrap_staged_sfa_connector_metadata,
     using_paged_attention,
 )
-from vllm.compilation.ascend.sfa_fail_stop import exit_failed_sfa_worker, uses_local_sfa_fail_stop
+from vllm.compilation.ascend.sfa_fail_stop import (
+    exit_failed_sfa_worker,
+    preparation_error_groups,
+    uses_local_sfa_fail_stop,
+)
 from vllm.compilation.ascend.sfa_full_graph import SFAFullGraph
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.selector import get_attn_backend  # type: ignore
@@ -580,6 +585,17 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self._staged_sfa_impls: tuple[tuple[str, Any], ...] = ()
         self._staged_sfa_layer_names: tuple[str, ...] = ()
         self._sfa_full_graph = SFAFullGraph()
+        self._sfa_preparation_groups = (
+            preparation_error_groups(
+                vllm_config.parallel_config,
+                is_moe=is_moe_model(vllm_config),
+                tp=get_tp_group(),
+                dp=get_dp_group(),
+                get_ep=get_ep_group,
+            )
+            if sfa_full_graph_enabled(vllm_config)
+            else None
+        )
         self._staged_sfa_graph_capture_sizes = staged_sfa_graph_capture_sizes(
             vllm_config
         )
@@ -1167,7 +1183,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         packed_tensor = torch.cat([num_tokens_tensor, flags_tensor])
         # use cpu_group to avoid cpu synchronization issue.
         # it can be overlapped with main moell execution on npu.
-        npu_all_reduce(packed_tensor, group=get_dp_group().cpu_group)
+        with record_function_or_nullcontext("ascend::dp_layout_agreement"):
+            npu_all_reduce(packed_tensor, group=get_dp_group().cpu_group)
 
         # Unpack the results
         num_tokens_across_dp = packed_tensor[:-1]
@@ -3634,12 +3651,25 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         # Capture and unsupported executor topologies still agree before
         # entering EP/TP collectives, including idle DP ranks.
         failed = torch.tensor([int(local_error is not None)], dtype=torch.int32)
-        for group in (get_tp_group(), get_dp_group()):
-            if group.world_size > 1:
+        groups = self._sfa_preparation_groups
+        if groups is None:
+            groups = tuple(
+                (
+                    f"sfa_full_graph::prepare_agreement_{name}",
+                    group.cpu_group,
+                )
+                for name, group in (
+                    ("tp", get_tp_group()),
+                    ("dp", get_dp_group()),
+                )
+                if group.world_size > 1
+            )
+        for label, cpu_group in groups:
+            with record_function_or_nullcontext(label):
                 dist.all_reduce(
                     failed,
                     op=dist.ReduceOp.MAX,
-                    group=group.cpu_group,
+                    group=cpu_group,
                 )
         if failed.item():
             raise RuntimeError(
@@ -3913,7 +3943,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             )
         if full_layout_protocol:
             tensor[3, self.dp_rank] = int(staged_sfa_bounded_decode)
-        npu_all_reduce(tensor, group=get_dp_group().cpu_group)
+        with record_function_or_nullcontext("ascend::dp_layout_agreement"):
+            npu_all_reduce(tensor, group=get_dp_group().cpu_group)
 
         if full_layout_protocol:
             self._staged_sfa_dp_bounded_decode = bool(tensor[3].max().item())
