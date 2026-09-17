@@ -3700,12 +3700,24 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                                 bind_source=False,
                                 metadata_checks=metadata_checks,
                             )
-                        self._sfa_full_graph.register_transfers(
-                            capacity,
-                            tuple(
-                                impl._full_graph_transfer for _, impl in impls
-                            ),
+                        transfers = tuple(
+                            impl._full_graph_transfer for _, impl in impls
                         )
+                        if self._sfa_full_graph.sealed:
+                            # DP idle forwards may use dummy metadata after
+                            # startup; they must not replace sealed tables.
+                            registered = self._sfa_full_graph.get_transfers(capacity)
+                            if len(registered) != len(transfers) or any(
+                                old is not new
+                                for old, new in zip(registered, transfers)
+                            ):
+                                raise RuntimeError(
+                                    "Full SFA transfer bundle changed after startup"
+                                )
+                        else:
+                            self._sfa_full_graph.register_transfers(
+                                capacity, transfers
+                            )
                     else:
                         self._sfa_full_graph.get_transfers(capacity)
                         seen = set()
@@ -5057,6 +5069,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         is_graph_capturing: bool = False,
         num_active_loras: int = 0,
         profile_seq_lens: int | None = None,
+        _input_prep: Any = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # only support eager mode and piecewise graph now
         assert (
@@ -5385,6 +5398,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 self.drafter.model, "compute_logits"
             ):
                 return self.drafter.model.compute_logits(hidden_states[dummy_indices])
+
+        # Async MTP owns the host staging guard. Close it after metadata
+        # uploads and before target/draft compute; ExitStack also closes it
+        # on exceptions.
+        if _input_prep is not None:
+            _input_prep.close()
 
         with set_ascend_forward_context(
             attn_metadata,

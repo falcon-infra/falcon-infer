@@ -40,6 +40,8 @@ def test_live_runner_reuses_metadata_once_and_requires_registered_transfers():
     assert "register_transfers" in source
     assert "get_transfers" in source
     assert "prepare_full_graph_metadata" in source
+    assert "self._sfa_full_graph.sealed" in source
+    assert "changed after startup" in source
     assert "seen = set()" in source
     assert "bind_sources(source, request_ids)" in source
 
