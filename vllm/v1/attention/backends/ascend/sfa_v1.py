@@ -5370,10 +5370,9 @@ class AscendSFAImpl(MLAAttentionImpl):
             in f".{layer_name}"
         )
         if is_first_transfer_layer:
-            if not maybe_submit_layerwise_prefill_load(-1):
-                raise RuntimeError(
-                    "Layerwise-prefill P node could not submit its first load"
-                )
+            # start_load_kv may eagerly submit L1 before model execution. Keep
+            # this idempotent callback for connectors that prepare later.
+            maybe_submit_layerwise_prefill_load(-1)
         pending_transfers = (
             transfer_context.pop("sfa_layerwise_prefill_pending", None)
             if transfer_context is not None
