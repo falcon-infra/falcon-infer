@@ -25,8 +25,21 @@ def validate(monkeypatch):
         if isinstance(node, ast.FunctionDef)
         and node.name == "validate_indexer_c8_layers"
     )
+    mask_method = next(
+        node
+        for node in cls.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "indexer_c8_layer_mask"
+    )
     namespace = {}
-    exec(compile(ast.Module(body=[method], type_ignores=[]), str(CONFIG), "exec"), namespace)
+    exec(
+        compile(
+            ast.Module(body=[method, mask_method], type_ignores=[]),
+            str(CONFIG),
+            "exec",
+        ),
+        namespace,
+    )
     monkeypatch.setitem(
         __import__("sys").modules,
         "vllm.model_executor.models.utils",
@@ -37,20 +50,23 @@ def validate(monkeypatch):
         ),
     )
 
-    def run(description, enabled=True):
+    def run(description, enabled=True, names=None, resolve=False):
         obj = SimpleNamespace(
             enable_sparse_li_c8=enabled,
             vllm_config=SimpleNamespace(
                 quant_config=SimpleNamespace(quant_description=description)
             ),
         )
-        namespace[method.name](
-            obj,
-            [
-                "model.layers.0.self_attn.indexer.k_cache",
-                "model.layers.3.self_attn.indexer.k_cache",
-            ],
+        obj.indexer_c8_layer_mask = lambda values: namespace[mask_method.name](
+            obj, values
         )
+        names = names or [
+            "model.layers.0.self_attn.indexer.k_cache",
+            "model.layers.3.self_attn.indexer.k_cache",
+        ]
+        if resolve:
+            return namespace[mask_method.name](obj, names)
+        namespace[method.name](obj, names)
 
     return run
 
@@ -71,6 +87,25 @@ def test_layer_aliases_match_by_layer_index(validate):
             "other.layers.0.self_attn.indexer.quant_type": "INT8_DYNAMIC",
             "other.layers.3.self_attn.indexer.wq_b_weight": "W8A8_MXFP8",
         }
+    )
+
+
+def test_mixed_policy_preserves_selected_physical_owners(validate):
+    selected = [6, 10, 14, 18]
+    owners = [0, 1, *selected, 22]
+    description = {
+        f"model.layers.{index}.self_attn.indexer.quant_type": "INT8_DYNAMIC"
+        for index in selected
+    }
+    names = [f"model.layers.{index}.self_attn.indexer.k_cache" for index in owners]
+    assert validate(description, names=names, resolve=True) == (
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        False,
     )
 
 

@@ -220,6 +220,7 @@ class AscendConfig:
             )
         self.enable_sparse_c8 = bool(indexer_c8 and use_sparse)
         self.enable_sparse_li_c8 = self.enable_sparse_c8
+        self.indexer_c8_shared_block_factor = 1
         if self.enable_sparse_li_c8 and additional_config.get(
             "c8_enable_reshape_optim", False
         ):
@@ -246,6 +247,25 @@ class AscendConfig:
         """Require uniform C8 for physical indexer owners."""
         if not self.enable_sparse_li_c8:
             return
+        mask = self.indexer_c8_layer_mask(layer_names)
+        missing = [
+            name
+            for name, enabled in zip(layer_names, mask, strict=True)
+            if not enabled
+        ]
+        if missing:
+            raise ValueError(
+                "Two-group indexer C8 requires uniform quantization of all "
+                "physical indexer layers; the model quantization policy "
+                f"excludes {missing}"
+            )
+
+    def indexer_c8_layer_mask(
+        self, layer_names: list[str | None]
+    ) -> tuple[bool, ...]:
+        """Resolve quantization policy while preserving physical layer order."""
+        if not self.enable_sparse_li_c8:
+            return (False,) * len(layer_names)
         description = getattr(
             getattr(self.vllm_config, "quant_config", None),
             "quant_description",
@@ -255,7 +275,7 @@ class AscendConfig:
             isinstance(key, str) and key.endswith(".indexer.quant_type")
             for key in description
         ):
-            return
+            return (True,) * len(layer_names)
         from vllm.model_executor.models.utils import extract_layer_index
 
         selected_names: set[str] = set()
@@ -282,23 +302,17 @@ class AscendConfig:
                 if name:
                     selected_names.add(name)
                     selected_ids.add(extract_layer_index(name))
-        missing = [
-            name
-            for name in layer_names
-            if not (
+        return tuple(
+            name is not None
+            and (
                 any(
                     name == prefix or name.startswith(prefix + ".")
                     for prefix in selected_names
                 )
                 or extract_layer_index(name) in selected_ids
             )
-        ]
-        if missing:
-            raise ValueError(
-                "Two-group indexer C8 requires uniform quantization of all "
-                "physical indexer layers; the model quantization policy "
-                f"excludes {missing}"
-            )
+            for name in layer_names
+        )
 
     @staticmethod
     def _set_compile_ranges(compilation_config, value):
