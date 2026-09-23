@@ -40,6 +40,7 @@ Row parallel op follows a similar approach - inherit from RowColumnParallelOp an
 get_row_parallel_op.
 """
 
+from collections.abc import Callable
 from functools import lru_cache
 from types import SimpleNamespace
 
@@ -83,6 +84,38 @@ from vllm.utils.ascend import (
     oproj_tp_enable,
     shared_expert_dp_enabled,
 )
+
+
+def row_parallel_with_prefill_transfer(
+    layer: nn.Module,
+    input_: torch.Tensor,
+    submit_transfer: Callable[[], None],
+) -> torch.Tensor | tuple[torch.Tensor, Parameter | None]:
+    """Submit a layerwise save between the GEMM and TP reduction.
+
+    This helper is opt-in and intentionally not wired into ordinary linear
+    dispatch. Fused/custom implementations submit before their own forward;
+    plain row-parallel layers run the quantized GEMM first, then invoke the
+    transfer callback before the collective.
+    """
+    if getattr(layer, "custom_op", None) is not None:
+        submit_transfer()
+        return layer(input_)
+    if layer.input_is_parallel:
+        input_parallel = input_
+    else:
+        split_input = split_tensor_along_last_dim(
+            input_, num_partitions=layer.tp_size
+        )
+        input_parallel = split_input[layer.tp_rank].contiguous()
+    bias = None if (layer.tp_rank > 0 or layer.skip_bias_add) else layer.bias
+    output = layer.quant_method.apply(layer, input_parallel, bias)
+    submit_transfer()
+    if layer.reduce_results and layer.tp_size > 1:
+        output = tensor_model_parallel_all_reduce(output)
+    if not layer.return_bias:
+        return output
+    return output, layer.bias if layer.skip_bias_add else None
 
 
 class CustomLinearOp:

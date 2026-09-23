@@ -181,6 +181,49 @@ class AscendMultiConnector(MultiConnector, SupportsHMA):
         """Advertise Group-1 callbacks when any child owns that cache."""
         return getattr(self, "_supports_dsa_index_lmcache", False)
 
+    @property
+    def supports_layerwise_prefill_transfer_window(self) -> bool:
+        """Expose the split window when a child can participate in it."""
+        return any(
+            getattr(child, "supports_layerwise_prefill_transfer_window", False)
+            for child in self._connectors
+        )
+
+    @property
+    def supports_layerwise_prefill_dsa_index_transfer_window(self) -> bool:
+        return bool(
+            self.supports_layerwise_prefill_transfer_window
+            and self.supports_dsa_index_lmcache
+        )
+
+    def submit_layerwise_prefill_load(self, layer_name: str | int) -> None:
+        for child in self._connectors:
+            if getattr(child, "supports_layerwise_prefill_transfer_window", False):
+                child.submit_layerwise_prefill_load(layer_name)
+
+    def finish_layerwise_prefill_save(self, layer_name: str) -> None:
+        for child in self._connectors:
+            if getattr(child, "supports_layerwise_prefill_transfer_window", False):
+                child.finish_layerwise_prefill_save(layer_name)
+
+    def save_kv_layer_in_layerwise_prefill_transfer_window(
+        self, layer_name: str, kv_layer, attn_metadata, **kwargs
+    ) -> None:
+        for child in self._connectors:
+            if getattr(child, "supports_layerwise_prefill_transfer_window", False):
+                child.save_kv_layer_in_layerwise_prefill_transfer_window(
+                    layer_name, kv_layer, attn_metadata, **kwargs
+                )
+
+    def save_kv_layer_outside_layerwise_prefill_transfer_window(
+        self, layer_name: str, kv_layer, attn_metadata, **kwargs
+    ) -> None:
+        for child in self._connectors:
+            if not getattr(child, "supports_layerwise_prefill_transfer_window", False):
+                child.save_kv_layer_outside_layerwise_prefill_transfer_window(
+                    layer_name, kv_layer, attn_metadata, **kwargs
+                )
+
     def _staged_sfa_connector(self):
         return next(
             (

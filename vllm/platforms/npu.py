@@ -27,6 +27,7 @@ import torch
 import torch_npu  # noqa: F401 -- register the NPU device type, without init()
 
 import vllm.envs as envs_vllm
+import vllm.envs_ascend as envs_ascend
 from vllm.logger import logger
 from vllm.platforms.ascend_constants import (
     ASCEND_QUANTIZATION_METHOD,
@@ -38,7 +39,6 @@ from vllm.platforms.interface import Platform, PlatformEnum
 # todo: please remove it when solve cuda hard code in vllm
 os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
-import vllm.envs_ascend as envs_ascend
 
 # Do not import vllm.config or vllm.utils.ascend here: both can request
 # current_platform while this module is still defining NPUPlatform. Import
@@ -288,6 +288,33 @@ class NPUPlatform(Platform):
         parallel_config = vllm_config.parallel_config
         cache_config = vllm_config.cache_config
         ascend_compilation_config = ascend_config.ascend_compilation_config
+        if envs_ascend.VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE:
+            speculative_config = vllm_config.speculative_config
+            if (
+                speculative_config is not None
+                and speculative_config.num_speculative_tokens > 1
+            ):
+                raise ValueError(
+                    "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE=true requires "
+                    "num_speculative_tokens <= 1"
+                )
+            if parallel_config.pipeline_parallel_size != 1:
+                raise ValueError(
+                    "Layerwise-prefill P nodes require pipeline_parallel_size == 1"
+                )
+            if parallel_config.prefill_context_parallel_size != 1:
+                raise ValueError(
+                    "Layerwise-prefill P nodes require prefill_context_parallel_size == 1"
+                )
+            if parallel_config.decode_context_parallel_size != 1:
+                raise ValueError(
+                    "Layerwise-prefill P nodes require decode_context_parallel_size == 1"
+                )
+            if envs_ascend.VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE:
+                raise ValueError(
+                    "Layerwise-prefill P nodes require "
+                    "VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE=0"
+                )
         if ascend_compilation_config:
             vllm_config.additional_config.setdefault(
                 "ascend_compilation_config", {}

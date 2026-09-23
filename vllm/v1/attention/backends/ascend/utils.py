@@ -1,3 +1,4 @@
+from copy import copy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -337,6 +338,35 @@ class AscendCommonAttentionMetadata(CommonAttentionMetadata):
             ),
         )
 
+    def rebind_layerwise_prefill_metadata(
+        self,
+        template: "AscendCommonAttentionMetadata",
+        common_attn_metadata: "AscendCommonAttentionMetadata",
+    ) -> "AscendCommonAttentionMetadata | None":
+        """Rebind bank-specific block tables for a prefill layer."""
+        state_name = getattr(template.attn_state, "name", "")
+        if state_name not in {
+            "PrefillNoCache",
+            "PrefillCacheHit",
+            "ChunkedPrefill",
+        } or getattr(template, "num_decode_tokens", 0):
+            return None
+        metadata = copy(template)
+        num_reqs = common_attn_metadata.num_reqs
+        num_tokens = common_attn_metadata.num_input_tokens
+        metadata.block_table_tensor = common_attn_metadata.block_table_tensor[:num_reqs]
+        metadata.slot_mapping = common_attn_metadata.slot_mapping[:num_tokens]
+        metadata.indexer_block_table_tensor = None
+        metadata.indexer_slot_mapping = None
+        if common_attn_metadata.indexer_block_table_tensor is not None:
+            metadata.indexer_block_table_tensor = (
+                common_attn_metadata.indexer_block_table_tensor[:num_reqs]
+            )
+            metadata.indexer_slot_mapping = common_attn_metadata.indexer_slot_mapping[
+                :num_tokens
+            ]
+        return metadata
+
 
 def filter_chunked_req_indices(
     seq_len: torch.Tensor,
@@ -589,6 +619,7 @@ def staged_sfa_metadata_sparse_route(
                 if committed_raw is not None
                 else (cached if can_load else 0)
             )
+
             remap_frontier = _dsa_remap_frontier(load_spec)
         except (TypeError, ValueError, OverflowError):
             return StagedSFARouteReason.INVALID_FRONTIER, (), ()
@@ -787,9 +818,48 @@ def wait_for_kv_layer_from_connector(
         )
 
 
-def maybe_save_kv_layer_to_connector(
+def layerwise_prefill_transfer_window_supported() -> bool:
+    """Return whether the active connector exposes split prefill hooks."""
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        return False
+    connector = get_kv_transfer_group()
+    return bool(
+        getattr(connector, "supports_layerwise_prefill_transfer_window", False)
+        and callable(getattr(connector, "submit_layerwise_prefill_load", None))
+        and callable(getattr(connector, "finish_layerwise_prefill_save", None))
+    )
+
+
+def maybe_submit_layerwise_prefill_load(layer_name: str | int) -> bool:
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        return False
+    connector = get_kv_transfer_group()
+    if not (
+        getattr(connector, "supports_layerwise_prefill_transfer_window", False)
+        and callable(getattr(connector, "submit_layerwise_prefill_load", None))
+    ):
+        return False
+    connector.submit_layerwise_prefill_load(layer_name)
+    return True
+
+
+def maybe_finish_layerwise_prefill_save(layer_name: str) -> bool:
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        return False
+    connector = get_kv_transfer_group()
+    if not (
+        getattr(connector, "supports_layerwise_prefill_transfer_window", False)
+        and callable(getattr(connector, "finish_layerwise_prefill_save", None))
+    ):
+        return False
+    connector.finish_layerwise_prefill_save(layer_name)
+    return True
+
+
+def _maybe_save_kv_layer_to_connector_with_method(
     layer_name: str,
     kv_cache_layer: list[torch.Tensor],
+    method_name: str,
 ):
     if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
         return
@@ -811,7 +881,13 @@ def maybe_save_kv_layer_to_connector(
             type(attn_metadata).__name__,
         )
     try:
-        connector.save_kv_layer(layer_name, kv_cache_layer, attn_metadata)
+        save_layer = getattr(connector, method_name, None)
+        if not callable(save_layer):
+            raise RuntimeError(
+                f"KV connector {type(connector).__name__} does not expose "
+                f"required save method {method_name}"
+            )
+        save_layer(layer_name, kv_cache_layer, attn_metadata)
     except Exception:
         logger.exception(
             "[DSA_INDEX_LMCACHE] connector_save_error layer=%s connector=%s kv_cache_layer=%s attn_metadata=%s",
@@ -827,6 +903,37 @@ def maybe_save_kv_layer_to_connector(
             layer_name,
             type(connector).__name__,
         )
+
+
+def maybe_save_kv_layer_to_connector(
+    layer_name: str,
+    kv_cache_layer: list[torch.Tensor],
+):
+    _maybe_save_kv_layer_to_connector_with_method(
+        layer_name, kv_cache_layer, "save_kv_layer"
+    )
+
+
+def maybe_save_kv_layer_in_layerwise_prefill_transfer_window(
+    layer_name: str,
+    kv_cache_layer: list[torch.Tensor],
+):
+    _maybe_save_kv_layer_to_connector_with_method(
+        layer_name,
+        kv_cache_layer,
+        "save_kv_layer_in_layerwise_prefill_transfer_window",
+    )
+
+
+def maybe_save_kv_layer_outside_layerwise_prefill_transfer_window(
+    layer_name: str,
+    kv_cache_layer: list[torch.Tensor],
+):
+    _maybe_save_kv_layer_to_connector_with_method(
+        layer_name,
+        kv_cache_layer,
+        "save_kv_layer_outside_layerwise_prefill_transfer_window",
+    )
 
 
 def round_up(val: int, align: int) -> int:

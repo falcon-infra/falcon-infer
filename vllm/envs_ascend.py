@@ -22,6 +22,17 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+
+def _strict_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "true" if default else "false")
+    normalized = raw.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"{name} must be 'true' or 'false', got {raw!r}")
+
+
 # The begin-* and end* here are used by the documentation generator
 # to extract the used env vars.
 
@@ -204,6 +215,10 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Read during model initialization; changing it requires a worker restart.
     "VLLM_ASCEND_DSA_RESIDENT_CACHE": lambda: bool(
         int(os.getenv("VLLM_ASCEND_DSA_RESIDENT_CACHE", "1"))
+    ),
+    # Explicit prefill-node role for the experimental layerwise cache path.
+    "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE": lambda: _strict_bool_env(
+        "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE"
     ),
     # Select the exact resident union/state-update kernels at worker startup.
     # The selection is frozen before graph capture and requires a restart.

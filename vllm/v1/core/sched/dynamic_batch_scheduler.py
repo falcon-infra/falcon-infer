@@ -23,7 +23,7 @@ from vllm.config import VllmConfig
 from vllm.distributed.kv_events import KVEventBatch
 from vllm.logger import logger
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks
-from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput
+from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.request_queue import SchedulingPolicy, create_request_queue
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.engine import EngineCoreEventType
@@ -540,8 +540,8 @@ class SchedulerDynamicBatch(Scheduler):
             )
         # Construct the scheduler output.
         new_reqs_data = [
-            NewRequestData.from_request(
-                req, req_to_new_blocks[req.request_id].get_block_ids()
+            self._make_new_request_data(
+                req, req_to_new_blocks[req.request_id]
             )
             for req in scheduled_new_reqs
         ]

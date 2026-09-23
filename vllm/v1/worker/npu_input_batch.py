@@ -22,11 +22,14 @@ import torch
 
 from vllm.lora.request import LoRARequest
 from vllm.pooling_params import PoolingParams
+from vllm.v1.core.dsa_shared_pool import LAYERWISE_PREFILL_BANK_COUNT
 from vllm.v1.outputs import LogprobsTensors
 from vllm.v1.pool.metadata import PoolingStates
 from vllm.v1.sample.logits_processor import BatchUpdateBuilder, LogitsProcessors
 from vllm.v1.worker.input_batch import InputBatch
 from vllm.v1.worker.npu_block_table import MultiGroupBlockTable
+
+import vllm.envs_ascend as envs_ascend
 
 
 class NPUInputBatch(InputBatch):
@@ -103,6 +106,26 @@ class NPUInputBatch(InputBatch):
             kernel_sizes=kernel_block_sizes,
             cp_kv_cache_interleave_size=cp_kv_cache_interleave_size,
         )
+        self.layerwise_prefill_block_tables = (self.block_table,)
+        if envs_ascend.VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE:
+            self.layerwise_prefill_block_tables = (
+                self.block_table,
+                *(
+                    MultiGroupBlockTable(
+                        max_num_reqs=max_num_reqs,
+                        max_model_len=max_model_len,
+                        max_num_batched_tokens=max_num_batched_tokens,
+                        pin_memory=pin_memory,
+                        device=device,
+                        block_sizes=block_sizes,
+                        max_num_blocks=max_num_blocks_per_req,
+                        num_speculative_tokens=num_speculative_tokens,
+                        kernel_sizes=kernel_block_sizes,
+                        cp_kv_cache_interleave_size=cp_kv_cache_interleave_size,
+                    )
+                    for _ in range(LAYERWISE_PREFILL_BANK_COUNT - 1)
+                ),
+            )
 
         # Sampling-related.
         self.temperature = torch.empty(
