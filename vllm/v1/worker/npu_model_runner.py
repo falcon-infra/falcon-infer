@@ -214,6 +214,7 @@ from vllm.v1.utils import record_function_or_nullcontext
 from vllm.v1.worker.cp_utils import (
     get_total_cp_world_size,
 )
+from vllm.v1.core.dsa_shared_pool import dsa_shared_block_layout
 from vllm.v1.worker.dsa_shared_pool import reshape_dsa_shared_pool_raw
 from vllm.v1.worker.npu_input_batch import NPUInputBatch
 from vllm.v1.worker.npu_pcp_utils import PCPManager
@@ -5992,10 +5993,6 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 and any("indexer" in ln for ln in kv_cache_tensor.shared_by)
                 and any("indexer" not in ln for ln in kv_cache_tensor.shared_by)
             ):
-                if self.use_sparse_c8_indexer:
-                    raise RuntimeError(
-                        "DSA shared pool does not support sparse C8 indexer."
-                    )
                 if self.vllm_config.kv_transfer_config is None:
                     raw_tensor = torch.zeros(
                         kv_cache_tensor.size, dtype=torch.int8, device=self.device
@@ -6008,8 +6005,37 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     raw_tensor = self._align_memory(raw_tensor, alignment)[
                         : kv_cache_tensor.size
                     ]
+                shared_bytes = kv_cache_tensor.size
+                if self.use_sparse_c8_indexer:
+                    latent_spec = next(
+                        layer_kv_cache_spec[name]
+                        for name in kv_cache_tensor.shared_by
+                        if "indexer" not in name
+                    )
+                    indexer_spec = next(
+                        layer_kv_cache_spec[name]
+                        for name in kv_cache_tensor.shared_by
+                        if "indexer" in name
+                    )
+                    layout = dsa_shared_block_layout(
+                        latent_spec, indexer_spec, kv_cache_config.num_blocks
+                    )
+                    shared_bytes = layout.slot_count * layout.bundle_page_size_bytes
+                    if (
+                        shared_bytes
+                        + layout.slot_count * layout.scale_bytes_per_bundle
+                        != kv_cache_tensor.size
+                    ):
+                        raise RuntimeError(
+                            "C8 shared slab and scale sidecar disagree with "
+                            "the allocated HBM budget"
+                        )
                 for layer_name_inner in kv_cache_tensor.shared_by:
-                    kv_cache_raw_tensors[layer_name_inner] = (raw_tensor,)
+                    kv_cache_raw_tensors[layer_name_inner] = (
+                        (raw_tensor[:shared_bytes], raw_tensor[shared_bytes:])
+                        if self.use_sparse_c8_indexer and "indexer" in layer_name_inner
+                        else (raw_tensor[:shared_bytes],)
+                    )
                 continue
             for idx in range(len(kv_cache_tensor.shared_by)):
                 layer_name = kv_cache_tensor.shared_by[idx]
@@ -6070,6 +6096,21 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                                 kv_cache_tensor.size
                             )  # whole = indexer cache
                             v_tensor_size = 0
+                            if self.use_sparse_c8_indexer:
+                                page_bytes = (
+                                    bs * index_head_dim
+                                    + bs * self.c8_k_scale_cache_dtype.itemsize
+                                )
+                                if k_tensor_size % page_bytes:
+                                    raise RuntimeError(
+                                        "C8 indexer allocation is not a whole "
+                                        "number of key/scale pages"
+                                    )
+                                nb = k_tensor_size // page_bytes
+                                k_tensor_size = nb * bs * index_head_dim
+                                v_tensor_size = (
+                                    nb * bs * self.c8_k_scale_cache_dtype.itemsize
+                                )
                         else:
                             # Derive nb from the TRUE latent page (block_size*(512+64)*elt),
                             # NOT spec.page_size_bytes (grouping unifies it to the small
@@ -6223,6 +6264,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                                 kv_cache_raw_tensors[layer_name_inner] = (
                                     (k_tensor,)
                                     if unbundle_indexer
+                                    and not self.use_sparse_c8_indexer
                                     else (k_tensor, v_tensor)
                                 )
                             elif self.use_sparse:
@@ -6296,7 +6338,10 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     kv_lora_rank, qk_rope_head_dim, index_head_dim = (
                         self.sparse_head_dim
                     )
-                    if self.dsa_shared_pool and len(raws) == 1:
+                    if self.dsa_shared_pool and (
+                        len(raws) == 1
+                        or (self.use_sparse_c8_indexer and "indexer" in layer_name)
+                    ):
                         kv_caches[layer_name] = reshape_dsa_shared_pool_raw(
                             raws[0],
                             spec.dtype,
@@ -6306,14 +6351,40 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             qk_rope_head_dim,
                             index_head_dim,
                             is_indexer="indexer" in layer_name,
+                            indexer_dtype=(
+                                self.c8_k_cache_dtype
+                                if self.use_sparse_c8_indexer
+                                else None
+                            ),
+                            indexer_scale=(
+                                raws[1]
+                                if self.use_sparse_c8_indexer
+                                and "indexer" in layer_name
+                                else None
+                            ),
                         )
                         continue
                     # Discriminate by LAYER NAME (grouping may rewrite sparse_head_dim).
                     if "indexer" in layer_name:  # single vector cache
-                        nb = raws[0].numel() // (bs * nh * index_head_dim * elt)
-                        kv_caches[layer_name] = (
-                            raws[0].view(spec.dtype).view(nb, bs, nh, index_head_dim),
+                        key_dtype = (
+                            self.c8_k_cache_dtype
+                            if self.use_sparse_c8_indexer
+                            else spec.dtype
                         )
+                        nb = raws[0].numel() // (
+                            bs * nh * index_head_dim * key_dtype.itemsize
+                        )
+                        kv_caches[layer_name] = (
+                            raws[0]
+                            .view(key_dtype)
+                            .view(nb, bs, nh, index_head_dim),
+                        )
+                        if self.use_sparse_c8_indexer:
+                            kv_caches[layer_name] += (
+                                raws[1]
+                                .view(self.c8_k_scale_cache_dtype)
+                                .view(nb, bs, nh, 1),
+                            )
                     else:  # latent group: (k_nope, k_pe)
                         nb = raws[0].numel() // (bs * nh * kv_lora_rank * elt)
                         k_nope = raws[0].view(spec.dtype).view(nb, bs, nh, kv_lora_rank)
@@ -6634,6 +6705,19 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
 
         max_num_blocks = []
         max_model_len = max(self.max_model_len, self.max_encoder_len)
+        shared_layout = None
+        if self.dsa_shared_pool:
+            latent_spec = next(
+                group.kv_cache_spec
+                for group in kv_cache_config.kv_cache_groups
+                if group.kv_cache_spec.head_size > self.sparse_head_dim[-1]
+            )
+            indexer_spec = next(
+                group.kv_cache_spec
+                for group in kv_cache_config.kv_cache_groups
+                if group.kv_cache_spec.head_size == self.sparse_head_dim[-1]
+            )
+            shared_layout = dsa_shared_block_layout(latent_spec, indexer_spec)
         for i, kv_cache_group in enumerate(kv_cache_config.kv_cache_groups):
             if isinstance(kv_cache_group.kv_cache_spec, EncoderOnlyAttentionSpec):
                 continue
@@ -6644,9 +6728,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 kv_cache_group.kv_cache_spec, AttentionSpec
             ):
                 if kv_cache_group.kv_cache_spec.head_size > self.sparse_head_dim[-1]:
-                    blocks_per_bundle = 2
+                    blocks_per_bundle = shared_layout.latent_blocks_per_bundle
                 else:
-                    blocks_per_bundle = 9
+                    blocks_per_bundle = shared_layout.indexer_blocks_per_bundle
                 max_num_blocks_per_req = (
                     cdiv(max_num_blocks_per_req, blocks_per_bundle) * blocks_per_bundle
                 )
@@ -6947,6 +7031,30 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 if isinstance(spec, MLAAttentionSpec) and "indexer" in name
             ]
             if indexer_names:
+                if self.use_sparse_c8_indexer:
+                    self.ascend_config.validate_indexer_c8_layers(indexer_names)
+                    if self.dsa_free_paged or any(
+                        getattr(self.parallel_config, name, 1) != 1
+                        for name in (
+                            "pipeline_parallel_size",
+                            "decode_context_parallel_size",
+                            "prefill_context_parallel_size",
+                        )
+                    ):
+                        raise ValueError(
+                            "Two-group indexer C8 does not support free-paged "
+                            "cache, PP or CP"
+                        )
+                    if any(
+                        kv_cache_spec[name].block_size != 128
+                        or kv_cache_spec[name].num_kv_heads != 1
+                        or kv_cache_spec[name].sparse_head_dim != (128,)
+                        for name in indexer_names
+                    ):
+                        raise ValueError(
+                            "Two-group indexer C8 requires block_size=128 and "
+                            "one 128-element head"
+                        )
                 num_hidden_layers = getattr(
                     self.model_config.hf_text_config, "num_hidden_layers", None
                 )
