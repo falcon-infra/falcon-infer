@@ -6828,6 +6828,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         _decode_window_save_enabled = _decode_window_save_window_size() > 0
         _skip_decode_save = (
             bool(self.dsa_shrink_latent)
+            and not self._layerwise_prefill_p_node
             and _is_pure_decode
             and not _decode_window_save_enabled
         )
