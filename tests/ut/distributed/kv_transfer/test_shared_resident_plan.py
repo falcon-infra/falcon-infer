@@ -41,6 +41,7 @@ def _load_resident_module():
     torch = ModuleType("torch")
     torch.Tensor = _FakeTensor
     torch.device = object
+    torch.empty_like = lambda tensor: _FakeTensor(tensor.shape, "attention_topk")
     sys.modules["torch"] = torch
     spec = importlib.util.spec_from_file_location(
         module_name,
@@ -115,6 +116,33 @@ def test_shared_plan_keeps_common_storage_and_capacity_views(resident_api):
     assert bound_workspace.miss_tokens.shape[0] == 1
 
 
+def test_bounded_plan_adds_independent_attention_order_storage(resident_api):
+    state = resident_api.SortedResidentState(
+        _FakeTensor((3, 4, 8), "tokens"),
+        _FakeTensor((3, 4, 8), "slots"),
+        _FakeTensor((3, 4, 16), "counts"),
+        _FakeTensor((3, 8), "generations"),
+        2,
+    )
+    workspace = _workspace(resident_api)
+    plan = resident_api.SharedResidentPlan(
+        ("layers.0.attn", "layers.1.attn"),
+        state,
+        workspace,
+        _FakeTensor((2, 1, 8), "topk"),
+        1,
+        128,
+        bounded=True,
+    )
+
+    assert plan.attention_topk is not None
+    assert len(plan.writes) == 16
+    assert plan.attention_plan(1, 2)[0].shape == (2, 1, 8)
+    bound_state, bound_workspace = plan.planner_storage(plan.writes, 1)
+    assert bound_state.tokens is state.tokens
+    assert bound_workspace.miss_tokens.shape[0] == 1
+
+
 def _tree(path: str) -> ast.Module:
     return ast.parse((ROOT / path).read_text(encoding="utf-8"))
 
@@ -143,6 +171,16 @@ def test_shared_operator_schema_and_clone_rewrite_are_explicit():
     assert "def _reuse_shared_resident_buffers" in compiler
     assert "_only_clone_these_tensors" in compiler
     assert "_only_clone_these_bases" in compiler
+
+    sfa = (ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py").read_text(
+        encoding="utf-8"
+    )
+    runner = (ROOT / "vllm/v1/worker/npu_model_runner.py").read_text(
+        encoding="utf-8"
+    )
+    assert "group.attention_plan" in sfa
+    assert "bounded=bool(envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH)" in runner
+    assert 'graph_inputs["shared_resident_plans"]' in runner
 
 
 def test_preemption_and_forward_failure_are_fail_closed():

@@ -3699,7 +3699,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                 requests = int(request_block_table.shape[0])
                 return (
                     resident_reads[0][:rows],
-                    *(tensor[:requests] for tensor in resident_reads[1:]),
+                    *(tensor[:requests] for tensor in resident_reads[1:4]),
                 )
             remapped = (
                 plan[0]
@@ -3858,6 +3858,24 @@ class AscendSFAImpl(MLAAttentionImpl):
                 indexer_slot_mapping.view(-1, 1),
                 k_li_for_scatter.view(-1, k_li.shape[-1]),
             )
+        graph_key = getattr(get_forward_context(), "staged_sfa_graph_key", None)
+        bounded_decode = (
+            graph_key is not None
+            and graph_key.query_profile == StagedSFAQueryProfile.DECODE_BOUNDED
+        )
+        group = getattr(self, "shared_resident_plan", None)
+        if bounded_decode and group is not None and group.active and self.skip_topk:
+            # Query/current KV remain layer-local. The producer already selected,
+            # planned, and restored the common resident result for this group.
+            return (
+                ql_nope,
+                q_pe,
+                *group.attention_plan(
+                    graph_key.request_capacity,
+                    int(hidden_states.shape[0]),
+                    resident_reads,
+                ),
+            )
         if self.skip_topk:
             # Reuse the current batch's top-k from the shared buffer
             # (GLM-5.2 shared consumers and runtime IndexCache skip layers).
@@ -3884,11 +3902,6 @@ class AscendSFAImpl(MLAAttentionImpl):
                 # skip-layer graph As in the same step read fresh indices from
                 # the stable shared buffer.
                 self._update_indexcache_topk_indices(topk_indices)
-        graph_key = getattr(get_forward_context(), "staged_sfa_graph_key", None)
-        bounded_decode = (
-            graph_key is not None
-            and graph_key.query_profile == StagedSFAQueryProfile.DECODE_BOUNDED
-        )
         if bounded_decode:
             original_requests = row_req_indices
             request_block_table = request_block_table[: graph_key.request_capacity]
@@ -3935,6 +3948,21 @@ class AscendSFAImpl(MLAAttentionImpl):
         assert target_slot_mapping is not None
         if bounded_decode:
             topk_indices = unpack_decode_lanes(topk_indices, inverse, original_requests)
+            if group is not None and group.active:
+                # Functionalization may supply replacement resident writes; use
+                # that explicit storage rather than a hidden plan-owned tensor.
+                storage = (
+                    group.attention_topk
+                    if resident_writes is None
+                    else resident_writes[-1]
+                )
+                if storage is None:
+                    raise RuntimeError(
+                        "bounded shared resident attention storage is unavailable"
+                    )
+                restored = storage[: topk_indices.shape[0]]
+                restored.copy_(topk_indices)
+                topk_indices = restored
         return (
             ql_nope,
             q_pe,

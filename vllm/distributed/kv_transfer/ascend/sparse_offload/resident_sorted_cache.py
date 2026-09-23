@@ -109,6 +109,8 @@ class SharedResidentPlan:
     mtp: int
     block_size: int
     active: bool = False
+    bounded: bool = False
+    attention_topk: torch.Tensor | None = field(init=False, default=None)
     workspace_views: dict[int, SortedResidentWorkspace] = field(init=False)
     plans: dict[int, tuple[torch.Tensor, ...]] = field(init=False)
     reads: list[torch.Tensor] = field(init=False)
@@ -135,12 +137,32 @@ class SharedResidentPlan:
             for value in vars(owner).values()
             if isinstance(value, torch.Tensor)
         ]
+        if self.bounded:
+            # Packed planner rows and native attention rows have different
+            # ordering for mixed Q1/Q2 bounded decode. Keep an explicit,
+            # persistent restoration buffer in the graph-owned write set.
+            self.attention_topk = torch.empty_like(self.topk)
+            self.reads.append(self.attention_topk)
+            self.writes.append(self.attention_topk)
+
+    def attention_plan(
+        self,
+        requests: int,
+        tokens: int,
+        reads: list[torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, ...]:
+        """Return the producer-restored plan for a bounded consumer."""
+        if self.attention_topk is None or not 0 < tokens <= self.attention_topk.shape[0]:
+            raise RuntimeError("bounded shared resident attention storage is unavailable")
+        values = self.reads if reads is None else reads
+        return (values[-1][:tokens], *(tensor[:requests] for tensor in values[1:4]))
 
     def planner_storage(
         self, writes: list[torch.Tensor], requests: int
     ) -> tuple[SortedResidentState, SortedResidentWorkspace]:
         """Bind the operator's explicit tensors, including functionalized inputs."""
-        _, tokens, slots, counts, generations, *scratch = writes
+        resident_writes = writes[:-1] if self.bounded else writes
+        _, tokens, slots, counts, generations, *scratch = resident_writes
         return (
             SortedResidentState(
                 tokens,

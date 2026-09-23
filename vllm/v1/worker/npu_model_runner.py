@@ -3895,19 +3895,36 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             if id(metadata) not in seen:
                                 impl.prepare_full_graph_metadata(metadata, context)
                                 seen.add(id(metadata))
+                    if graph_inputs is not None and self._shared_resident_groups:
+                        graph_inputs["shared_resident_plans"] = {
+                            group.members[0]: tuple(group.writes)
+                            for group in self._shared_resident_groups
+                        }
                     self._sfa_full_graph.bind_sources(source, request_ids)
                     prepared_call = self._sfa_full_graph.prepare_run(graph_inputs=graph_inputs, **graph_kwargs)
                 except Exception as exc:
                     local_error = exc
-                self._coordinate_sfa_full_graph_preparation(
-                    local_error,
-                    context.staged_sfa_graph_dummy_run,
-                )
-            output = self._sfa_full_graph.run(
-                self._run_sfa_full_graph_target,
-                **({"prepared": prepared_call} if prepared_call is not None else graph_kwargs),
-            )
-            if not getattr(self, "_sfa_full_graph_live_replay_logged", False) and not context.staged_sfa_graph_dummy_run:
+                try:
+                    self._coordinate_sfa_full_graph_preparation(
+                        local_error,
+                        context.staged_sfa_graph_dummy_run,
+                    )
+                    output = self._sfa_full_graph.run(
+                        self._run_sfa_full_graph_target,
+                        **(
+                            {"prepared": prepared_call}
+                            if prepared_call is not None
+                            else graph_kwargs
+                        ),
+                    )
+                except BaseException:
+                    if self._shared_resident_groups:
+                        self._shared_resident_failed = True
+                    raise
+            if (
+                not getattr(self, "_sfa_full_graph_live_replay_logged", False)
+                and not context.staged_sfa_graph_dummy_run
+            ):
                 self._sfa_full_graph_live_replay_logged = True
                 logger.info(
                     "[SFA full graph] first target replay: key=%s layer_transfer_splits=0",
@@ -7503,6 +7520,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 ),
                 producer.decode_threshold,
                 producer.block_size,
+                bounded=bool(envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH),
             )
             self._shared_resident_groups.append(group)
             for impl in members:
