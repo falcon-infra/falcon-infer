@@ -363,5 +363,8 @@ exact vector intersection/state-update launcher table; `0` selects baseline.
 The choice is frozen before graph capture, so changing it requires restarting
 every worker. The standalone experiment build is not sufficient: rebuild the
 serving extension and qualify both settings with graph replay, preemption and
-reuse correctness on the target NPU. This switch does not constitute serving
-release acceptance; device ABI, output parity and performance remain pending.
+reuse correctness on the target NPU. This feature line also includes the
+production sparse fixes through `6fc30da6` (GLM compatibility,
+recovery/capacity fixes, and staged event handoff). This switch does not
+constitute serving release acceptance; device ABI, output parity and
+performance remain pending.
