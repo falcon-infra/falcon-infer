@@ -2390,14 +2390,25 @@ class AscendSFAImpl(MLAAttentionImpl):
             # if mlapo, W_UK_T can't trans nz
             self.W_UK_T = maybe_trans_nz(self.W_UK_T)
 
-        if self.use_sparse_c8_indexer and AscendSFAImpl.q_hadamard is None:
-            AscendSFAImpl.q_hadamard = torch.tensor(
-                scipy.linalg.hadamard(128), dtype=torch.bfloat16, device="npu"
-            ) / (128**0.5)
-        if self.use_sparse_c8_indexer and AscendSFAImpl.k_hadamard is None:
-            AscendSFAImpl.k_hadamard = torch.tensor(
-                scipy.linalg.hadamard(128), dtype=torch.bfloat16, device="npu"
-            ) / (128**0.5)
+        if self.use_sparse_c8_indexer:
+            if (
+                AscendSFAImpl.q_hadamard is None
+                or AscendSFAImpl.q_hadamard.dtype != act_dtype
+            ):
+                AscendSFAImpl.q_hadamard = torch.tensor(
+                    scipy.linalg.hadamard(128), dtype=act_dtype, device="npu"
+                ) / (128**0.5)
+            if (
+                AscendSFAImpl.k_hadamard is None
+                or AscendSFAImpl.k_hadamard.dtype != act_dtype
+            ):
+                AscendSFAImpl.k_hadamard = torch.tensor(
+                    scipy.linalg.hadamard(128), dtype=act_dtype, device="npu"
+                ) / (128**0.5)
+            # Bind each layer to its constants so a later model/draft setup
+            # with another activation dtype cannot mutate this graph's operands.
+            self.q_hadamard = AscendSFAImpl.q_hadamard
+            self.k_hadamard = AscendSFAImpl.k_hadamard
 
     # Processing the input parameters for MLAPO by reordering and transposing
     # QKV(and part of Q) weight, applying RoPE-related dimension transformations,
@@ -2943,7 +2954,7 @@ class AscendSFAImpl(MLAAttentionImpl):
             k_li = torch.cat([k_li_pe, k_li_nope], dim=-1)  # [b*s,128]
 
         if self.use_sparse_c8_indexer:
-            k_li = k_li @ AscendSFAImpl.k_hadamard
+            k_li = k_li @ self.k_hadamard
             k_li, k_li_scale = torch_npu.npu_dynamic_quant(
                 k_li.view(-1, self.head_dim), dst_type=self.c8_k_cache_dtype
             )
@@ -3025,7 +3036,7 @@ class AscendSFAImpl(MLAAttentionImpl):
 
         if self.use_sparse_c8_indexer:
             q_li_shape_ori = q_li.shape
-            q_li = q_li @ AscendSFAImpl.q_hadamard
+            q_li = q_li @ self.q_hadamard
             q_li, q_li_scale = torch_npu.npu_dynamic_quant(
                 q_li.view(-1, self.head_dim), dst_type=self.c8_k_cache_dtype
             )
@@ -5743,7 +5754,12 @@ class AscendSFAImpl(MLAAttentionImpl):
                     req_ids=attn_metadata.req_ids,
                     layer_name=index_layer_name,
                     indexer_cache=kv_cache[2],
-                    indexer_block_table=attn_metadata.indexer_block_table,
+                    indexer_block_table=(
+                        attn_metadata.indexer_c8_block_table
+                        if self.use_sparse_c8_indexer
+                        and attn_metadata.indexer_c8_block_table is not None
+                        else attn_metadata.indexer_block_table
+                    ),
                     seq_lens_cpu=attn_metadata.seq_lens_cpu,
                     block_size=self.block_size,
                     row_request_indices=attn_metadata.decode_req_indices_cpu,

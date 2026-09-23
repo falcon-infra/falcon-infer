@@ -19,12 +19,6 @@ def validate(monkeypatch):
         for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "AscendConfig"
     )
-    method = next(
-        node
-        for node in cls.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "validate_indexer_c8_layers"
-    )
     mask_method = next(
         node
         for node in cls.body
@@ -34,7 +28,7 @@ def validate(monkeypatch):
     namespace = {}
     exec(
         compile(
-            ast.Module(body=[method, mask_method], type_ignores=[]),
+            ast.Module(body=[mask_method], type_ignores=[]),
             str(CONFIG),
             "exec",
         ),
@@ -64,9 +58,7 @@ def validate(monkeypatch):
             "model.layers.0.self_attn.indexer.k_cache",
             "model.layers.3.self_attn.indexer.k_cache",
         ]
-        if resolve:
-            return namespace[mask_method.name](obj, names)
-        namespace[method.name](obj, names)
+        return namespace[mask_method.name](obj, names)
 
     return run
 
@@ -76,9 +68,17 @@ def test_absent_layer_filter_keeps_global_c8_selection(validate, description):
     validate(description)
 
 
-def test_partial_physical_layer_policy_is_rejected(validate):
-    with pytest.raises(ValueError, match="uniform quantization"):
-        validate({"model.layers.0.self_attn.indexer.quant_type": "INT8_DYNAMIC"})
+def test_partial_physical_layer_policy_is_preserved(validate):
+    assert validate(
+        {"model.layers.0.self_attn.indexer.quant_type": "INT8_DYNAMIC"}
+    ) == (True, False)
+
+
+def test_all_bf16_layer_policy_is_preserved(validate):
+    assert validate({"model.layers.0.self_attn.indexer.quant_type": "FLOAT"}) == (
+        False,
+        False,
+    )
 
 
 def test_layer_aliases_match_by_layer_index(validate):

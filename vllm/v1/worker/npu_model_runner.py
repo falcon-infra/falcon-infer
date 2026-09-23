@@ -7367,7 +7367,13 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             if indexer_names:
                 if self.use_sparse_c8_indexer:
                     mask = self.ascend_config.indexer_c8_layer_mask(indexer_names)
-                    if any(mask) and not all(mask):
+                    if not any(mask):
+                        self.use_sparse_c8_indexer = False
+                        for name in indexer_names:
+                            object.__setattr__(
+                                kv_cache_spec[name], "cache_sparse_c8", False
+                            )
+                    elif not all(mask):
                         names = tuple(
                             name
                             for name, enabled in zip(indexer_names, mask, strict=True)
@@ -7386,7 +7392,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         and self.dsa_shared_pool
                         else 1
                     )
-                    self.ascend_config.validate_indexer_c8_layers(indexer_names)
+                if self.use_sparse_c8_indexer:
                     if self.dsa_free_paged or any(
                         getattr(self.parallel_config, name, 1) != 1
                         for name in (
