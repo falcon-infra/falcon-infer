@@ -220,11 +220,15 @@ def test_native_operator_schemas_implementations_and_meta_stay_consistent():
     meta = (ROOT / "csrc/torch_binding_meta.cpp").read_text()
     schemas = re.findall(r'ops\.def\(\s*"(\w+)\(', bindings)
     implementations = re.findall(r'ops\.impl\(\s*"(\w+)"', bindings)
+    direct_implementations = set(
+        re.findall(r'ops\.def\(\s*"(\w+)\([^"]*"\s*,\s*&', bindings)
+    )
     meta_implementations = re.findall(r'ops\.impl\(\s*"(\w+)"', meta)
     assert schemas and len(schemas) == len(set(schemas))
     assert len(implementations) == len(set(implementations))
     assert len(meta_implementations) == len(set(meta_implementations))
-    assert set(schemas) == set(implementations)
+    # A few bridge entrypoints bind a function pointer directly in ops.def.
+    assert set(schemas) == set(implementations) | direct_implementations
     assert set(meta_implementations) <= set(schemas)
     # DSA and GLM MTP production operators must not disappear with old models.
     assert {

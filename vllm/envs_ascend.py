@@ -205,6 +205,11 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_DSA_RESIDENT_CACHE": lambda: bool(
         int(os.getenv("VLLM_ASCEND_DSA_RESIDENT_CACHE", "1"))
     ),
+    # Select the exact resident union/state-update kernels at worker startup.
+    # The selection is frozen before graph capture and requires a restart.
+    "VLLM_ASCEND_DSA_RESIDENT_EXACT_KERNELS": lambda: bool(
+        int(os.getenv("VLLM_ASCEND_DSA_RESIDENT_EXACT_KERNELS", "1"))
+    ),
     # Share resident planning across structural target indexer groups.
     # Disabled by default; changing it requires a worker restart.
     "VLLM_ASCEND_SFA_SHARED_RESIDENT_PLAN": lambda: bool(

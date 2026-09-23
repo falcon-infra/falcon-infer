@@ -354,3 +354,14 @@ than reproducing all cache contention of a serving workload.
 The new variants target partial hits but can lose performance from extra index
 arithmetic or duplicated reads. No speedup is claimed until these measurements
 pass correctness and run on the target hardware.
+
+## Serving kernel selection
+
+The serving extension compiles baseline and exact resident implementations
+together. `VLLM_ASCEND_DSA_RESIDENT_EXACT_KERNELS=1` (default) selects the
+exact vector intersection/state-update launcher table; `0` selects baseline.
+The choice is frozen before graph capture, so changing it requires restarting
+every worker. The standalone experiment build is not sufficient: rebuild the
+serving extension and qualify both settings with graph replay, preemption and
+reuse correctness on the target NPU. This switch does not constitute serving
+release acceptance; device ABI, output parity and performance remain pending.

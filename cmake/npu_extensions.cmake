@@ -57,6 +57,12 @@ include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
 file(GLOB KERNEL_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/*.cpp)
 
+# Compile baseline and exact resident implementations together. The Python
+# planner freezes one launcher table before graph capture; the decode path
+# never reads the environment or branches on the selection.
+include(${CMAKE_CURRENT_LIST_DIR}/resident_exact.cmake)
+list(APPEND KERNEL_FILES ${RESIDENT_EXACT_SOURCE})
+
 set(VLLM_ASCEND_CUSTOM_OP
     ${KERNEL_FILES}
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/mla_preprocess/op_kernel/mla_preprocess_kernel.cpp
