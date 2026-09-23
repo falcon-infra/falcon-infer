@@ -23,7 +23,7 @@ import math
 import os
 import time
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from copy import copy, deepcopy
 from multiprocessing import Manager
@@ -701,6 +701,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self.layerwise_prefill_p_node = bool(
             envs_ascend.VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE
         )
+        # LMCache may carry the current two-bank chunk phase per request. Keep
+        # this host-side state separate from block allocation: a remote prefix
+        # can start in bank 1 even when local computed-token state is zero.
+        self._layerwise_prefill_bank_offsets_by_req: dict[str, int] = {}
+        self._layerwise_prefill_bank_phase_by_request_cpu: np.ndarray | None = None
+        self._layerwise_prefill_bank_phase_by_token_cpu: np.ndarray | None = None
         if self.layerwise_prefill_p_node and not self.dsa_shared_pool:
             raise ValueError(
                 "Layerwise-prefill P nodes require DSA unbundle, two groups, "
@@ -1361,6 +1367,85 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self._lp_layer_refs = refs
         return refs
 
+    def _capture_layerwise_prefill_bank_offsets(
+        self, scheduler_output: "SchedulerOutput"
+    ) -> None:
+        """Capture connector-provided per-request chunk bank phases.
+
+        The connector's chunk frontier is authoritative for remote-prefix
+        requests.  Do not infer the phase from local computed-token counts,
+        which are still zero while a remote prefix is being loaded.
+        """
+        if not self.layerwise_prefill_p_node:
+            self._layerwise_prefill_bank_offsets_by_req.clear()
+            return
+
+        metadata = getattr(scheduler_output, "kv_connector_metadata", None)
+        offsets: dict[str, int] = {}
+
+        def collect(metadata_node: Any) -> None:
+            if metadata_node is None:
+                return
+            nested = getattr(metadata_node, "metadata", None)
+            if nested is not None:
+                for child in nested:
+                    collect(child)
+
+            requests = getattr(metadata_node, "requests", None)
+            if requests is None:
+                return
+            if isinstance(requests, Mapping):
+                request_items = requests.items()
+            else:
+                request_items = (
+                    (
+                        getattr(request, "req_id", None)
+                        or getattr(request, "request_id", None),
+                        request,
+                    )
+                    for request in requests
+                )
+            for req_id, request in request_items:
+                if req_id is None:
+                    continue
+                raw_phase = getattr(
+                    request, "layerwise_prefill_bank_offset", 0
+                )
+                try:
+                    offsets[str(req_id)] = int(raw_phase) & 1
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "invalid layerwise-prefill bank phase in connector "
+                        f"metadata for request {req_id!r}: {raw_phase!r}"
+                    ) from exc
+
+        collect(metadata)
+        self._layerwise_prefill_bank_offsets_by_req = offsets
+
+    def _prepare_layerwise_prefill_bank_phase_masks(
+        self,
+        req_indices: np.ndarray,
+        num_reqs: int,
+    ) -> None:
+        if not self.layerwise_prefill_p_node:
+            self._layerwise_prefill_bank_phase_by_request_cpu = None
+            self._layerwise_prefill_bank_phase_by_token_cpu = None
+            return
+
+        request_phases = np.zeros(num_reqs, dtype=np.int8)
+        for req_index, req_id in enumerate(self.input_batch.req_ids[:num_reqs]):
+            request_phases[req_index] = self._layerwise_prefill_bank_offsets_by_req.get(
+                str(req_id), 0
+            )
+        self._layerwise_prefill_bank_phase_by_request_cpu = request_phases
+        if self.pcp_size == 1:
+            token_indices = np.asarray(req_indices, dtype=np.int64)
+            self._layerwise_prefill_bank_phase_by_token_cpu = request_phases[
+                token_indices
+            ]
+        else:
+            self._layerwise_prefill_bank_phase_by_token_cpu = None
+
     def _layerwise_prefill_common_attn_metadata(
         self,
         common_attn_metadata: CommonAttentionMetadata,
@@ -1666,6 +1751,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             logits_indices = nn.functional.pad(
                 logits_indices, (0, max_num_reqs_across_dp - logits_indices.shape[0])
             )
+
+        self._prepare_layerwise_prefill_bank_phase_masks(req_indices, num_reqs)
 
         return (
             logits_indices,
@@ -2300,6 +2387,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             with self.synchronize_input_prep():
                 # Update persistent batch states.
                 self._update_states(scheduler_output)
+                self._capture_layerwise_prefill_bank_offsets(scheduler_output)
 
                 if not num_scheduled_tokens:
                     if (
@@ -4303,14 +4391,34 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         prefill_bank_views = (
             {} if self.layerwise_prefill_p_node and not self.use_cp else None
         )
+        phase_by_request_cpu = self._layerwise_prefill_bank_phase_by_request_cpu
+        phase_by_token_cpu = self._layerwise_prefill_bank_phase_by_token_cpu
+        mixed_bank_phase = bool(
+            self.layerwise_prefill_p_node
+            and phase_by_request_cpu is not None
+            and len(phase_by_request_cpu) > 0
+            and np.any(phase_by_request_cpu != phase_by_request_cpu[0])
+        )
+        phase_by_request_device: torch.Tensor | None = None
+        phase_by_token_device: torch.Tensor | None = None
 
         def _get_block_table_and_slot_mapping(
             kv_cache_gid: int, bank: int = 0
         ):
-            if prefill_bank_views is not None:
-                cached = prefill_bank_views.get((kv_cache_gid, bank))
-                if cached is not None:
-                    return cached
+            if self.layerwise_prefill_p_node:
+                phase_value = (
+                    int(phase_by_request_cpu[0])
+                    if phase_by_request_cpu is not None
+                    and len(phase_by_request_cpu)
+                    and not mixed_bank_phase
+                    else 0
+                )
+                physical_bank = bank ^ phase_value
+                cache_key = (kv_cache_gid, bank, phase_value, mixed_bank_phase)
+                if prefill_bank_views is not None:
+                    cached = prefill_bank_views.get(cache_key)
+                    if cached is not None:
+                        return cached
             assert num_reqs_padded is not None and num_tokens_padded is not None
             kv_cache_spec = kv_cache_groups[kv_cache_gid].kv_cache_spec
             if self.pcp_size > 1:
@@ -4337,7 +4445,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 )
                 if bank < 0 or bank >= len(block_tables_by_bank):
                     raise RuntimeError(f"invalid layerwise-prefill bank {bank}")
-                blk_table = block_tables_by_bank[bank][kv_cache_gid]
+                selected_bank = physical_bank if self.layerwise_prefill_p_node else bank
+                if selected_bank < 0 or selected_bank >= len(block_tables_by_bank):
+                    raise RuntimeError(
+                        f"invalid layerwise-prefill bank {selected_bank}"
+                    )
+                blk_table = block_tables_by_bank[selected_bank][kv_cache_gid]
                 slot_mapping = blk_table.slot_mapping.gpu[:maybe_pcp_full_tokens]
                 maybe_num_reqs_padded = (
                     num_reqs_padded * self.decode_token_per_req
@@ -4353,6 +4466,45 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         slot_mapping[num_tokens:num_tokens_padded].fill_(-1)
                     if num_reqs < num_reqs_padded:
                         blk_table_tensor[num_reqs:num_reqs_padded].fill_(0)
+                if mixed_bank_phase and phase_by_token_cpu is not None:
+                    other_bank = physical_bank ^ 1
+                    other_table = block_tables_by_bank[other_bank][kv_cache_gid]
+                    nonlocal phase_by_request_device, phase_by_token_device
+                    if phase_by_request_device is None:
+                        padded_request_phase = np.zeros(
+                            maybe_num_reqs_padded, dtype=np.bool_
+                        )
+                        padded_request_phase[:num_reqs] = (
+                            phase_by_request_cpu.astype(np.bool_)
+                        )
+                        phase_by_request_device = torch.from_numpy(
+                            padded_request_phase
+                        ).to(self.device, non_blocking=True)
+                    if phase_by_token_device is None:
+                        padded_token_phase = np.zeros(
+                            maybe_pcp_full_tokens, dtype=np.bool_
+                        )
+                        token_count = min(
+                            len(phase_by_token_cpu), maybe_pcp_full_tokens
+                        )
+                        padded_token_phase[:token_count] = (
+                            phase_by_token_cpu[:token_count].astype(np.bool_)
+                        )
+                        phase_by_token_device = torch.from_numpy(
+                            padded_token_phase
+                        ).to(self.device, non_blocking=True)
+                    other_table_tensor = other_table.get_device_tensor()[:maybe_num_reqs_padded]
+                    other_slot_mapping = other_table.slot_mapping.gpu[:maybe_pcp_full_tokens]
+                    blk_table_tensor = torch.where(
+                        phase_by_request_device[:, None],
+                        other_table_tensor,
+                        blk_table_tensor,
+                    )
+                    slot_mapping = torch.where(
+                        phase_by_token_device,
+                        other_slot_mapping,
+                        slot_mapping,
+                    )
             if self.pcp_size > 1:
                 slot_mapping = self.pcp_manager.get_padded_slot_mapping(
                     num_tokens,
@@ -4362,7 +4514,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             if self.model_config.enable_return_routed_experts and kv_cache_gid == 0:
                 self.cpu_slot_mapping = slot_mapping.cpu().numpy()
             if prefill_bank_views is not None:
-                prefill_bank_views[kv_cache_gid, bank] = (
+                prefill_bank_views[cache_key] = (
                     blk_table_tensor,
                     slot_mapping,
                 )
