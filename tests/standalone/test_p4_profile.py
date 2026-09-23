@@ -107,6 +107,18 @@ def test_native_connectors_and_no_legacy_import():
             "lmcache_ascend.integration.vllm.lmcache_ascend_connector_v1",
         )
 
+    api.validate_connector(
+        "LMCacheConnectorV1Dynamic",
+        "lmcache.integration.vllm.lmcache_connector_v1",
+    )
+    with pytest.raises(ValueError):
+        api.validate_connector("LMCacheConnectorV1Dynamic", None)
+    with pytest.raises(ValueError):
+        api.validate_connector(
+            "LMCacheConnectorV1Dynamic",
+            "lmcache_ascend.integration.vllm.lmcache_ascend_connector_v1",
+        )
+
 
 @pytest.mark.parametrize(
     "prompt",

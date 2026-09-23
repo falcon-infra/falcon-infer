@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import os
 from collections import Counter
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
 from math import gcd
+from types import MappingProxyType
 from typing import Any
 
 
@@ -54,6 +56,28 @@ def dsa_scratch_blocks_for_topk(
 class DSASharedBlockOwner(str, Enum):
     LATENT = "latent"
     INDEXER = "indexer"
+    PREFILL_RESERVED = "prefill_reserved"
+
+
+class DSABlockAllocationMode(str, Enum):
+    FULL_PARENT = "full_parent"
+    PREFILL_CHILD = "prefill_child"
+
+
+LAYERWISE_PREFILL_BANK_COUNT = 2
+LAYERWISE_PREFILL_BUNDLE_MULTIPLIER = 2
+
+
+def layerwise_prefill_bundle_multiplier() -> int:
+    """Select the physical layout for the explicit P-node feature path."""
+    raw = os.environ.get("VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE", "false")
+    value = raw.strip().lower()
+    if value not in {"true", "false"}:
+        raise ValueError(
+            "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE must be 'true' or 'false', "
+            f"got {raw!r}"
+        )
+    return LAYERWISE_PREFILL_BUNDLE_MULTIPLIER if value == "true" else 1
 
 
 @dataclass(frozen=True)
@@ -67,6 +91,7 @@ class DSASharedBlockLayout:
     latent_page_size_bytes: int
     indexer_page_size_bytes: int
     capacity_bundles: int
+    bundle_multiplier: int = 1
     k_nope_dim: int = 512
     k_pe_dim: int = 64
     indexer_dim: int = 128
@@ -79,6 +104,8 @@ class DSASharedBlockLayout:
             raise ValueError("page sizes must be positive")
         if self.capacity_bundles <= 0:
             raise ValueError("capacity_bundles must be positive")
+        if self.bundle_multiplier <= 0:
+            raise ValueError("bundle_multiplier must be positive")
         if (
             min(self.latent_element_size, self.indexer_element_size) <= 0
             or self.indexer_scale_page_size_bytes < 0
@@ -99,7 +126,9 @@ class DSASharedBlockLayout:
 
     @property
     def bundle_page_size_bytes(self) -> int:
-        return _lcm(self.latent_page_size_bytes, self.indexer_page_size_bytes)
+        return self.bundle_multiplier * _lcm(
+            self.latent_page_size_bytes, self.indexer_page_size_bytes
+        )
 
     @property
     def latent_blocks_per_bundle(self) -> int:
@@ -210,6 +239,7 @@ def dsa_shared_block_layout(
     latent_spec: Any,
     indexer_spec: Any,
     capacity_bundles: int = 1,
+    bundle_multiplier: int = 1,
 ) -> DSASharedBlockLayout:
     """Resolve shared key geometry separately from indexer scale storage."""
     scale_bytes_value = getattr(indexer_spec, "indexer_scale_page_size_bytes", None)
@@ -234,6 +264,7 @@ def dsa_shared_block_layout(
         latent_page_size_bytes=latent_spec.page_size_bytes,
         indexer_page_size_bytes=indexer_spec.page_size_bytes - scale_bytes,
         capacity_bundles=capacity_bundles,
+        bundle_multiplier=bundle_multiplier,
         k_nope_dim=latent_dims[0],
         k_pe_dim=latent_dims[1],
         indexer_dim=indexer_dims[-1],
@@ -356,3 +387,203 @@ class DSASharedBundleAllocator:
                 prev_start, prev_end = merged[-1]
                 merged[-1] = (prev_start, max(prev_end, end))
         self._free_ranges = merged
+
+
+class PrefillLayerBundlePool:
+    """Banked child allocator backed by reserved shared-pool parents."""
+
+    def __init__(
+        self,
+        parent_allocator: DSASharedBundleAllocator,
+        num_physical_slots: int,
+        *,
+        bank_count: int = LAYERWISE_PREFILL_BANK_COUNT,
+    ) -> None:
+        if num_physical_slots <= 0 or bank_count <= 0:
+            raise ValueError("prefill child pool dimensions must be positive")
+        self.parent_allocator = parent_allocator
+        self.num_physical_slots = num_physical_slots
+        self.bank_count = bank_count
+        parent_layout = parent_allocator.layout
+        self.parent_capacity = parent_layout.capacity_bundles
+        self.layout = replace(
+            parent_layout,
+            capacity_bundles=self.parent_capacity * num_physical_slots,
+        )
+        self._owners: dict[int, DSASharedBlockOwner] = {}
+        self._reserved_parents: set[int] = set()
+
+    def child_bundle_id(self, physical_slot: int, parent_bundle_id: int) -> int:
+        if not 0 <= physical_slot < self.num_physical_slots:
+            raise ValueError(f"invalid physical slot {physical_slot}")
+        if not 0 < parent_bundle_id <= self.parent_capacity:
+            raise ValueError(f"invalid parent bundle id {parent_bundle_id}")
+        return physical_slot * self.parent_capacity + parent_bundle_id
+
+    def parent_bundle_id(self, child_bundle_id: int) -> int:
+        if not 0 < child_bundle_id <= self.layout.capacity_bundles:
+            raise ValueError(f"invalid child bundle id {child_bundle_id}")
+        return (child_bundle_id - 1) % self.parent_capacity + 1
+
+    def physical_slot(self, child_bundle_id: int) -> int:
+        if not 0 < child_bundle_id <= self.layout.capacity_bundles:
+            raise ValueError(f"invalid child bundle id {child_bundle_id}")
+        return (child_bundle_id - 1) // self.parent_capacity
+
+    @property
+    def reserved_parent_count(self) -> int:
+        return len(self._reserved_parents)
+
+    @property
+    def materialized_free_bundle_count(self) -> int:
+        return self.reserved_parent_count * self.num_physical_slots - len(
+            self._owners
+        )
+
+    @property
+    def free_bundle_count(self) -> int:
+        return len(self._materialized_free_children()) + (
+            self.parent_allocator.free_bundle_count * self.num_physical_slots
+        )
+
+    @property
+    def free_range_count(self) -> int:
+        return len(self._reserved_parents)
+
+    @property
+    def largest_free_range(self) -> int:
+        if not self.free_bundle_count:
+            return 0
+        return max(self.num_physical_slots, self.materialized_free_bundle_count)
+
+    def owner_bundle_counts(self) -> Counter[DSASharedBlockOwner]:
+        return Counter(self._owners.values())
+
+    def logical_bundle_count_for_blocks(
+        self, owner: DSASharedBlockOwner, num_blocks: int
+    ) -> int:
+        return _cdiv(num_blocks, self.layout.blocks_per_bundle(owner))
+
+    def bundle_count_for_blocks(
+        self, owner: DSASharedBlockOwner, num_blocks: int
+    ) -> int:
+        return self.bank_count * self.logical_bundle_count_for_blocks(owner, num_blocks)
+
+    def allocate_banks(
+        self, owner: DSASharedBlockOwner, num_logical_bundles: int
+    ) -> tuple[tuple[int, ...], ...]:
+        if owner == DSASharedBlockOwner.PREFILL_RESERVED:
+            raise ValueError("PREFILL_RESERVED is not a child owner")
+        child_ids = self.allocate(owner, num_logical_bundles * self.bank_count)
+        return tuple(
+            child_ids[bank * num_logical_bundles : (bank + 1) * num_logical_bundles]
+            for bank in range(self.bank_count)
+        )
+
+    def allocate(
+        self, owner: DSASharedBlockOwner, num_bundles: int
+    ) -> tuple[int, ...]:
+        if owner == DSASharedBlockOwner.PREFILL_RESERVED:
+            raise ValueError("PREFILL_RESERVED is not a child owner")
+        if num_bundles <= 0:
+            return ()
+        if num_bundles > self.free_bundle_count:
+            raise ValueError("Cannot get DSA child bundles from prefill pool")
+        free_children = self._materialized_free_children()
+        missing = num_bundles - len(free_children)
+        if missing > 0:
+            parents_needed = _cdiv(missing, self.num_physical_slots)
+            parents = self.parent_allocator.allocate(
+                DSASharedBlockOwner.PREFILL_RESERVED, parents_needed
+            )
+            self._reserved_parents.update(parents)
+            free_children = self._materialized_free_children()
+        chosen = tuple(free_children[:num_bundles])
+        for child_id in chosen:
+            self._owners[child_id] = owner
+        return chosen
+
+    def free(
+        self, owner: DSASharedBlockOwner, bundle_ids: Iterable[int]
+    ) -> None:
+        ids = tuple(bundle_ids)
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"duplicate DSA child bundle ids in free: {ids}")
+        for child_id in ids:
+            if self._owners.get(child_id) != owner:
+                raise ValueError(f"DSA child bundle {child_id} owner mismatch")
+        parents = {self.parent_bundle_id(child_id) for child_id in ids}
+        for child_id in ids:
+            del self._owners[child_id]
+        releasable = tuple(
+            parent
+            for parent in sorted(parents)
+            if not any(
+                self.child_bundle_id(slot, parent) in self._owners
+                for slot in range(self.num_physical_slots)
+            )
+        )
+        if releasable:
+            self.parent_allocator.free(
+                DSASharedBlockOwner.PREFILL_RESERVED, releasable
+            )
+            self._reserved_parents.difference_update(releasable)
+
+    def _materialized_free_children(self) -> list[int]:
+        return [
+            self.child_bundle_id(slot, parent)
+            for parent in sorted(self._reserved_parents)
+            for slot in range(self.num_physical_slots)
+            if self.child_bundle_id(slot, parent) not in self._owners
+        ]
+
+
+@dataclass(frozen=True)
+class PrefillLayerRef:
+    layer_name: str
+    kv_group: int
+    group_ordinal: int
+    execution_index: int
+    bank: int
+
+
+def build_prefill_layer_refs(
+    latent_names: Sequence[str],
+    indexer_names: Sequence[str],
+    *,
+    execution_order: Sequence[str] | None = None,
+    bank_count: int = LAYERWISE_PREFILL_BANK_COUNT,
+) -> Mapping[str, PrefillLayerRef]:
+    if bank_count <= 0:
+        raise ValueError("bank_count must be positive")
+    if len(set(latent_names)) != len(latent_names):
+        raise ValueError("latent layer names must be unique")
+    if len(set(indexer_names)) != len(indexer_names):
+        raise ValueError("indexer layer names must be unique")
+    indexer_set = set(indexer_names)
+    indexer_by_latent: dict[str, str] = {}
+    latent_by_indexer: dict[str, str] = {}
+    for latent_name in latent_names:
+        sibling = latent_name.rsplit(".", 1)[0] + ".indexer.k_cache"
+        if sibling in indexer_set:
+            indexer_by_latent[latent_name] = sibling
+            latent_by_indexer[sibling] = latent_name
+    orphan = sorted(indexer_set - set(latent_by_indexer))
+    if orphan:
+        raise ValueError(f"indexer layers without an exact latent sibling: {orphan}")
+    order = list(execution_order) if execution_order is not None else list(latent_names)
+    execution_index = {name: index for index, name in enumerate(order)}
+    missing = [
+        layer_name
+        for layer_name in indexer_by_latent
+        if layer_name not in execution_index
+    ]
+    if missing:
+        raise ValueError(f"execution_order is missing latent layers: {missing}")
+    refs: dict[str, PrefillLayerRef] = {}
+    for ordinal, name in enumerate(latent_names):
+        refs[name] = PrefillLayerRef(name, 0, ordinal, execution_index[name], ordinal % bank_count)
+    for ordinal, name in enumerate(indexer_names):
+        latent = latent_by_indexer[name]
+        refs[name] = PrefillLayerRef(name, 1, ordinal, execution_index[latent], ordinal % bank_count)
+    return MappingProxyType(refs)

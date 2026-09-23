@@ -195,6 +195,7 @@ from vllm.v1.kv_cache_interface import (
     MambaSpec,
     MLAAttentionSpec,
     UniformTypeKVCacheSpecs,
+    layerwise_prefill_p_node_enabled,
 )
 from vllm.v1.outputs import (
     EMPTY_MODEL_RUNNER_OUTPUT,
@@ -6017,6 +6018,23 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 and any("indexer" in ln for ln in kv_cache_tensor.shared_by)
                 and any("indexer" not in ln for ln in kv_cache_tensor.shared_by)
             ):
+                if layerwise_prefill_p_node_enabled():
+                    # P-node child allocation aliases every logical latent and
+                    # indexer layer into one global slab. Child block IDs carry
+                    # the layer slot, so do not split the slab per sibling.
+                    if self.use_sparse_c8_indexer:
+                        raise ValueError(
+                            "layerwise prefill P-node does not support C8 "
+                            "indexer sidecars in the native NPU runner"
+                        )
+                    raw_tensor = torch.zeros(
+                        kv_cache_tensor.size,
+                        dtype=torch.int8,
+                        device=self.device,
+                    )
+                    for layer_name_inner in kv_cache_tensor.shared_by:
+                        kv_cache_raw_tensors[layer_name_inner] = (raw_tensor,)
+                    continue
                 if self.vllm_config.kv_transfer_config is None:
                     raw_tensor = torch.zeros(
                         kv_cache_tensor.size, dtype=torch.int8, device=self.device

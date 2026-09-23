@@ -180,6 +180,24 @@ class KVConnectorBase_V1(ABC):
         """
         return False
 
+    @property
+    def supports_layerwise_prefill_transfer_window(self) -> bool:
+        """Whether dense layerwise loads can be submitted independently."""
+        return False
+
+    @property
+    def supports_dsa_index_lmcache(self) -> bool:
+        """Whether this connector persists the separate DSA index KV group."""
+        return False
+
+    @property
+    def supports_layerwise_prefill_dsa_index_transfer_window(self) -> bool:
+        """Whether one connector satisfies the complete two-group protocol."""
+        return bool(
+            self.supports_layerwise_prefill_transfer_window
+            and self.supports_dsa_index_lmcache
+        )
+
     def __init__(
         self,
         vllm_config: "VllmConfig",
@@ -327,6 +345,10 @@ class KVConnectorBase_V1(ABC):
         """
         pass
 
+    def submit_layerwise_prefill_load(self, layer_name: str) -> None:
+        """Submit the dense load following ``layer_name`` without waiting."""
+        raise NotImplementedError
+
     @abstractmethod
     def save_kv_layer(
         self,
@@ -348,6 +370,33 @@ class KVConnectorBase_V1(ABC):
             **kwargs: additional arguments for the save operation.
         """
         pass
+
+    def save_kv_layer_in_layerwise_prefill_transfer_window(
+        self,
+        layer_name: str,
+        kv_layer: torch.Tensor,
+        attn_metadata: "AttentionMetadata",
+        **kwargs: Any,
+    ) -> None:
+        """Save through connectors participating in the pre-HCOM window."""
+        if self.supports_layerwise_prefill_transfer_window:
+            self.save_kv_layer(layer_name, kv_layer, attn_metadata, **kwargs)
+
+    def finish_layerwise_prefill_save(self, layer_name: str) -> None:
+        """Finish the host-side portion of a pre-HCOM layer save."""
+        if self.supports_layerwise_prefill_transfer_window:
+            raise NotImplementedError
+
+    def save_kv_layer_outside_layerwise_prefill_transfer_window(
+        self,
+        layer_name: str,
+        kv_layer: torch.Tensor,
+        attn_metadata: "AttentionMetadata",
+        **kwargs: Any,
+    ) -> None:
+        """Save through connectors that must remain after the TP reduction."""
+        if not self.supports_layerwise_prefill_transfer_window:
+            self.save_kv_layer(layer_name, kv_layer, attn_metadata, **kwargs)
 
     @abstractmethod
     def wait_for_save(self):

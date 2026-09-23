@@ -10,11 +10,14 @@ from vllm.logger import init_logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.core.block_pool import BlockPool, DSASharedLogicalBlockPool
 from vllm.v1.core.dsa_shared_pool import (
+    LAYERWISE_PREFILL_BANK_COUNT,
     DSASharedBlockOwner,
     DSASharedBundleAllocator,
+    PrefillLayerBundlePool,
     dsa_block_pool_index,
     dsa_scratch_blocks_for_topk,
     dsa_shared_block_layout,
+    layerwise_prefill_bundle_multiplier,
 )
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
 from vllm.v1.core.kv_cache_utils import (
@@ -36,6 +39,7 @@ from vllm.v1.kv_cache_interface import (
     MLAAttentionSpec,
     dsa_shared_pool_enabled,
     dsa_two_groups_enabled,
+    layerwise_prefill_p_node_enabled,
 )
 from vllm.v1.request import Request
 
@@ -100,6 +104,12 @@ class KVCacheCoordinator(ABC):
             and len(kv_cache_config.kv_cache_groups) > 1
             and len(group_page_sizes) > 1
         )
+        self.layerwise_prefill_p_node = layerwise_prefill_p_node_enabled()
+        if self.layerwise_prefill_p_node and not self.use_dsa_shared_block_pool:
+            raise ValueError(
+                "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE=true requires DSA "
+                "two-group shared-pool mode"
+            )
         assert not (
             (self.use_per_group_block_pools or self.use_dsa_shared_block_pool)
             and enable_caching
@@ -118,13 +128,28 @@ class KVCacheCoordinator(ABC):
             )
             assert isinstance(latent_group.kv_cache_spec, MLAAttentionSpec)
             assert isinstance(indexer_group.kv_cache_spec, MLAAttentionSpec)
-            layout = dsa_shared_block_layout(
+            parent_layout = dsa_shared_block_layout(
                 latent_group.kv_cache_spec,
                 indexer_group.kv_cache_spec,
                 capacity_bundles=kv_cache_config.num_blocks,
+                bundle_multiplier=(
+                    layerwise_prefill_bundle_multiplier()
+                    if self.layerwise_prefill_p_node
+                    else 1
+                ),
             )
-            self.dsa_shared_allocator = DSASharedBundleAllocator(layout)
             self.dsa_shared_num_layer_pairs = len(latent_group.layer_names)
+            parent_allocator = DSASharedBundleAllocator(parent_layout)
+            self.dsa_shared_parent_allocator = parent_allocator
+            if self.layerwise_prefill_p_node:
+                self.dsa_shared_allocator = PrefillLayerBundlePool(
+                    parent_allocator,
+                    self.dsa_shared_num_layer_pairs,
+                    bank_count=LAYERWISE_PREFILL_BANK_COUNT,
+                )
+            else:
+                self.dsa_shared_allocator = parent_allocator
+            layout = self.dsa_shared_allocator.layout
             self.dsa_shared_indexer_layer_count = len(indexer_group.layer_names)
             self.block_pools = []
             for group in kv_cache_config.kv_cache_groups:
@@ -138,9 +163,10 @@ class KVCacheCoordinator(ABC):
                     DSASharedLogicalBlockPool(self.dsa_shared_allocator, owner)
                 )
             logger.info(
-                "DSA shared KV bundle pool: %d bundles, latent=%d blocks/bundle, "
-                "indexer=%d blocks/bundle.",
-                kv_cache_config.num_blocks,
+                "DSA shared KV bundle pool: mode=%s bundles=%d, "
+                "latent=%d blocks/bundle, indexer=%d blocks/bundle.",
+                "prefill_child" if self.layerwise_prefill_p_node else "full_parent",
+                layout.capacity_bundles,
                 layout.latent_blocks_per_bundle,
                 layout.indexer_blocks_per_bundle,
             )
@@ -448,13 +474,17 @@ class KVCacheCoordinator(ABC):
                         )
                     )
 
-        bundle_bytes = layout.allocation_bytes_per_bundle(
-            getattr(self, "dsa_shared_num_layer_pairs", 1),
-            getattr(
-                self,
-                "dsa_shared_indexer_layer_count",
+        bundle_bytes = (
+            layout.bundle_page_size_bytes
+            if self.layerwise_prefill_p_node
+            else layout.allocation_bytes_per_bundle(
                 getattr(self, "dsa_shared_num_layer_pairs", 1),
-            ),
+                getattr(
+                    self,
+                    "dsa_shared_indexer_layer_count",
+                    getattr(self, "dsa_shared_num_layer_pairs", 1),
+                ),
+            )
         )
         used_gib = used * bundle_bytes / 2**30
         total_gib = capacity * bundle_bytes / 2**30
@@ -609,21 +639,43 @@ class KVCacheCoordinator(ABC):
         Returns:
             The new allocated blocks.
         """
-        new_blocks = []
-        for manager in self.single_type_managers:
-            if dsa_compact_external_load and isinstance(manager, DSALatentManager):
-                blocks = manager.allocate_new_blocks_compact_external(
-                    request_id, num_tokens, num_tokens_main_model
+        new_blocks: list[list[KVCacheBlock]] = []
+        try:
+            for manager in self.single_type_managers:
+                allocate = (
+                    manager.allocate_new_blocks_compact_external
+                    if dsa_compact_external_load
+                    and isinstance(manager, DSALatentManager)
+                    else manager.allocate_new_blocks
                 )
-            else:
-                blocks = manager.allocate_new_blocks(
-                    request_id,
-                    num_encoder_tokens
-                    if isinstance(manager, CrossAttentionManager)
-                    else num_tokens,
-                    num_tokens_main_model,
+                new_blocks.append(
+                    allocate(
+                        request_id,
+                        num_encoder_tokens
+                        if isinstance(manager, CrossAttentionManager)
+                        else num_tokens,
+                        num_tokens_main_model,
+                    )
                 )
-            new_blocks.append(blocks)
+        except BaseException as allocation_error:
+            if self.layerwise_prefill_p_node:
+                # The two group allocations share one child pool. Roll back
+                # only the blocks appended by this call so partial failures do
+                # not leak a bank or corrupt a prior chunk.
+                for manager, tail_blocks in reversed(
+                    list(zip(self.single_type_managers, new_blocks))
+                ):
+                    if not tail_blocks:
+                        continue
+                    request_blocks = manager.req_to_blocks[request_id]
+                    if request_blocks[-len(tail_blocks) :] != tail_blocks:
+                        raise RuntimeError(
+                            "Layerwise-prefill allocation rollback lost its "
+                            f"request tail: request_id={request_id}"
+                        ) from allocation_error
+                    del request_blocks[-len(tail_blocks) :]
+                    manager.block_pool.free_blocks(reversed(tail_blocks))
+            raise
         if dsa_compact_external_load:
             logger.info(
                 "[DSA_COMPACT_GROUPS_AFTER_SLOTS] req=%s num_tokens=%d "

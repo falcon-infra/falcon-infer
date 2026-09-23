@@ -17,6 +17,21 @@ from vllm.utils.torch_utils import get_dtype_size
 logger = init_logger(__name__)
 
 
+def _parse_dsa_role_env(name: str) -> bool:
+    raw = os.getenv(name, "false")
+    normalized = raw.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"{name} must be 'true' or 'false', got {raw!r}")
+
+
+def layerwise_prefill_p_node_enabled() -> bool:
+    """Whether this process is explicitly marked as a layerwise P node."""
+    return _parse_dsa_role_env("VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE")
+
+
 def dsa_two_groups_enabled() -> bool:
     """vllm-ascend DSA un-bundled latent/indexer (two-group mode).
 

@@ -15,6 +15,12 @@ MTP_ARCHITECTURE = "DeepSeekMTPModel"
 MTP_MODEL_TYPE = "deepseek_mtp"
 CONNECTOR = "LMCacheConnectorV1"
 CONNECTOR_MODULE = "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector"
+PAIRED_CONNECTORS = {
+    "LMCacheConnectorV1Dynamic": (
+        "lmcache.integration.vllm.lmcache_connector_v1",
+        "LMCacheConnectorV1Dynamic",
+    ),
+}
 NATIVE_CONNECTORS = {
     CONNECTOR: (CONNECTOR_MODULE, CONNECTOR),
     "MultiConnector": (
@@ -135,14 +141,23 @@ def validate_speculation(method: str | None, model: str | None, target: Any) -> 
 
 
 def validate_connector(name: str | None, module: str | None = None) -> None:
-    """Reject dynamic plugin and other-device KV connectors before import."""
-    if name not in NATIVE_CONNECTORS or module not in (
+    """Reject legacy packages and unrelated dynamic KV connectors.
+
+    The paired LMCache package is the one supported external owner for the
+    merged Ascend connector; it must be selected by its exact module path.
+    """
+    if name in PAIRED_CONNECTORS:
+        if module == PAIRED_CONNECTORS[name][0]:
+            return
+    elif name in NATIVE_CONNECTORS and module in (
         None,
         NATIVE_CONNECTORS[name][0],
     ):
-        raise ValueError(
-            "Ascend P4 requires a built-in native Ascend KV connector; remove legacy/external module paths"
-        )
+        return
+    raise ValueError(
+        "Ascend P4 requires a built-in native or paired LMCache KV connector; "
+        "remove legacy/external module paths"
+    )
 
 
 def validate_text_prompt(prompt: Any) -> None:
