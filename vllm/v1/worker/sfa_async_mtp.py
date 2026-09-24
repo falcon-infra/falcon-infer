@@ -460,6 +460,8 @@ class AsyncSFAModelRunner(NPUModelRunner):
                     {
                         "slots_c8": item.indexer_c8_slot_mapping,
                         "MIXED_C8": True,
+                        "table_c8": item.indexer_c8_block_table,
+                        "stride_c8": item.indexer_c8_block_table.stride(0),
                     }
                     if getattr(item, "indexer_c8_slot_mapping", None) is not None
                     else {}

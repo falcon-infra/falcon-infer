@@ -12,8 +12,22 @@ class MixedIndexerMetadata:
         max_blocks: int,
         max_tokens: int,
         device: torch.device,
+        *,
+        block_map: tuple[int, ...] | None = None,
     ):
         self.max_requests, self.max_blocks = max_requests, max_blocks
+        self.block_map = (
+            torch.tensor(block_map, dtype=torch.int32, device=device)
+            if block_map is not None
+            else None
+        )
+        self._map_device_metadata = None
+        if self.block_map is not None and self.block_map.device.type != "cpu":
+            from vllm.model_executor.layers.ascend.triton.spec_decode.indexer_c8_metadata import (
+                map_indexer_metadata,
+            )
+
+            self._map_device_metadata = map_indexer_metadata
         self.tables = torch.empty(
             max_requests * max_blocks, dtype=torch.int32, device=device
         )
@@ -32,6 +46,34 @@ class MixedIndexerMetadata:
             raise ValueError("Mixed indexer metadata exceeds its preallocated capacity")
         physical_table = self.tables[: table.numel()].view(table.shape)
         physical_slots = self.slots[: slots.numel()]
+        if self.block_map is not None:
+            if self._map_device_metadata is None:
+                physical_table.copy_(
+                    torch.where(
+                        table >= 0,
+                        self.block_map[table.clamp(min=0).long()],
+                        table,
+                    )
+                )
+                blocks = torch.div(
+                    slots.clamp(min=0), 128, rounding_mode="floor"
+                ).long()
+                physical_slots.copy_(
+                    torch.where(
+                        slots >= 0,
+                        self.block_map[blocks].long() * 128 + slots % 128,
+                        slots,
+                    )
+                )
+            else:
+                self._map_device_metadata(
+                    table,
+                    slots,
+                    self.block_map,
+                    physical_table,
+                    physical_slots,
+                )
+            return physical_table, physical_slots
         torch.mul(table, 2, out=physical_table)
         # Preserve -1 padding while mapping logical token slots to the first
         # 128-token half of each BF16-sized shared allocation.

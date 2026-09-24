@@ -33,6 +33,7 @@ def test_async_runner_has_explicit_eligibility_and_reconciliation_boundaries():
     assert "super()._update_states(scheduled)" in methods["_reconcile"]
     assert "prepare_async_mtp_kernel" in methods["_build_attention_metadata"]
     assert "indexer_c8_slot_mapping" in methods["_build_attention_metadata"]
+    assert "indexer_c8_block_table" in methods["_build_attention_metadata"]
     assert "self._reconcile()" in methods["_model_forward"]
     assert "self._remember" in methods["_model_forward"]
     assert "_async_counts_epoch" in methods["_eligible"]

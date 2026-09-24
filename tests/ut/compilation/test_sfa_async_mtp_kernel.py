@@ -40,4 +40,6 @@ def test_kernel_advances_mixed_c8_indexer_slots():
     source = KERNEL.read_text(encoding="utf-8")
     assert "slots_c8" in source
     assert "MIXED_C8" in source
-    assert "block_id1 * 2 * block1" in source
+    assert "block_id1 * 2" in source
+    assert "table_c8" in source
+    assert "stride_c8" in source

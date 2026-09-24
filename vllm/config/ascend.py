@@ -221,6 +221,9 @@ class AscendConfig:
         self.enable_sparse_c8 = bool(indexer_c8 and use_sparse)
         self.enable_sparse_li_c8 = self.enable_sparse_c8
         self.indexer_c8_shared_block_factor = 1
+        # Native mixed-C8 metadata is bound after KV sizing. Keep this
+        # startup-owned mapping separate from the logical block policy.
+        self.indexer_hbm_block_map: tuple[int, ...] | None = None
         if self.enable_sparse_li_c8 and additional_config.get(
             "c8_enable_reshape_optim", False
         ):
