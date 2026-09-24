@@ -212,8 +212,7 @@ class LayerSnapshots:
                 self.probes["topk"].write(result.reshape(result.shape[0], -1))
             return result
 
-        def planner_with_probe(topk, boundary, *args, **kwargs):
-            result = planner(topk, boundary, *args, **kwargs)
+        def record_plan(topk, boundary, result):
             if topk.shape[0] <= QUERY_WIDTH:
                 self.probes["boundary"].write(boundary.reshape(-1).to(torch.long))
                 _, tokens, counts, slots = result
@@ -223,6 +222,10 @@ class LayerSnapshots:
                     self.probes["miss_count"].write(counts)
                     self.probes["miss_tokens"].write_padded(torch.where(valid, tokens[:1], -1))
                     self.probes["target_slots"].write_padded(torch.where(valid, slots[:1], -1))
+
+        def planner_with_probe(topk, boundary, *args, **kwargs):
+            result = planner(topk, boundary, *args, **kwargs)
+            record_plan(topk, boundary, result)
             return result
 
         def attention_with_probe(q, q_pe, kv, topk, metadata, query_ends, seq_lens, **kwargs):
@@ -250,6 +253,24 @@ class LayerSnapshots:
         impl.indexer_select_post_process = indexer_with_probe
         impl._prepare_decode_sparse_indices = planner_with_probe
         impl._execute_sparse_flash_attention_process = attention_with_probe
+        group = getattr(impl, "shared_resident_plan", None)
+        if group is not None and group.bounded and impl.skip_topk:
+            # Bounded consumers deliberately bypass both selection/planner
+            # hooks. Observe their completed plan only in this test worker.
+            pre = impl._cross_layer_pre_compute
+            signature = inspect.signature(pre)
+
+            def pre_with_probe(*args, **kwargs):
+                result = pre(*args, **kwargs)
+                rows = result[2].shape[0]
+                if group.active and rows <= QUERY_WIDTH:
+                    raw = impl.topk_indices_buffer[:rows]
+                    self.probes["topk"].write(raw.reshape(rows, -1))
+                    boundary = signature.bind(*args, **kwargs).arguments["remap_boundary"]
+                    record_plan(raw, boundary, result[2:])
+                return result
+
+            impl._cross_layer_pre_compute = pre_with_probe
 
     def reset(self) -> None:
         for probe in self.probes.values():
@@ -472,12 +493,16 @@ class SFAParityWorker(NPUWorker):
             if not isinstance(impl, AscendSFAImpl) or not impl.dsa_offload_unbundle:
                 raise ParityError("Prefill checkpoint requires unbundled SFA caches")
             caches, index_name, enabled = impl._cross_layer_kv_cache(name, layer.kv_cache[context.virtual_engine])
-            if len(caches) != 3 or not enabled:
-                raise ParityError("Prefill checkpoint requires latent K/PE and LMCache-enabled indexer")
+            c8 = bool(getattr(impl, "use_sparse_c8_indexer", False))
+            if len(caches) != ((4 if c8 else 3) if index_name is not None else 2) or not enabled:
+                raise ParityError("Prefill checkpoint requires latent K/PE and each owned LMCache indexer")
             item = context.attn_metadata[name]
             index_table = item.indexer_block_table if item.indexer_block_table is not None else item.block_table
+            if c8 and getattr(item, "indexer_c8_block_table", None) is not None:
+                index_table = item.indexer_c8_block_table
             bindings[name] = CacheBinding(tuple(caches[:2]), item.block_table[:1])
-            bindings[index_name] = CacheBinding((caches[2],), index_table[:1])
+            if index_name is not None:
+                bindings[index_name] = CacheBinding(tuple(caches[2:]), index_table[:1])
             metadata[name] = {
                 key: copy_tree(getattr(item, key, None))
                 for key in (
