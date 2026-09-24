@@ -2317,6 +2317,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: IntermediateTensors | None = None,
     ) -> ModelRunnerOutput | IntermediateTensors | None:
+        pd_tensor_dump = getattr(self, "_pd_tensor_dump", None)
+        if pd_tensor_dump is not None:
+            pd_tensor_dump.observe_scheduler(scheduler_output)
         if self.vllm_config.model_config.enable_return_routed_experts:
             capturer = RoutedExpertsCapturer.get_instance()
             if capturer is not None:
@@ -3548,6 +3551,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         metadata,
                     )
             flush_deferred_diagnostics()
+        pd_tensor_dump = getattr(self, "_pd_tensor_dump", None)
+        if pd_tensor_dump is not None:
+            pd_tensor_dump.sampled(req_ids_output_copy, valid_sampled_token_ids)
         if sample_trace_req_ids:
             _record_sample_stage(
                 cold_perf_sample_stages,
@@ -4056,14 +4062,42 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 self._staged_sfa_impls,
                 context.attn_metadata,
             )
+        pd_tensor_dump = getattr(self, "_pd_tensor_dump", None)
         try:
-            hidden_states = self.model(
-                input_ids=input_ids,
-                positions=positions,
-                intermediate_tensors=intermediate_tensors,
-                inputs_embeds=inputs_embeds,
-                **model_kwargs,
-            )
+            if pd_tensor_dump is None:
+                hidden_states = self.model(
+                    input_ids=input_ids,
+                    positions=positions,
+                    intermediate_tensors=intermediate_tensors,
+                    inputs_embeds=inputs_embeds,
+                    **model_kwargs,
+                )
+            else:
+                with pd_tensor_dump.forward(input_ids, positions):
+                    hidden_states = self.model(
+                        input_ids=input_ids,
+                        positions=positions,
+                        intermediate_tensors=intermediate_tensors,
+                        inputs_embeds=inputs_embeds,
+                        **model_kwargs,
+                    )
+                    values = (
+                        hidden_states
+                        if isinstance(hidden_states, tuple)
+                        else (hidden_states,)
+                    )
+                    for index, value in enumerate(values):
+                        if isinstance(value, torch.Tensor):
+                            pd_tensor_dump.emit(
+                                value,
+                                -1,
+                                "model_output",
+                                "hidden_states" if index == 0 else f"hidden_states_{index}",
+                                pd_tensor_dump.metadata(),
+                                prefer_local=bool(
+                                    get_forward_context().flash_comm_v1_enabled
+                                ),
+                            )
         except BaseException:
             if self._shared_resident_groups:
                 self._shared_resident_failed = True
@@ -6065,6 +6099,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             self.model = ACLGraphWrapper(
                 self.model, self.vllm_config, runtime_mode=CUDAGraphMode.FULL
             )
+
+        if envs_ascend.VLLM_ASCEND_PD_TENSOR_DUMP_DIR:
+            from vllm.pd_tensor_dump import install_pd_tensor_dump
+
+            self._pd_tensor_dump = install_pd_tensor_dump(self, envs_ascend.VLLM_ASCEND_PD_TENSOR_DUMP_DIR)
 
     def _validate_sfa_layerwise_connector_cudagraph_mode(self) -> None:
         """Reject full-model replay that would bypass layerwise retrieval."""
