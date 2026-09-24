@@ -51,27 +51,15 @@ def compile_fx(
 
 
 def _reuse_shared_resident_buffers(graph: fx.GraphModule) -> bool:
-    """Keep resident state and prefetch destinations fixed after AOT."""
-    operators = {
-        op.default: argument
-        for name, argument in (
-            ("sfa_forward_pre_shared", "resident_writes"),
-            ("sfa_forward_post_prefetch", "destinations"),
-        )
-        if (op := getattr(torch.ops.vllm, name, None)) is not None
-    }
-    if not operators:
+    """Keep shared resident state/workspace in place after AOT."""
+    op = getattr(torch.ops.vllm, "sfa_forward_pre_shared", None)
+    if op is None:
         return False
     changed = False
     for node in graph.graph.nodes:
-        if node.target not in (
-            torch.ops.higher_order.auto_functionalized,
-            torch.ops.higher_order.auto_functionalized_v2,
-        ):
+        if not node.args or node.args[0] != op.default:
             continue
-        if not node.args or node.args[0] not in operators:
-            continue
-        argument = operators[node.args[0]]
+        argument = "resident_writes"
         if (
             node.target == torch.ops.higher_order.auto_functionalized
             and node.kwargs.get(argument)

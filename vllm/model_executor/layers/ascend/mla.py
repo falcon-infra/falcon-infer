@@ -164,6 +164,9 @@ class AscendMultiHeadLatentAttention(MultiHeadLatentAttentionWrapper):
         self.use_cross_layer_sfa = (
             getattr(self.mla_attn.impl, "enable_staged_sfa_graph", False) is True
         )
+        self.use_retrieval_overlap = bool(
+            envs_ascend.VLLM_ASCEND_SFA_SHARED_RETRIEVAL_OVERLAP
+        )
         self.target_sfa_debug = bool(
             self.use_cross_layer_sfa and envs_ascend.VLLM_ASCEND_MTP_DRAFT_DEBUG
         )
@@ -253,8 +256,7 @@ class AscendMultiHeadLatentAttention(MultiHeadLatentAttentionWrapper):
                 self.prefix,
                 self.next_layer_name,
             )
-            destinations = getattr(impl, "_retrieval_prefetch_destinations", ())
-            if destinations:
+            if self.use_retrieval_overlap:
                 torch.ops.vllm.sfa_forward_post_prefetch(
                     ql_nope,
                     q_pe,
@@ -264,7 +266,6 @@ class AscendMultiHeadLatentAttention(MultiHeadLatentAttentionWrapper):
                     target_slots,
                     output,
                     self.prefix,
-                    destinations,
                 )
             else:
                 torch.ops.vllm.sfa_forward_post(
@@ -565,7 +566,6 @@ def sfa_forward_post_prefetch(
     target_slots: torch.Tensor,
     output: torch.Tensor,
     layer_name: str,
-    destinations: list[torch.Tensor],
 ) -> None:
     impl, attn_layer_name, kv_cache, attn_metadata = _mla_runtime_state(layer_name)
     _, outgoing = impl._shared_retrieval_edges()
@@ -578,7 +578,7 @@ def sfa_forward_post_prefetch(
             selected_packed[:capacity],
             selected_counts[:capacity],
             target_slots[:capacity],
-            destinations,
+            edge.destinations,
         )
     impl.cross_layer_graph_post(
         attn_layer_name,
@@ -601,7 +601,6 @@ def sfa_forward_post_prefetch_fake(
     target_slots: torch.Tensor,
     output: torch.Tensor,
     layer_name: str,
-    destinations: list[torch.Tensor],
 ) -> None:
     return
 
