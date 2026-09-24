@@ -3379,18 +3379,18 @@ class AscendSFAImpl(MLAAttentionImpl):
         if reason is not None:
             return reason
 
-        indexer_slot_mapping = (
-            attn_metadata.indexer_c8_slot_mapping
-            if self.use_sparse_c8_indexer
-            and attn_metadata.indexer_c8_slot_mapping is not None
-            else attn_metadata.indexer_slot_mapping
-        )
         required_token_tensors = (
             attn_metadata.cos,
             attn_metadata.sin,
             attn_metadata.slot_mapping,
-            indexer_slot_mapping,
+            attn_metadata.indexer_slot_mapping,
         )
+        c8_slots = getattr(attn_metadata, "indexer_c8_slot_mapping", None)
+        c8_table = getattr(attn_metadata, "indexer_c8_block_table", None)
+        if c8_slots is not None or c8_table is not None:
+            if c8_table is None or int(c8_table.shape[0]) != attention_capacity:
+                return "the C8 block-table row count does not match the graph key"
+            required_token_tensors += (c8_slots,)
         if any(tensor is None for tensor in required_token_tensors):
             return "required fixed-shape attention metadata is unavailable"
         if any(
@@ -3404,17 +3404,12 @@ class AscendSFAImpl(MLAAttentionImpl):
             or int(attn_metadata.seq_lens.shape[0]) != attention_capacity
         ):
             return "the request metadata does not match the graph key"
-        indexer_block_table = (
-            attn_metadata.indexer_c8_block_table
-            if self.use_sparse_c8_indexer
-            and attn_metadata.indexer_c8_block_table is not None
-            else attn_metadata.indexer_block_table
-        )
         if (
             attn_metadata.block_table is None
-            or indexer_block_table is None
+            or attn_metadata.indexer_block_table is None
             or int(attn_metadata.block_table.shape[0]) != attention_capacity
-            or int(indexer_block_table.shape[0]) != attention_capacity
+            or int(attn_metadata.indexer_block_table.shape[0])
+            != attention_capacity
         ):
             return "the native block-table row count does not match the graph key"
         if not staged_dummy_run and not attn_metadata.need_sparse_lmcache_payload:
@@ -5051,6 +5046,12 @@ class AscendSFAImpl(MLAAttentionImpl):
                     num_hidden_layers=self.diagnostic_num_cache_layers,
                 )
                 runtime = state.runtime
+                diagnostic_index_slots = (
+                    attn_metadata.indexer_c8_slot_mapping
+                    if self.use_sparse_c8_indexer
+                    and attn_metadata.indexer_c8_slot_mapping is not None
+                    else attn_metadata.indexer_slot_mapping
+                )
                 pre_components = {
                     "ql_nope": bridge[0][:diagnostic_rows],
                     "q_pe": bridge[1][:diagnostic_rows],
@@ -5073,7 +5074,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                         : graph_key.token_capacity
                     ],
                     "indexer_slot_mapping": (
-                        attn_metadata.indexer_slot_mapping[: graph_key.token_capacity]
+                        diagnostic_index_slots[: graph_key.token_capacity]
                     ),
                 }
                 input_snapshot = state.input_diagnostic_buffers.get(graph_key)
@@ -5091,7 +5092,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                     kv_cache = runtime[1]
                     flat_index = kv_cache[2].reshape(-1, *kv_cache[2].shape[2:])
                     current_index_slots = (
-                        attn_metadata.indexer_slot_mapping[:diagnostic_rows]
+                        diagnostic_index_slots[:diagnostic_rows]
                         .clamp(
                             min=0,
                             max=int(flat_index.shape[0]) - 1,
@@ -5105,6 +5106,12 @@ class AscendSFAImpl(MLAAttentionImpl):
                             ),
                         }
                     )
+                    if self.use_sparse_c8_indexer:
+                        pre_components["current_index_scale"] = (
+                            kv_cache[3]
+                            .reshape(-1, 1)
+                            .index_select(0, current_index_slots)
+                        )
                 if state.remap_boundary is not None:
                     pre_components["remap_boundary"] = state.remap_boundary[
                         :actual_rows
@@ -5238,13 +5245,19 @@ class AscendSFAImpl(MLAAttentionImpl):
                 and len(runtime[1]) > 2
             ):
                 kv_cache = runtime[1]
+                diagnostic_index_slots = (
+                    metadata.indexer_c8_slot_mapping
+                    if self.use_sparse_c8_indexer
+                    and metadata.indexer_c8_slot_mapping is not None
+                    else metadata.indexer_slot_mapping
+                )
                 flat_index = kv_cache[2].reshape(-1, *kv_cache[2].shape[2:])
                 actual_rows = min(
                     int(metadata.num_actual_tokens),
                     int(graph_key.token_capacity),
                 )
                 current_slots = (
-                    metadata.indexer_slot_mapping[:actual_rows]
+                    diagnostic_index_slots[:actual_rows]
                     .clamp(min=0, max=int(flat_index.shape[0]) - 1)
                     .long()
                 )
@@ -5257,9 +5270,18 @@ class AscendSFAImpl(MLAAttentionImpl):
                             : graph_key.token_capacity
                         ],
                         "indexer_slot_mapping": (
-                            metadata.indexer_slot_mapping[: graph_key.token_capacity]
+                            diagnostic_index_slots[: graph_key.token_capacity]
                         ),
                         "current_index": flat_index.index_select(0, current_slots),
+                        **(
+                            {
+                                "current_index_scale": kv_cache[3]
+                                .reshape(-1, 1)
+                                .index_select(0, current_slots)
+                            }
+                            if self.use_sparse_c8_indexer
+                            else {}
+                        ),
                     },
                     row_request_indices=metadata.decode_req_indices_cpu,
                     seq_lens_cpu=metadata.seq_lens_cpu,
