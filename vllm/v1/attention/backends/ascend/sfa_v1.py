@@ -1142,7 +1142,7 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
         self._mixed_indexer_metadata = None
         if getattr(get_ascend_config(), "indexer_c8_shared_block_factor", 1) == 2:
             self._mixed_indexer_metadata = MixedIndexerMetadata(
-                vllm_config.scheduler_config.max_num_seqs,
+                vllm_config.scheduler_config.max_num_seqs + 1,
                 (self.max_blocks + 8) // 9 * 9,
                 vllm_config.scheduler_config.max_num_batched_tokens,
                 device,
@@ -1410,12 +1410,6 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             indexer_slot_mapping = common_attn_metadata.indexer_slot_mapping[
                 :num_input_tokens
             ]
-            if self._mixed_indexer_metadata is not None:
-                indexer_c8_block_table, indexer_c8_slot_mapping = (
-                    self._mixed_indexer_metadata.update(
-                        indexer_block_table, indexer_slot_mapping
-                    )
-                )
 
         # DSA shrink-latent: expand per-request prompt lengths to per-row cache
         # boundaries for sparse-index preparation. Decode rows start at the
@@ -1794,6 +1788,19 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
                 seq_lens,
                 seq_lens_cpu,
                 num_input_tokens,
+            )
+
+        # Full-graph attention adds an attention-only padding request. Build
+        # the physical mixed-C8 views after that row is present so key/scale
+        # metadata has the same stable row capacity as the graph inputs.
+        if (
+            indexer_block_table is not None
+            and self._mixed_indexer_metadata is not None
+        ):
+            indexer_c8_block_table, indexer_c8_slot_mapping = (
+                self._mixed_indexer_metadata.update(
+                    indexer_block_table, indexer_slot_mapping
+                )
             )
 
         cos, sin = get_cos_and_sin_mla(input_positions, True)

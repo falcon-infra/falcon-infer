@@ -7714,7 +7714,6 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     impl.enable_mlapo
                     or impl.enable_dsa_cp
                     or impl.enable_dsa_cp_with_o_proj_tp
-                    or impl.use_sparse_c8_indexer
                 ):
                     raise ValueError(
                         "shared resident planning requires the ordinary non-CP "
@@ -7769,6 +7768,31 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     "in KV group 0"
                 )
             reference = kv_caches[group.members[0]][:2]
+            producer = group.members[0]
+            indexer_name = producer.rsplit(".", 1)[0] + ".indexer.k_cache"
+            indexer_spec = self._get_layer_kv_cache_specs(
+                self.kv_cache_config
+            ).get(indexer_name)
+            if self.use_sparse_c8_indexer and (
+                self._indexer_c8_layer_is_quantized(
+                    indexer_name, indexer_spec
+                )
+            ):
+                indexer = kv_caches.get(indexer_name, ())
+                if (
+                    len(indexer) != 2
+                    or indexer[0].dtype != torch.int8
+                    or indexer[1].dtype != torch.float16
+                    or indexer[0].ndim != 4
+                    or indexer[0].shape[1:] != (group.block_size, 1, 128)
+                    or indexer[1].shape != (*indexer[0].shape[:3], 1)
+                    or indexer[0].device != indexer[1].device
+                    or not all(tensor.is_contiguous() for tensor in indexer)
+                ):
+                    raise ValueError(
+                        "shared resident C8 producer requires paired "
+                        "key/scale storage"
+                    )
             for name in group.members:
                 caches = kv_caches[name][:2]
                 if len(caches) != 2 or any(
