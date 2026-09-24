@@ -31,3 +31,17 @@ def test_ordinary_concurrency_and_runner_block_state_keep_baseline_owners():
     assert 'if mode != "prefill_child":' in utils
     assert "Only P-node banked requests use the layerwise metadata helper" in runner
     assert "req_state.block_ids = new_block_ids" in runner
+
+
+def test_npu_runner_and_sfa_gate_layerwise_paths_to_p_nodes():
+    runner = (ROOT / "vllm/v1/worker/npu_model_runner.py").read_text(
+        encoding="utf-8"
+    )
+    sfa = (ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py").read_text(
+        encoding="utf-8"
+    )
+    assert "if self.layerwise_prefill_p_node:" in runner
+    assert "not self.layerwise_prefill_p_node" in runner
+    assert "self._sfa_preprocess_with_mlapo" in sfa
+    assert "self._sfa_preprocess_with_mlapo_after_layerwise_wait" in sfa
+    assert "and layerwise_prefill_transfer_window_supported()" in sfa

@@ -1502,9 +1502,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
 
         # OPTIMIZATION: Start copying the block table first.
         # This way, we can overlap the copy with the following CPU operations.
-        block_tables_by_bank = self._refresh_layerwise_prefill_block_tables()
-        for block_table in block_tables_by_bank:
-            block_table.commit_block_table(num_reqs)
+        if self.layerwise_prefill_p_node:
+            block_tables_by_bank = self._refresh_layerwise_prefill_block_tables()
+            for block_table in block_tables_by_bank:
+                block_table.commit_block_table(num_reqs)
+        else:
+            self.input_batch.block_table.commit_block_table(num_reqs)
 
         # Get the attention state.
         if not scheduler_output.scheduled_spec_decode_tokens:
@@ -1573,9 +1576,13 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 out=positions_np,
             )
 
-        for block_table in block_tables_by_bank:
-            block_table.compute_slot_mapping(req_indices, positions_np)
-            block_table.commit_slot_mapping(total_num_scheduled_tokens)
+        if self.layerwise_prefill_p_node:
+            for block_table in block_tables_by_bank:
+                block_table.compute_slot_mapping(req_indices, positions_np)
+                block_table.commit_slot_mapping(total_num_scheduled_tokens)
+        else:
+            self.input_batch.block_table.compute_slot_mapping(req_indices, positions_np)
+            self.input_batch.block_table.commit_slot_mapping(total_num_scheduled_tokens)
 
         if self.use_cp:
             self.pcp_manager.init_batch_info(
@@ -1764,7 +1771,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 logits_indices, (0, max_num_reqs_across_dp - logits_indices.shape[0])
             )
 
-        self._prepare_layerwise_prefill_bank_phase_masks(req_indices, num_reqs)
+        if self.layerwise_prefill_p_node:
+            self._prepare_layerwise_prefill_bank_phase_masks(req_indices, num_reqs)
 
         return (
             logits_indices,
@@ -2399,7 +2407,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             with self.synchronize_input_prep():
                 # Update persistent batch states.
                 self._update_states(scheduler_output)
-                self._capture_layerwise_prefill_bank_offsets(scheduler_output)
+                if self.layerwise_prefill_p_node:
+                    self._capture_layerwise_prefill_bank_offsets(scheduler_output)
 
                 if not num_scheduled_tokens:
                     if (
@@ -4460,19 +4469,24 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     device=self.device,
                 )
             else:
-                block_tables_by_bank = getattr(
-                    self.input_batch,
-                    "layerwise_prefill_block_tables",
-                    (self.input_batch.block_table,),
-                )
-                if bank < 0 or bank >= len(block_tables_by_bank):
-                    raise RuntimeError(f"invalid layerwise-prefill bank {bank}")
-                selected_bank = physical_bank if self.layerwise_prefill_p_node else bank
-                if selected_bank < 0 or selected_bank >= len(block_tables_by_bank):
-                    raise RuntimeError(
-                        f"invalid layerwise-prefill bank {selected_bank}"
+                if self.layerwise_prefill_p_node:
+                    block_tables_by_bank = getattr(
+                        self.input_batch,
+                        "layerwise_prefill_block_tables",
+                        (self.input_batch.block_table,),
                     )
-                blk_table = block_tables_by_bank[selected_bank][kv_cache_gid]
+                    if bank < 0 or bank >= len(block_tables_by_bank):
+                        raise RuntimeError(
+                            f"invalid layerwise-prefill bank {bank}"
+                        )
+                    selected_bank = physical_bank
+                    if selected_bank < 0 or selected_bank >= len(block_tables_by_bank):
+                        raise RuntimeError(
+                            f"invalid layerwise-prefill bank {selected_bank}"
+                        )
+                    blk_table = block_tables_by_bank[selected_bank][kv_cache_gid]
+                else:
+                    blk_table = self.input_batch.block_table[kv_cache_gid]
                 slot_mapping = blk_table.slot_mapping.gpu[:maybe_pcp_full_tokens]
                 maybe_num_reqs_padded = (
                     num_reqs_padded * self.decode_token_per_req
@@ -4929,6 +4943,10 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         possible_cold_resume = False
         if (
             not (is_decode_state and graph_configured)
+            and (
+                not self.layerwise_prefill_p_node
+                or self.dsa_shrink_latent
+            )
             and num_computed_tokens is not None
             and prompt_lens is not None
         ):
@@ -6147,11 +6165,14 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         connector = get_kv_transfer_group()
         if not (
             bool(getattr(connector, "uses_layerwise_model_callbacks", False))
-            or bool(
-                getattr(
-                    connector,
-                    "supports_layerwise_prefill_transfer_window",
-                    False,
+            or (
+                self.layerwise_prefill_p_node
+                and bool(
+                    getattr(
+                        connector,
+                        "supports_layerwise_prefill_transfer_window",
+                        False,
+                    )
                 )
             )
         ):
