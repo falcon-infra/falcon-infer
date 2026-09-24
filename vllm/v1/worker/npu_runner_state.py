@@ -914,17 +914,34 @@ class NPUModelRunnerState(KVConnectorModelRunnerMixin):
                     )
                     self.input_batch.num_tokens_no_spec[req_index] = end_idx
 
-            # Update the block IDs and explicit layerwise bank metadata.
-            if resumed_from_preemption:
+            # Only P-node banked requests use the layerwise metadata helper;
+            # ordinary decode keeps the upstream append/replace semantics.
+            if (
+                req_state.block_allocation_mode is not None
+                or new_block_allocation_mode is not None
+                or req_state.block_ids_by_bank is not None
+                or new_block_ids_by_bank is not None
+            ):
+                if resumed_from_preemption:
+                    assert req_index is None
+                _update_request_kv_block_state(
+                    req_id,
+                    req_state,
+                    new_block_ids,
+                    new_block_ids_by_bank,
+                    new_block_allocation_mode,
+                    resumed_from_preemption=resumed_from_preemption,
+                )
+            elif not resumed_from_preemption:
+                if new_block_ids is not None:
+                    for block_ids, new_ids in zip(
+                        req_state.block_ids, new_block_ids
+                    ):
+                        block_ids.extend(new_ids)
+            else:
                 assert req_index is None
-            _update_request_kv_block_state(
-                req_id,
-                req_state,
-                new_block_ids,
-                new_block_ids_by_bank,
-                new_block_allocation_mode,
-                resumed_from_preemption=resumed_from_preemption,
-            )
+                assert new_block_ids is not None
+                req_state.block_ids = new_block_ids
 
             if req_index is None:
                 # The request is not in the persistent batch.

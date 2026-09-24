@@ -640,25 +640,42 @@ class KVCacheCoordinator(ABC):
             The new allocated blocks.
         """
         new_blocks: list[list[KVCacheBlock]] = []
-        try:
+        if not self.layerwise_prefill_p_node:
             for manager in self.single_type_managers:
-                allocate = (
-                    manager.allocate_new_blocks_compact_external
-                    if dsa_compact_external_load
-                    and isinstance(manager, DSALatentManager)
-                    else manager.allocate_new_blocks
-                )
-                new_blocks.append(
-                    allocate(
+                if dsa_compact_external_load and isinstance(manager, DSALatentManager):
+                    blocks = manager.allocate_new_blocks_compact_external(
+                        request_id,
+                        num_tokens,
+                        num_tokens_main_model,
+                    )
+                else:
+                    blocks = manager.allocate_new_blocks(
                         request_id,
                         num_encoder_tokens
                         if isinstance(manager, CrossAttentionManager)
                         else num_tokens,
                         num_tokens_main_model,
                     )
-                )
-        except BaseException as allocation_error:
-            if self.layerwise_prefill_p_node:
+                new_blocks.append(blocks)
+        else:
+            try:
+                for manager in self.single_type_managers:
+                    allocate = (
+                        manager.allocate_new_blocks_compact_external
+                        if dsa_compact_external_load
+                        and isinstance(manager, DSALatentManager)
+                        else manager.allocate_new_blocks
+                    )
+                    new_blocks.append(
+                        allocate(
+                            request_id,
+                            num_encoder_tokens
+                            if isinstance(manager, CrossAttentionManager)
+                            else num_tokens,
+                            num_tokens_main_model,
+                        )
+                    )
+            except BaseException as allocation_error:
                 # The two group allocations share one child pool. Roll back
                 # only the blocks appended by this call so partial failures do
                 # not leak a bank or corrupt a prior chunk.
@@ -675,7 +692,7 @@ class KVCacheCoordinator(ABC):
                         ) from allocation_error
                     del request_blocks[-len(tail_blocks) :]
                     manager.block_pool.free_blocks(reversed(tail_blocks))
-            raise
+                raise
         if dsa_compact_external_load:
             logger.info(
                 "[DSA_COMPACT_GROUPS_AFTER_SLOTS] req=%s num_tokens=%d "

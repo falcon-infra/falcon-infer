@@ -117,6 +117,36 @@ class DSASharedLogicalBlockPool:
         return ret
 
     def free_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -> None:
+        if isinstance(self.allocator, PrefillLayerBundlePool):
+            self._free_prefill_blocks(ordered_blocks)
+            return
+        blocks_list = [block for block in ordered_blocks if not block.is_null]
+        if not blocks_list:
+            return
+        affected_bundle_ids: set[int] = set()
+        for block in blocks_list:
+            if block.ref_cnt <= 0:
+                raise ValueError(
+                    f"DSA {self.owner.value} block {block.block_id} is already free"
+                )
+            block.ref_cnt -= 1
+            affected_bundle_ids.add(
+                self.layout.bundle_id_for_block(self.owner, block.block_id)
+            )
+
+        bundle_ids: list[int] = []
+        for bundle_id in affected_bundle_ids:
+            bundle_blocks = (
+                self.blocks[block_id]
+                for block_id in self.layout.block_ids_for_bundle(
+                    self.owner, bundle_id
+                )
+            )
+            if all(block.ref_cnt == 0 for block in bundle_blocks):
+                bundle_ids.append(bundle_id)
+        self.allocator.free(self.owner, bundle_ids)
+
+    def _free_prefill_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -> None:
         blocks_list = [block for block in ordered_blocks if not block.is_null]
         if not blocks_list:
             return
