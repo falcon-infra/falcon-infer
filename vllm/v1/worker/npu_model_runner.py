@@ -161,6 +161,7 @@ from vllm.v1.attention.backends.ascend.sfa_remap_boundary import (
     prepare_native_sparse_boundaries,
 )
 from vllm.v1.attention.backends.ascend.sfa_v1 import (
+    BMM_TRANS_MAX_SUPPORTED_TOKENS,
     _fixed_staged_decode_mtp,
     _get_indexer_types,
 )
@@ -602,6 +603,17 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self._staged_sfa_impls: tuple[tuple[str, Any], ...] = ()
         self._staged_sfa_layer_names: tuple[str, ...] = ()
         self._sfa_full_graph = SFAFullGraph()
+        if envs_ascend.VLLM_ASCEND_SFA_SHARED_RETRIEVAL_OVERLAP:
+            if not sfa_full_graph_enabled(vllm_config) or not envs_ascend.VLLM_ASCEND_SFA_SHARED_RESIDENT_PLAN:
+                raise ValueError(
+                    "shared retrieval overlap requires full graphs and "
+                    "shared resident planning"
+                )
+            from vllm.compilation.ascend.sfa_retrieval_overlap import (
+                SharedRetrievalOverlap,
+            )
+
+            self._sfa_full_graph.retrieval_overlap = SharedRetrievalOverlap()
         self._sfa_preparation_groups = (
             preparation_error_groups(
                 vllm_config.parallel_config,
@@ -657,8 +669,6 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         # DSA latent offload Route-1 pragmatic (M-B): when enabled, the SFA paged cache
         # holds only the indexer key (latent goes to the self-managed PagedLatentPool),
         # so the per-token page shrinks ~5.5x and GPU KV cache size grows.
-        import vllm.envs_ascend as envs_ascend
-
         self.dsa_free_paged = bool(
             self.use_sparse
             and envs_ascend.VLLM_ASCEND_ENABLE_DSA_LATENT_OFFLOAD
@@ -3989,6 +3999,16 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             group.members[0]: tuple(group.writes)
                             for group in self._shared_resident_groups
                         }
+                    if (
+                        graph_inputs is not None
+                        and self._sfa_full_graph.retrieval_overlap is not None
+                    ):
+                        self._sfa_full_graph.retrieval_overlap.prepare(
+                            context.staged_sfa_graph_key,
+                            impls,
+                            self._shared_resident_groups,
+                            BMM_TRANS_MAX_SUPPORTED_TOKENS,
+                        )
                     self._sfa_full_graph.bind_sources(source, request_ids)
                     prepared_call = self._sfa_full_graph.prepare_run(graph_inputs=graph_inputs, **graph_kwargs)
                 except Exception as exc:
@@ -6167,6 +6187,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         self.may_reinitialize_input_batch(kv_cache_config)
         kv_caches = self.initialize_kv_cache_tensors(kv_cache_config)
         self._validate_shared_resident_layout(kv_caches)
+        if self._sfa_full_graph.retrieval_overlap is not None:
+            self._sfa_full_graph.retrieval_overlap.configure(
+                self._collect_staged_sfa_impls(),
+                self._shared_resident_groups,
+                kv_caches,
+            )
         # TODO: refactor the logic of attention
         # Initialize drafter attention group initialization
         if self.speculative_config and (self.speculative_config.use_eagle() or False):
@@ -8143,6 +8169,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         """Clear root graphs before releasing temporary profiling KV storage."""
         if envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH:
             self._reset_staged_sfa_startup_capture()
+            if self._sfa_full_graph.retrieval_overlap is not None:
+                self._sfa_full_graph.retrieval_overlap.release_layout(
+                    self._collect_staged_sfa_impls()
+                )
+                self._staged_sfa_layer_names = ()
         super()._cleanup_profiling_kv_cache()
 
     def _prepare_multimodal_fields(self):

@@ -87,6 +87,7 @@ class SFAFullGraph:
     """
 
     def __init__(self) -> None:
+        self.retrieval_overlap = None
         self.entries: dict[Hashable, SFAFullGraphEntry] = {}
         self.sealed = False
         self.replay_count = 0
@@ -107,11 +108,17 @@ class SFAFullGraph:
             or self.source_bindings
             or self.retired_sources
             or self._transfer_bundles
+            or (
+                self.retrieval_overlap is not None
+                and self.retrieval_overlap.stream is not None
+            )
         ):
             torch.npu.synchronize()
         for binding in (*self.source_bindings.values(), *self.retired_sources):
             if binding.lease is not None:
                 binding.lease.close()
+        if self.retrieval_overlap is not None:
+            self.retrieval_overlap.clear()
         self.entries.clear()
         self.sealed = False
         self.replay_count = 0
@@ -416,6 +423,10 @@ class SFAFullGraph:
                 )
                 with torch.npu.graph(graph, pool=pool):
                     output = runnable(**kwargs)
+            except BaseException:
+                if self.retrieval_overlap is not None:
+                    self._submission_failed = True
+                raise
             finally:
                 context.sfa_full_graph_active = False
                 context.capturing = previous_capturing

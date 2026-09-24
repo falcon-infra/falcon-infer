@@ -51,33 +51,46 @@ def compile_fx(
 
 
 def _reuse_shared_resident_buffers(graph: fx.GraphModule) -> bool:
-    """Keep shared resident state/workspace in place after AOT functionalization."""
-    op = getattr(torch.ops.vllm, "sfa_forward_pre_shared", None)
-    if op is None:
+    """Keep resident state and prefetch destinations fixed after AOT."""
+    operators = {
+        op.default: argument
+        for name, argument in (
+            ("sfa_forward_pre_shared", "resident_writes"),
+            ("sfa_forward_post_prefetch", "destinations"),
+        )
+        if (op := getattr(torch.ops.vllm, name, None)) is not None
+    }
+    if not operators:
         return False
     changed = False
     for node in graph.graph.nodes:
-        if not node.args or node.args[0] != op.default:
+        if node.target not in (
+            torch.ops.higher_order.auto_functionalized,
+            torch.ops.higher_order.auto_functionalized_v2,
+        ):
             continue
+        if not node.args or node.args[0] not in operators:
+            continue
+        argument = operators[node.args[0]]
         if (
             node.target == torch.ops.higher_order.auto_functionalized
-            and node.kwargs.get("resident_writes")
+            and node.kwargs.get(argument)
         ):
             names = node.kwargs.get("_only_clone_these_tensors")
             names = (
                 ("output",)
                 if names is None
-                else tuple(name for name in names if name != "resident_writes")
+                else tuple(name for name in names if name != argument)
             )
             node.kwargs = dict(node.kwargs, _only_clone_these_tensors=names)
             changed = True
         elif (
             node.target == torch.ops.higher_order.auto_functionalized_v2
-            and node.kwargs.get("_resident_writes_length")
+            and node.kwargs.get(f"_{argument}_length")
         ):
             resident_bases = {
-                node.kwargs[f"_resident_writes_{i}_base_index"]
-                for i in range(node.kwargs["_resident_writes_length"])
+                node.kwargs[f"_{argument}_{i}_base_index"]
+                for i in range(node.kwargs[f"_{argument}_length"])
             }
             resident_bases.discard(node.kwargs["_output_base_index"])
             bases = node.kwargs.get("_only_clone_these_bases")
