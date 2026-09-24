@@ -34,3 +34,10 @@ def test_kernel_updates_bases_lengths_positions_and_both_slot_groups():
     assert "seq_common" in source and "seq_target" in source
     assert "slots0" in source and "slots1" in source
     assert "position // block0" in source and "position // block1" in source
+
+
+def test_kernel_advances_mixed_c8_indexer_slots():
+    source = KERNEL.read_text(encoding="utf-8")
+    assert "slots_c8" in source
+    assert "MIXED_C8" in source
+    assert "block_id1 * 2 * block1" in source
