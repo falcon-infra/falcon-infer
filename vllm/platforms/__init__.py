@@ -3,11 +3,10 @@
 import logging
 import os
 import traceback
-from itertools import chain
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 from vllm import envs
-from vllm.plugins import PLATFORM_PLUGINS_GROUP, load_plugins_by_group
 from vllm.utils.import_utils import resolve_obj_by_qualname
 from vllm.utils.torch_utils import supports_xccl
 
@@ -201,55 +200,26 @@ def cpu_platform_plugin() -> str | None:
     return "vllm.platforms.cpu.CpuPlatform"
 
 
-builtin_platform_plugins = {
-    "tpu": tpu_platform_plugin,
-    "cuda": cuda_platform_plugin,
-    "rocm": rocm_platform_plugin,
-    "xpu": xpu_platform_plugin,
-    "cpu": cpu_platform_plugin,
-}
+def npu_platform_plugin() -> str | None:
+    """Detect the NPU runtime without importing it or initializing a device."""
+    if find_spec("torch_npu") is not None:
+        return "vllm.platforms.npu.NPUPlatform"
+    return None
+
+
+# This distribution is built only for Ascend. Legacy detector functions above
+# remain until the separate P4 pruning phase; they cannot select a fallback.
+builtin_platform_plugins = {"npu": npu_platform_plugin}
 
 
 def resolve_current_platform_cls_qualname() -> str:
-    platform_plugins = load_plugins_by_group(PLATFORM_PLUGINS_GROUP)
-
-    activated_plugins = []
-
-    for name, func in chain(builtin_platform_plugins.items(), platform_plugins.items()):
-        try:
-            assert callable(func)
-            platform_cls_qualname = func()
-            if platform_cls_qualname is not None:
-                activated_plugins.append(name)
-        except Exception:
-            pass
-
-    activated_builtin_plugins = list(
-        set(activated_plugins) & set(builtin_platform_plugins.keys())
-    )
-    activated_oot_plugins = list(set(activated_plugins) & set(platform_plugins.keys()))
-
-    if len(activated_oot_plugins) >= 2:
+    """Resolve the built-in platform for this Ascend-only distribution."""
+    platform_cls_qualname = npu_platform_plugin()
+    if platform_cls_qualname is None:
         raise RuntimeError(
-            "Only one platform plugin can be activated, but got: "
-            f"{activated_oot_plugins}"
+            "This Ascend build of vLLM requires torch_npu. "
+            "Use the prepared Ascend environment; CPU/CUDA fallback is disabled."
         )
-    elif len(activated_oot_plugins) == 1:
-        platform_cls_qualname = platform_plugins[activated_oot_plugins[0]]()
-        logger.info("Platform plugin %s is activated", activated_oot_plugins[0])
-    elif len(activated_builtin_plugins) >= 2:
-        raise RuntimeError(
-            "Only one platform plugin can be activated, but got: "
-            f"{activated_builtin_plugins}"
-        )
-    elif len(activated_builtin_plugins) == 1:
-        platform_cls_qualname = builtin_platform_plugins[activated_builtin_plugins[0]]()
-        logger.debug(
-            "Automatically detected platform %s.", activated_builtin_plugins[0]
-        )
-    else:
-        platform_cls_qualname = "vllm.platforms.interface.UnspecifiedPlatform"
-        logger.debug("No platform detected, vLLM is running on UnspecifiedPlatform")
     return platform_cls_qualname
 
 
@@ -262,17 +232,8 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str):
     if name == "current_platform":
-        # lazy init current_platform.
-        # 1. out-of-tree platform plugins need `from vllm.platforms import
-        #    Platform` so that they can inherit `Platform` class. Therefore,
-        #    we cannot resolve `current_platform` during the import of
-        #    `vllm.platforms`.
-        # 2. when users use out-of-tree platform plugins, they might run
-        #    `import vllm`, some vllm internal code might access
-        #    `current_platform` during the import, and we need to make sure
-        #    `current_platform` is only resolved after the plugins are loaded
-        #    (we have tests for this, if any developer violate this, they will
-        #    see the test failures).
+        # Keep construction lazy: configuration imports and spawn startup must
+        # not initialize device-specific components before they are needed.
         global _current_platform
         if _current_platform is None:
             platform_cls_qualname = resolve_current_platform_cls_qualname()

@@ -3,12 +3,14 @@
 
 import ast
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[2] / "vllm_ascend/platform.py"
+SOURCE = Path(__file__).resolve().parents[3] / "vllm/platforms/npu.py"
 
 
 class ResourcePaths(unittest.TestCase):
@@ -19,10 +21,10 @@ class ResourcePaths(unittest.TestCase):
 
     def register(self, linked: bool) -> tuple[dict, str]:
         """Load only the real registration method, with no framework/device imports."""
-        source = self.root / "source/platform.py"
+        source = self.root / "source/__init__.py"
         source.parent.mkdir()
         source.write_text("# Python source fixture\n")
-        installed = self.root / "link-tree/platform.py" if linked else source
+        installed = self.root / "link-tree/__init__.py" if linked else source
         if linked:
             installed.parent.mkdir()
             installed.symlink_to(source)
@@ -42,13 +44,16 @@ class ResourcePaths(unittest.TestCase):
         method.decorator_list = []
         namespace = {
             "os": os,
-            "__file__": str(installed),
+            "__file__": str(self.root / "vllm/platforms/npu.py"),
             "_CUSTOM_OP_REGISTERED": False,
         }
         exec(
             compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"),
             namespace,
         )
+        package = ModuleType("vllm_ascend")
+        package.__file__ = str(installed)
+        self.enterContext(patch.dict(sys.modules, {"vllm_ascend": package}))
         namespace["import_kernels"](None)
         return namespace, str(vendor)
 

@@ -180,7 +180,8 @@ def select_unquantized_moe_backend(
         backend = UnquantizedMoeBackend.CPU
     if current_platform.is_tpu():
         backend = UnquantizedMoeBackend.TPU
-    if current_platform.is_out_of_tree():
+    if current_platform.is_npu() or current_platform.is_out_of_tree():
+        # The Ascend MoE implementation is still migrated in a later P2 batch.
         backend = UnquantizedMoeBackend.OOT
 
     logger.info_once(_make_log_backend(backend), scope="local")

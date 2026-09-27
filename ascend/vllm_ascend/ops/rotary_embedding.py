@@ -20,6 +20,7 @@ import os
 
 import torch
 import torch_npu
+
 from vllm.config import get_current_vllm_config
 from vllm.model_executor.layers.rotary_embedding import (
     DeepseekScalingRotaryEmbedding,
@@ -28,15 +29,13 @@ from vllm.model_executor.layers.rotary_embedding import (
     YaRNScalingRotaryEmbedding,
 )
 from vllm.model_executor.layers.rotary_embedding.common import ApplyRotaryEmb
+from vllm.platforms.npu import NPUPlatform
 from vllm.triton_utils import HAS_TRITON
-
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
-from vllm_ascend.platform import NPUPlatform
 from vllm_ascend.utils import has_rope, is_vl_model
 
 if HAS_TRITON:
     from vllm.model_executor.layers.rotary_embedding.mrope import triton_mrope
-
     from vllm_ascend.ops.triton.rope import rope_forward_triton
 
 # Currently, rope ops used on npu requires detached cos && sin as inputs.
