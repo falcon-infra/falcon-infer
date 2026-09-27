@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-import vllm_ascend.eplb.core.eplb_device_transfer_loader as loader
+import vllm.distributed.eplb.ascend.core.eplb_device_transfer_loader as loader
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def mock_adaptor():
 
 
 def test_generate_task_and_state_flow(mock_adaptor):
-    with patch("vllm_ascend.eplb.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
+    with patch("vllm.distributed.eplb.ascend.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
         loader_obj = loader.D2DExpertWeightLoader()
     loader_obj.set_adator(mock_adaptor)
 
@@ -53,7 +53,7 @@ def test_generate_task_and_state_flow(mock_adaptor):
 
 
 def test_asyn_transfer_and_update(mock_adaptor):
-    with patch("vllm_ascend.eplb.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
+    with patch("vllm.distributed.eplb.ascend.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
         loader_obj = loader.D2DExpertWeightLoader()
     loader_obj.set_adator(mock_adaptor)
 
@@ -90,7 +90,7 @@ def test_asyn_transfer_and_update(mock_adaptor):
 
 
 def test_set_log2phy_map(mock_adaptor):
-    with patch("vllm_ascend.eplb.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
+    with patch("vllm.distributed.eplb.ascend.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
         loader_obj = loader.D2DExpertWeightLoader()
     loader_obj.set_adator(mock_adaptor)
     loader_obj.set_log2phy_map({"a": 1})
@@ -98,7 +98,7 @@ def test_set_log2phy_map(mock_adaptor):
 
 
 def test_invalid_state_asyn_update(mock_adaptor):
-    with patch("vllm_ascend.eplb.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
+    with patch("vllm.distributed.eplb.ascend.core.eplb_device_transfer_loader.get_dynamic_eplb_group", return_value=None):
         loader_obj = loader.D2DExpertWeightLoader()
     loader_obj.set_adator(mock_adaptor)
 

@@ -10,22 +10,14 @@ latent from the pool. The on-NPU kernel wiring is verified by the parity run.
 
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.decode_latent_pool import (
-    GrowingDecodeLatentPool,
-)
-from vllm_ascend.distributed.kv_transfer.sparse_offload.offload_backend import (
-    InMemoryLatentOffloadBackend,
-)
-from vllm_ascend.distributed.kv_transfer.sparse_offload.offload_manager import (
-    INVALID_TOKEN_INDEX,
-    SparseOffloadConfig,
-    build_gather_plan,
-    resolve_scratch_gather,
-)
-from vllm_ascend.distributed.kv_transfer.sparse_offload.runner_integration import (
-    build_manager,
-    compute_reserved_bytes,
-)
+from vllm.distributed.kv_transfer.ascend.sparse_offload.decode_latent_pool import GrowingDecodeLatentPool
+from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_backend import InMemoryLatentOffloadBackend
+from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_manager import INVALID_TOKEN_INDEX
+from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_manager import SparseOffloadConfig
+from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_manager import build_gather_plan
+from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_manager import resolve_scratch_gather
+from vllm.distributed.kv_transfer.ascend.sparse_offload.runner_integration import build_manager
+from vllm.distributed.kv_transfer.ascend.sparse_offload.runner_integration import compute_reserved_bytes
 
 LAYER_NAMES = ["L0", "L1"]
 
@@ -233,9 +225,7 @@ def test_manager_free_request_delegates():
 
 # --------------------------------------------------------------- hooks
 def test_paged_latent_pool_write_read_and_free():
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.paged_latent_pool import (
-        PagedLatentPool,
-    )
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.paged_latent_pool import PagedLatentPool
 
     pool = PagedLatentPool(
         num_layers=2,
@@ -295,7 +285,7 @@ def test_manager_populate_pool_and_attn_args():
 
 
 def test_hooks_store_prefill_splits_requests_by_csr():
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.sfa_hooks import store_prefill
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.sfa_hooks import store_prefill
 
     cfg = _cpu_config()
     mgr = _build(cfg)
@@ -311,10 +301,8 @@ def test_hooks_store_prefill_splits_requests_by_csr():
 
 
 def test_hooks_gather_decode_full_step():
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.sfa_hooks import (
-        gather_decode,
-        store_prefill,
-    )
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.sfa_hooks import gather_decode
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.sfa_hooks import store_prefill
 
     cfg = _cpu_config(topk_tokens=4, block_size=4, max_num_seqs=1)
     mgr = _build(cfg)
@@ -348,9 +336,7 @@ class TestPrepareSparseIndices:
     """Step B2: prepare decode top-k for compact scratch and LMCache."""
 
     def test_remap_splits_prefill_compact_and_decode_absolute(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         # req0: prompt 100; selected mixes prefill (5,7,99) and decode (100,103)
         # req1: prompt 200; all prefill
@@ -372,9 +358,7 @@ class TestPrepareSparseIndices:
         assert new_idx.dtype == topk.dtype
 
     def test_remap_padding_entries_untouched(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor([[[3, -1, 8, -1, 4]]], dtype=torch.int32)
         plen = torch.tensor([10])
@@ -388,9 +372,7 @@ class TestPrepareSparseIndices:
         assert packed.tolist() == [[3, 8, 4, 0, 0]]
 
     def test_remap_shape_2d_input(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor([[2, 50, 1]], dtype=torch.int32)
         new_idx, packed = prepare_sparse_indices(
@@ -404,9 +386,7 @@ class TestPrepareSparseIndices:
         assert packed.tolist() == [[2, 1, 0]]
 
     def test_remap_mixed_rows_plen_zero_untouched(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         # row0: decode row (plen 100) -> remapped; row1: prefill row (plen 0) -> untouched
         topk = torch.tensor([[[5, 100, 7]], [[5, 100, 7]]], dtype=torch.int32)
@@ -421,9 +401,7 @@ class TestPrepareSparseIndices:
         assert packed.tolist()[0] == [5, 7, 0]
 
     def test_remap_compacts_only_explicit_decode_rows(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor(
             [
@@ -453,9 +431,7 @@ class TestPrepareSparseIndices:
         assert packed.shape == (2, 4)
 
     def test_remap_compact_without_payload(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor([[5, 100, 7], [10, 11, 12]], dtype=torch.int32)
         new_idx, packed = prepare_sparse_indices(
@@ -470,9 +446,7 @@ class TestPrepareSparseIndices:
         assert packed is None
 
     def test_prepare_zeroes_graph_padding_when_request_rows_are_provided(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.arange(4 * 64, dtype=torch.int32).reshape(4, 1, 64)
         new_idx, packed = prepare_sparse_indices(
@@ -487,9 +461,7 @@ class TestPrepareSparseIndices:
         assert packed.shape == (2, 64)
 
     def test_prepare_keeps_mixed_prefill_row_without_request_rows(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor([[[5, 100, 7, -1]], [[20, 21, 22, 23]]], dtype=torch.int32)
         prefill_row = topk[1].clone()
@@ -508,9 +480,7 @@ class TestPrepareSparseIndices:
     def test_public_prepare_does_not_fall_back_to_torch_on_cpu(self):
         import pytest
 
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import prepare_sparse_indices
 
         with pytest.raises(RuntimeError, match="requires the NPU custom op"):
             prepare_sparse_indices(
@@ -528,9 +498,7 @@ class TestPrepareSparseIndices:
         self,
         monkeypatch,
     ):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _sparse_index_op_name,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _sparse_index_op_name
 
         monkeypatch.delenv(
             "VLLM_ASCEND_DSA_MTP_SHARDED_SORT",
@@ -558,9 +526,7 @@ class TestPrepareSparseIndices:
     def test_public_staged_prepare_rejects_mtp_above_two_before_dispatch(self):
         import pytest
 
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import prepare_sparse_indices
 
         with pytest.raises(RuntimeError, match="got MTP=3"):
             prepare_sparse_indices(
@@ -578,9 +544,7 @@ class TestPrepareSparseIndices:
     def test_public_staged_prepare_requires_caller_owned_workspace(self):
         import pytest
 
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import prepare_sparse_indices
 
         with pytest.raises(ValueError, match="local_to_union_workspace"):
             prepare_sparse_indices(
@@ -601,9 +565,7 @@ class TestPrepareSparseIndices:
     ):
         import pytest
 
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import prepare_sparse_indices
 
         monkeypatch.delenv(
             "VLLM_ASCEND_DSA_MTP_SHARDED_SORT",
@@ -627,9 +589,7 @@ class TestPrepareSparseIndices:
             )
 
     def test_mtp_request_union_deduplicates_without_touching_live_indices(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor(
             [[1, 2, 7, 8], [2, 3, 8, 9]], dtype=torch.int32
@@ -649,9 +609,7 @@ class TestPrepareSparseIndices:
         assert all(index >= 4 for row in remapped for index in row if index >= 3)
 
     def test_zero_boundary_keeps_absolute_indices_and_selects_nothing(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         topk = torch.tensor(
             [[0, 1, 7, 8], [1, 0, 8, 9]],
@@ -670,9 +628,7 @@ class TestPrepareSparseIndices:
         assert torch.count_nonzero(packed).item() == 0
 
     def test_short_committed_prefix_cannot_overwrite_live_npu_cache(self):
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-            _prepare_sparse_indices_torch as prepare_sparse_indices,
-        )
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch as prepare_sparse_indices
 
         remapped, packed, counts, _ = prepare_sparse_indices(
             torch.tensor([[0, 1, 2, 3], [1, 0, 3, 4]], dtype=torch.int32),

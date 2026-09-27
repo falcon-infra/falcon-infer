@@ -1,15 +1,11 @@
 import pytest
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
-    _prepare_sparse_indices_torch,
-    prepare_sparse_indices,
-)
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sparse_cache import (
-    allocate_resident_workspace,
-    prepare_resident_sparse_cache_,
-)
-from vllm_ascend.utils import enable_custom_op
+from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import _prepare_sparse_indices_torch
+from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import prepare_sparse_indices
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import allocate_resident_workspace
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import prepare_resident_sparse_cache_
+from vllm.utils.ascend import enable_custom_op
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -17,43 +13,43 @@ def _load_dsa_union_operator():
     if not enable_custom_op():
         pytest.fail("vllm-ascend custom operators could not be loaded")
     if not hasattr(torch.ops._C_ascend, "npu_dsa_prepare_sparse_indices_"):
-        pytest.fail("vllm_ascend_C does not contain the DSA union operator")
+        pytest.fail("vllm_C does not contain the DSA union operator")
     if not hasattr(
         torch.ops._C_ascend,
         "npu_dsa_prepare_sparse_indices_staged_",
     ):
         pytest.fail(
-            "vllm_ascend_C does not contain the production staged DSA operator"
+            "vllm_C does not contain the production staged DSA operator"
         )
     if not hasattr(
         torch.ops._C_ascend,
         "npu_dsa_prepare_sparse_indices_sharded_",
     ):
         pytest.fail(
-            "vllm_ascend_C does not contain the production sharded DSA operator"
+            "vllm_C does not contain the production sharded DSA operator"
         )
     if not hasattr(torch.ops._C_ascend, "npu_dsa_prepare_sparse_indices_legacy_"):
-        pytest.fail("vllm_ascend_C does not contain the pre-union DSA operator")
+        pytest.fail("vllm_C does not contain the pre-union DSA operator")
     if not hasattr(torch.ops._C_ascend, "npu_dsa_staged_unique_finalize_"):
-        pytest.fail("vllm_ascend_C does not contain the unique finalize operator")
+        pytest.fail("vllm_C does not contain the unique finalize operator")
     if not hasattr(torch.ops._C_ascend, "npu_dsa_staged_sharded_union_"):
-        pytest.fail("vllm_ascend_C does not contain the sharded union operator")
+        pytest.fail("vllm_C does not contain the sharded union operator")
     if not hasattr(
         torch.ops._C_ascend,
         "npu_dsa_staged_sharded_vector_union_",
     ):
-        pytest.fail("vllm_ascend_C does not contain the vector sharded union operator")
+        pytest.fail("vllm_C does not contain the vector sharded union operator")
     if not hasattr(
         torch.ops._C_ascend,
         "npu_dsa_staged_sharded_vector_dedup_",
     ):
-        pytest.fail("vllm_ascend_C does not contain the vector-dedup operator")
+        pytest.fail("vllm_C does not contain the vector-dedup operator")
     if not hasattr(
         torch.ops._C_ascend,
         "npu_dsa_resident_remap_rows_",
     ):
         pytest.fail(
-            "vllm_ascend_C does not contain the resident parallel-map "
+            "vllm_C does not contain the resident parallel-map "
             "operator"
         )
     for name in (
@@ -62,7 +58,7 @@ def _load_dsa_union_operator():
     ):
         if not hasattr(torch.ops._C_ascend, name):
             pytest.fail(
-                f"vllm_ascend_C does not contain the {name} operator"
+                f"vllm_C does not contain the {name} operator"
             )
 
 

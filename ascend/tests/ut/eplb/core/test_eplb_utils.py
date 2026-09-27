@@ -7,13 +7,13 @@ import torch
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.fused_moe.config import FusedMoEConfig, FusedMoEParallelConfig
 
-from vllm_ascend.ascend_config import init_ascend_config
-from vllm_ascend.eplb.core.eplb_utils import init_eplb_config
+from vllm.config.ascend import init_ascend_config
+from vllm.distributed.eplb.ascend.core.eplb_utils import init_eplb_config
 # isort: on
 
 
 class TestAscendConfig(unittest.TestCase):
-    @patch("vllm_ascend.platform.NPUPlatform._fix_incompatible_config")
+    @patch("vllm.platforms.npu.NPUPlatform._fix_incompatible_config")
     def setUp(self, mock_fix_incompatible_config):
         vllm_config = VllmConfig()
         vllm_config.additional_config = {

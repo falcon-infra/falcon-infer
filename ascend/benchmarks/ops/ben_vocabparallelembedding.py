@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 import torch
 import torch_npu  # noqa: F401
-import vllm  # noqa: F401
 
-import vllm_ascend.platform  # noqa: F401
+import vllm  # noqa: F401
+import vllm.platforms.npu  # noqa: F401
 
 
 def benchmark_npu(fn, num_iterations=100, num_warmup_iterations=50):
@@ -48,9 +48,17 @@ def get_masked_input_and_mask_ref(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Reference implementation for verification"""
     org_vocab_mask = (input_ >= org_vocab_start_index) & (input_ < org_vocab_end_index)
-    added_vocab_mask = (input_ >= added_vocab_start_index) & (input_ < added_vocab_end_index)
-    added_offset = added_vocab_start_index - (org_vocab_end_index - org_vocab_start_index) - num_org_vocab_padding
-    valid_offset = (org_vocab_start_index * org_vocab_mask) + (added_offset * added_vocab_mask)
+    added_vocab_mask = (input_ >= added_vocab_start_index) & (
+        input_ < added_vocab_end_index
+    )
+    added_offset = (
+        added_vocab_start_index
+        - (org_vocab_end_index - org_vocab_start_index)
+        - num_org_vocab_padding
+    )
+    valid_offset = (org_vocab_start_index * org_vocab_mask) + (
+        added_offset * added_vocab_mask
+    )
     vocab_mask = org_vocab_mask | added_vocab_mask
     masked_input = vocab_mask * (input_ - valid_offset)
     return masked_input, ~vocab_mask

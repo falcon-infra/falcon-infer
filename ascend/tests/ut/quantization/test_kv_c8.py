@@ -10,15 +10,15 @@ class TestWeightLoader(unittest.TestCase):
     def setUp(self):
         """Set up test environment before each test"""
         # Import the module under test
-        from vllm_ascend.quantization.methods.kv_c8 import weight_loader
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import weight_loader
         self.weight_loader = weight_loader
 
         # Mock distributed functions
         self.tp_rank_patch = patch(
-            "vllm_ascend.quantization.methods.kv_c8.get_tensor_model_parallel_rank"
+            "vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_tensor_model_parallel_rank"
         )
         self.tp_size_patch = patch(
-            "vllm_ascend.quantization.methods.kv_c8.get_tensor_model_parallel_world_size"
+            "vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_tensor_model_parallel_world_size"
         )
         self.mock_tp_rank = self.tp_rank_patch.start()
         self.mock_tp_size = self.tp_size_patch.start()
@@ -142,7 +142,7 @@ class TestAscendFAQuantAttentionMethodInit(unittest.TestCase):
     def setUp(self):
         """Set up test environment"""
         # Mock vllm_config
-        self.config_patch = patch("vllm_ascend.quantization.methods.kv_c8.get_current_vllm_config")
+        self.config_patch = patch("vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_current_vllm_config")
         self.mock_get_config = self.config_patch.start()
 
         # Create mock config with attributes
@@ -154,7 +154,7 @@ class TestAscendFAQuantAttentionMethodInit(unittest.TestCase):
         self.mock_get_config.return_value = self.mock_config
 
         # Import the class after patching
-        from vllm_ascend.quantization.methods.kv_c8 import AscendFAQuantAttentionMethod
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import AscendFAQuantAttentionMethod
         self.method_class = AscendFAQuantAttentionMethod
 
     def tearDown(self):
@@ -205,7 +205,7 @@ class TestAscendFAQuantAttentionMethodCreateWeights(unittest.TestCase):
     def setUp(self):
         """Set up test environment"""
         # Mock vllm_config
-        self.config_patch = patch("vllm_ascend.quantization.methods.kv_c8.get_current_vllm_config")
+        self.config_patch = patch("vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_current_vllm_config")
         self.mock_get_config = self.config_patch.start()
 
         self.mock_config = Mock()
@@ -216,7 +216,7 @@ class TestAscendFAQuantAttentionMethodCreateWeights(unittest.TestCase):
         self.mock_get_config.return_value = self.mock_config
 
         # Import the class
-        from vllm_ascend.quantization.methods.kv_c8 import AscendFAQuantAttentionMethod
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import AscendFAQuantAttentionMethod
         self.method_class = AscendFAQuantAttentionMethod
 
         # Mock torch functions
@@ -295,7 +295,7 @@ class TestAscendFAQuantAttentionMethodCreateWeights(unittest.TestCase):
             method.create_weights(self.layer)
 
             # Import weight_loader for comparison
-            from vllm_ascend.quantization.methods.kv_c8 import weight_loader
+            from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import weight_loader
 
             # Verify each parameter exists and has weight_loader
             self.assertTrue(hasattr(self.layer.fa_q, "scale"))
@@ -320,7 +320,7 @@ class TestAscendFAQuantAttentionMethodProcessWeights(unittest.TestCase):
     def setUp(self):
         """Set up test environment"""
         # Mock vllm_config
-        self.config_patch = patch("vllm_ascend.quantization.methods.kv_c8.get_current_vllm_config")
+        self.config_patch = patch("vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_current_vllm_config")
         self.mock_get_config = self.config_patch.start()
 
         self.mock_config = Mock()
@@ -331,7 +331,7 @@ class TestAscendFAQuantAttentionMethodProcessWeights(unittest.TestCase):
         self.mock_get_config.return_value = self.mock_config
 
         # Import the class
-        from vllm_ascend.quantization.methods.kv_c8 import AscendFAQuantAttentionMethod
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import AscendFAQuantAttentionMethod
         self.method_class = AscendFAQuantAttentionMethod
 
         # Create method instance with real layer
@@ -374,7 +374,7 @@ class TestIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test environment"""
         # Mock vllm_config
-        self.config_patch = patch("vllm_ascend.quantization.methods.kv_c8.get_current_vllm_config")
+        self.config_patch = patch("vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_current_vllm_config")
         self.mock_get_config = self.config_patch.start()
 
         self.mock_config = Mock()
@@ -386,10 +386,10 @@ class TestIntegration(unittest.TestCase):
 
         # Mock distributed functions
         self.tp_rank_patch = patch(
-            "vllm_ascend.quantization.methods.kv_c8.get_tensor_model_parallel_rank"
+            "vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_tensor_model_parallel_rank"
         )
         self.tp_size_patch = patch(
-            "vllm_ascend.quantization.methods.kv_c8.get_tensor_model_parallel_world_size"
+            "vllm.model_executor.layers.quantization.ascend.methods.kv_c8.get_tensor_model_parallel_world_size"
         )
         self.mock_tp_rank = self.tp_rank_patch.start()
         self.mock_tp_size = self.tp_size_patch.start()
@@ -402,7 +402,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_complete_workflow(self):
         """Test complete workflow from weight creation to processing"""
-        from vllm_ascend.quantization.methods.kv_c8 import AscendFAQuantAttentionMethod
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import AscendFAQuantAttentionMethod
 
         # Create method instance
         method = AscendFAQuantAttentionMethod()
@@ -440,7 +440,7 @@ class TestIntegration(unittest.TestCase):
         v_offset = torch.randint(-128, 127, (1, 1), dtype=torch.int8)
 
         # Load weights using weight_loader
-        from vllm_ascend.quantization.methods.kv_c8 import weight_loader
+        from vllm.model_executor.layers.quantization.ascend.methods.kv_c8 import weight_loader
 
         with torch.no_grad():
             weight_loader(layer.fa_q.scale, q_scale)

@@ -3,7 +3,7 @@
 import torch
 
 from vllm.config import VllmConfig
-from vllm.v1.worker.gpu_input_batch import InputBatch
+from vllm.v1.worker.input_batch import InputBatch
 
 
 class SuffixDecodingProposer:

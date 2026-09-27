@@ -1,3 +1,4 @@
+from vllm.model_executor.layers.ascend import initialize_native_ops
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,16 +18,13 @@ import unittest
 
 import pytest
 
-from vllm_ascend.utils import adapt_patch, register_ascend_customop
 
 
 class TestBase(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         # adapt patch by default.
-        adapt_patch(True)
-        adapt_patch()
-        register_ascend_customop()
+        initialize_native_ops()
         super().setUp()
         super(TestBase, self).__init__(*args, **kwargs)
 
@@ -39,6 +37,4 @@ class PytestBase:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        adapt_patch(True)
-        adapt_patch()
-        register_ascend_customop()
+        initialize_native_ops()

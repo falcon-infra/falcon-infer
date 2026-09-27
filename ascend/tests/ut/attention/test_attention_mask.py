@@ -16,7 +16,7 @@
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
+from vllm.v1.attention.backends.ascend.attention_mask import AttentionMaskBuilder
 
 
 class TestAttentionMaskBuilder(TestBase):

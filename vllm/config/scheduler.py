@@ -158,6 +158,17 @@ class SchedulerConfig:
         return SchedulerConfig(**kwargs)
 
     def get_scheduler_cls(self) -> type["SchedulerInterface"]:
+
+        from vllm import envs_ascend
+
+        if (
+            self.scheduler_cls is None
+            and envs_ascend.VLLM_ASCEND_BALANCE_SCHEDULING
+            and not self.async_scheduling
+        ):
+            from vllm.v1.core.sched.balance_scheduler import BalanceScheduler
+
+            return BalanceScheduler
         if self.scheduler_cls is None:
             if self.async_scheduling:
                 from vllm.v1.core.sched.async_scheduler import AsyncScheduler
@@ -298,3 +309,8 @@ class SchedulerConfig:
             )
 
         return self
+
+    mc2_recovery_token_budget: int | None = None
+    """Native NPU decoder recovery budget; populated during platform validation."""
+    SLO_limits_for_dynamic_batch: float = -1
+    """Native NPU dynamic batch latency limit; negative disables adaptation."""

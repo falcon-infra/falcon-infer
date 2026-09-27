@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import threading
 from weakref import WeakValueDictionary
 
 import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup
+
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
+from vllm.distributed.ascend.collectives import broadcast as npu_broadcast
 
 
 class Cache:
@@ -176,7 +180,7 @@ class DeviceCommunicatorBase:
         self.all2all_manager: All2AllManagerBase | None = None
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
-        dist.all_reduce(input_, group=self.device_group)
+        npu_all_reduce(input_, group=self.device_group)
         return input_
 
     def all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -304,7 +308,7 @@ class DeviceCommunicatorBase:
         """Broadcast a tensor from source rank to all ranks."""
         if self.world_size == 1:
             return tensor
-        torch.distributed.broadcast(tensor, self.ranks[src], self.device_group)
+        npu_broadcast(tensor, self.ranks[src], self.device_group)
         return tensor
 
     def destroy(self):

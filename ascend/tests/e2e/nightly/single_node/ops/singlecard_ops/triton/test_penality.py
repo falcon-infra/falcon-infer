@@ -2,7 +2,7 @@ import gc
 import pytest
 import torch
 
-from vllm_ascend.worker.v2.sample.penalties import apply_penalties
+from vllm.v1.worker.npu.v2.sample.penalties import apply_penalties
 
 DTYPES = [torch.bfloat16, torch.float16]
 NUM_TOKENS = [2, 4, 8]

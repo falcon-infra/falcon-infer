@@ -229,42 +229,141 @@ class Glm4MoeModelToolParser(ToolParser):
 
         self._buffer += delta_text
 
+        # Drain the current buffer before returning so a single terminal chunk can
+        # emit both the final string value and the closing tool-call suffix.
+        pending_delta: DeltaMessage | None = None
+
+        def _append_delta(message: DeltaMessage | None) -> None:
+            nonlocal pending_delta
+            if message is None:
+                return
+
+            if pending_delta is None:
+                pending_delta = message.model_copy(deep=True)
+                return
+
+            def _normalize_function_call(
+                function: DeltaFunctionCall | dict[str, Any] | None,
+            ) -> DeltaFunctionCall | None:
+                if function is None:
+                    return None
+                if isinstance(function, DeltaFunctionCall):
+                    return function.model_copy(deep=True)
+                return DeltaFunctionCall.model_validate(function)
+
+            if message.content:
+                pending_delta.content = (pending_delta.content or "") + message.content
+            if message.reasoning:
+                pending_delta.reasoning = (
+                    pending_delta.reasoning or ""
+                ) + message.reasoning
+
+            for tool_call in message.tool_calls:
+                for idx, existing_tool_call in enumerate(pending_delta.tool_calls):
+                    if existing_tool_call.index != tool_call.index:
+                        continue
+
+                    existing_function = _normalize_function_call(
+                        existing_tool_call.function
+                    )
+                    incoming_function = _normalize_function_call(tool_call.function)
+                    merged_name = (
+                        incoming_function.name
+                        if incoming_function and incoming_function.name is not None
+                        else existing_function.name
+                        if existing_function
+                        else None
+                    )
+                    merged_arguments = None
+                    if (
+                        existing_function and existing_function.arguments is not None
+                    ) or (
+                        incoming_function and incoming_function.arguments is not None
+                    ):
+                        merged_arguments = (
+                            (existing_function.arguments or "")
+                            if existing_function
+                            else ""
+                        ) + (
+                            (incoming_function.arguments or "")
+                            if incoming_function
+                            else ""
+                        )
+
+                    merged_function = None
+                    if merged_name is not None or merged_arguments is not None:
+                        merged_function = DeltaFunctionCall(
+                            name=merged_name,
+                            arguments=merged_arguments,
+                        ).model_dump(exclude_none=True)
+
+                    pending_delta.tool_calls[idx] = DeltaToolCall(
+                        index=existing_tool_call.index,
+                        id=(
+                            tool_call.id
+                            if tool_call.id is not None
+                            else existing_tool_call.id
+                        ),
+                        type=(
+                            tool_call.type
+                            if tool_call.type is not None
+                            else existing_tool_call.type
+                        ),
+                        function=merged_function,
+                    )
+                    break
+                else:
+                    pending_delta.tool_calls = [
+                        *pending_delta.tool_calls,
+                        tool_call.model_copy(deep=True),
+                    ]
+
+        def _flush_pending() -> DeltaMessage | None:
+            if pending_delta is None:
+                return None
+            if (
+                pending_delta.content is None
+                and pending_delta.reasoning is None
+                and not pending_delta.tool_calls
+            ):
+                return None
+            return pending_delta
+
         while True:
             if not self._in_tool_call:
                 start_idx = self._buffer.find(self.tool_call_start_token)
                 if start_idx == -1:
-                    # Check for partial start token at end of buffer
                     for i in range(1, len(self.tool_call_start_token)):
                         if self._buffer.endswith(self.tool_call_start_token[:i]):
                             out = self._buffer[:-i]
                             self._buffer = self._buffer[-i:]
-                            return DeltaMessage(content=out) if out else None
+                            _append_delta(DeltaMessage(content=out) if out else None)
+                            return _flush_pending()
                     out = self._buffer
                     self._buffer = ""
-                    return DeltaMessage(content=out) if out else None
+                    _append_delta(DeltaMessage(content=out) if out else None)
+                    return _flush_pending()
 
                 if start_idx > 0:
                     out = self._buffer[:start_idx]
                     self._buffer = self._buffer[start_idx:]
-                    return DeltaMessage(content=out) if out else None
+                    _append_delta(DeltaMessage(content=out) if out else None)
+                    continue
 
                 self._buffer = self._buffer[len(self.tool_call_start_token) :]
                 self._begin_tool_call()
                 continue
 
-            # Parse tool name first
             if not self.current_tool_name_sent:
                 nl = self._buffer.find("\n")
                 ak = self._buffer.find(self.arg_key_start)
                 end = self._buffer.find(self.tool_call_end_token)
                 candidates = [i for i in [nl, ak, end] if i != -1]
                 if not candidates:
-                    return None
+                    return _flush_pending()
                 cut = min(candidates)
                 tool_name = self._buffer[:cut].strip()
                 if tool_name == "" and cut == end:
-                    # Handle empty tool call like `<tool_call></tool_call>`.
-                    # Consume the tokens and reset state to avoid infinite loop.
                     self._buffer = self._buffer[end + len(self.tool_call_end_token) :]
                     self._finish_tool_call()
                     self._revert_last_tool_call_state()
@@ -277,11 +376,11 @@ class Glm4MoeModelToolParser(ToolParser):
 
                 self._current_tool_name = tool_name
                 self.current_tool_name_sent = True
-                return self._emit_tool_name_delta(tool_name)
+                _append_delta(self._emit_tool_name_delta(tool_name))
+                continue
 
             assert self._current_tool_name is not None
 
-            # Handle incremental string value streaming
             if self._streaming_string_value:
                 val_end = self._buffer.find(self.arg_val_end)
                 if val_end != -1:
@@ -293,40 +392,37 @@ class Glm4MoeModelToolParser(ToolParser):
                     escaped = self._json_escape_string_content(raw_content)
                     frag = escaped + '"'
                     self.streamed_args_for_tool[self.current_tool_id] += frag
-                    return self._emit_tool_args_delta(frag)
-                else:
-                    # Check for partial </arg_value> at end
-                    safe_len = len(self._buffer)
-                    for i in range(1, len(self.arg_val_end)):
-                        if self._buffer.endswith(self.arg_val_end[:i]):
-                            safe_len = len(self._buffer) - i
-                            break
+                    _append_delta(self._emit_tool_args_delta(frag))
+                    continue
 
-                    if safe_len > 0:
-                        to_emit = self._buffer[:safe_len]
-                        self._buffer = self._buffer[safe_len:]
-                        escaped = self._json_escape_string_content(to_emit)
-                        if escaped:
-                            self.streamed_args_for_tool[self.current_tool_id] += escaped
-                            return self._emit_tool_args_delta(escaped)
-                    return None
+                safe_len = len(self._buffer)
+                for i in range(1, len(self.arg_val_end)):
+                    if self._buffer.endswith(self.arg_val_end[:i]):
+                        safe_len = len(self._buffer) - i
+                        break
 
-            # If we have a pending key, parse its value
+                if safe_len > 0:
+                    to_emit = self._buffer[:safe_len]
+                    self._buffer = self._buffer[safe_len:]
+                    escaped = self._json_escape_string_content(to_emit)
+                    if escaped:
+                        self.streamed_args_for_tool[self.current_tool_id] += escaped
+                        _append_delta(self._emit_tool_args_delta(escaped))
+                return _flush_pending()
+
             if self._pending_key is not None:
                 val_pos = self._buffer.find(self.arg_val_start)
                 if val_pos == -1:
-                    return None
+                    return _flush_pending()
                 if val_pos > 0:
                     self._buffer = self._buffer[val_pos:]
 
                 key = (self._pending_key or "").strip()
-
                 is_string = self._is_string_type(
                     self._current_tool_name, key, request.tools
                 )
 
                 if is_string:
-                    # String type: stream incrementally
                     self._buffer = self._buffer[len(self.arg_val_start) :]
 
                     if key in self._seen_keys[self.current_tool_id]:
@@ -337,36 +433,37 @@ class Glm4MoeModelToolParser(ToolParser):
                     key_json = json.dumps(key, ensure_ascii=False)
 
                     if not self._args_started[self.current_tool_id]:
-                        frag = "{" + key_json + ': "'
+                        frag = "{" + key_json + ':"'
                         self._args_started[self.current_tool_id] = True
                     else:
-                        frag = ", " + key_json + ': "'
+                        frag = "," + key_json + ':"'
 
                     self.streamed_args_for_tool[self.current_tool_id] += frag
                     self._streaming_string_value = True
-                    return self._emit_tool_args_delta(frag)
-                else:
-                    # Non-string type: wait for complete value
-                    val_end = self._buffer.find(self.arg_val_end)
-                    if val_end == -1:
-                        return None
-
-                    raw_val = self._buffer[len(self.arg_val_start) : val_end].strip()
-                    self._buffer = self._buffer[val_end + len(self.arg_val_end) :]
-                    self._pending_key = None
-
-                    frag_or_none = self._append_arg_fragment(key=key, raw_val=raw_val)
-                    if frag_or_none:
-                        return self._emit_tool_args_delta(frag_or_none)
+                    _append_delta(self._emit_tool_args_delta(frag))
                     continue
 
-            # Parse next arg or close
+                val_end = self._buffer.find(self.arg_val_end)
+                if val_end == -1:
+                    return _flush_pending()
+
+                raw_val = self._buffer[len(self.arg_val_start) : val_end].strip()
+                self._buffer = self._buffer[val_end + len(self.arg_val_end) :]
+                self._pending_key = None
+
+                frag = self._append_arg_fragment(
+                    key=key,
+                    raw_val=raw_val,
+                )
+                if frag:
+                    _append_delta(self._emit_tool_args_delta(frag))
+                continue
+
             end_pos = self._buffer.find(self.tool_call_end_token)
             key_pos = self._buffer.find(self.arg_key_start)
             if end_pos != -1 and (key_pos == -1 or end_pos < key_pos):
                 self._buffer = self._buffer[end_pos + len(self.tool_call_end_token) :]
-                frag_or_none = self._close_args_if_needed()
-                # Finalize prev_tool_call_arr with complete parsed arguments
+                frag = self._close_args_if_needed()
                 if self._current_tool_name:
                     try:
                         full_args_str = self.streamed_args_for_tool[
@@ -384,21 +481,19 @@ class Glm4MoeModelToolParser(ToolParser):
                             e,
                         )
                 self._finish_tool_call()
-                return (
-                    self._emit_tool_args_delta(frag_or_none) if frag_or_none else None
-                )
+                _append_delta(self._emit_tool_args_delta(frag) if frag else None)
+                continue
 
             if key_pos == -1:
-                return None
+                return _flush_pending()
             if key_pos > 0:
                 self._buffer = self._buffer[key_pos:]
             key_end = self._buffer.find(self.arg_key_end)
             if key_end == -1:
-                return None
+                return _flush_pending()
             key = self._buffer[len(self.arg_key_start) : key_end]
             self._buffer = self._buffer[key_end + len(self.arg_key_end) :]
             self._pending_key = key
-            continue
 
     def _ensure_tool_state(self) -> None:
         while len(self._tool_call_ids) <= self.current_tool_id:

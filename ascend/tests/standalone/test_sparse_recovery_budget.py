@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
     "boundaries,valid", [([0] * 8, True), ([4096] * 2, True), ([4096] * 3, False), ([2048], False)]
 )
 def test_native_scratch_bounds_count_only_external_rows(boundaries, valid):
-    path = ROOT / "vllm_ascend/attention/sfa_v1.py"
+    path = ROOT / "../vllm/v1/attention/backends/ascend/sfa_v1.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     method = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_validate_dsa_scratch_capacity")
     module = ast.parse("from __future__ import annotations")
@@ -59,7 +59,7 @@ def request(name, computed=131614, end=132325, compact=True, status="RUNNING"):
 
 
 def scheduler(running=(), waiting=(), width=2, budget=32):
-    path = ROOT / "vllm_ascend/core/recompute_scheduler.py"
+    path = ROOT / "../vllm/v1/core/sched/recompute_scheduler.py"
     cls = next(n for n in ast.parse(path.read_text(encoding="utf8")).body
                if isinstance(n, ast.ClassDef) and n.name == "RecomputeScheduler")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "schedule")
@@ -209,7 +209,7 @@ def test_preemption_drops_old_compact_allocation_before_dense_cache_miss():
     classes = []
     for path, name, bases in (
         (ROOT.parent / "vllm/v1/core/sched/scheduler.py", "Base", []),
-        (ROOT / "vllm_ascend/core/recompute_scheduler.py", "Derived", [ast.Name(id="Base", ctx=ast.Load())]),
+        (ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "Derived", [ast.Name(id="Base", ctx=ast.Load())]),
     ):
         tree = ast.parse(path.read_text(encoding="utf8"))
         method = next(n for n in ast.walk(tree)
@@ -266,7 +266,7 @@ def test_actual_async_counters_do_not_generate_tokens_during_history_replay():
 
 @pytest.mark.parametrize("drafts", [0, 1, 3])
 def test_startup_uses_allocator_scratch_row_contract(drafts):
-    path = ROOT / "vllm_ascend/core/recompute_scheduler.py"
+    path = ROOT / "../vllm/v1/core/sched/recompute_scheduler.py"
     tree = ast.parse(path.read_text(encoding="utf8"))
     assignment = next(n for n in ast.walk(tree) if isinstance(n, ast.Assign)
                       and any(isinstance(t, ast.Attribute) and t.attr == "_dsa_query_rows" for t in n.targets))

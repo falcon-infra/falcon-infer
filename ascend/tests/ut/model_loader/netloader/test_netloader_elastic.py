@@ -24,8 +24,8 @@ import pytest
 import torch
 import vllm.logger
 
-from vllm_ascend.model_loader.netloader.interaction.elastic import (
-    ElasticClient, ElasticServer)
+from vllm.model_executor.model_loader.ascend.netloader.interaction.elastic import ElasticClient
+from vllm.model_executor.model_loader.ascend.netloader.interaction.elastic import ElasticServer
 
 
 # Simulate server's normal response
@@ -262,7 +262,7 @@ def test_int8_cache_handling(server_config, mock_model, cache_option,
 # Test client processing
 def test_client_handler_valid_join(server_config, mock_model):
     server_config["model"] = mock_model
-    with patch("vllm_ascend.model_loader.netloader.interaction.elastic.P2PSend"
+    with patch("vllm.model_executor.model_loader.ascend.netloader.interaction.elastic.P2PSend"
                ) as mock_p2p_send:
 
         # Create a simulated connection

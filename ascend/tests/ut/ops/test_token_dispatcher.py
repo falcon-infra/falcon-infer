@@ -22,22 +22,18 @@ import pytest
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.ops.fused_moe.moe_runtime_args import (
-    MoEAllGatherCombineMetadata,
-    MoEAllToAllCombineMetadata,
-    MoEMC2CombineMetadata,
-    MoEQuantParams,
-    MoERoutingParams,
-    MoETokenDispatchInput,
-)
-from vllm_ascend.ops.fused_moe.token_dispatcher import (  # isort: skip
-    AscendDeviceType,
-    TokenDispatcherWithAll2AllV,
-    TokenDispatcherWithAllGather,
-    TokenDispatcherWithMC2,
-)
-from vllm_ascend.ops.fused_moe.moe_stage_params import MoEMxfpParams
-from vllm_ascend.quantization.quant_type import QuantType
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEAllGatherCombineMetadata
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEAllToAllCombineMetadata
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEMC2CombineMetadata
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEQuantParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoERoutingParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoETokenDispatchInput
+from vllm.model_executor.layers.ascend.fused_moe.token_dispatcher import AscendDeviceType
+from vllm.model_executor.layers.ascend.fused_moe.token_dispatcher import TokenDispatcherWithAll2AllV
+from vllm.model_executor.layers.ascend.fused_moe.token_dispatcher import TokenDispatcherWithAllGather
+from vllm.model_executor.layers.ascend.fused_moe.token_dispatcher import TokenDispatcherWithMC2
+from vllm.model_executor.layers.ascend.fused_moe.moe_stage_params import MoEMxfpParams
+from vllm.model_executor.layers.quantization.ascend.quant_type import QuantType
 
 
 def build_token_dispatch_input_fixture(
@@ -79,7 +75,7 @@ class TestTokenDispatcherWithMC2(TestBase):
 
     def setUp(self):
         self.config_patcher = patch(
-            'vllm_ascend.ops.fused_moe.token_dispatcher.get_current_vllm_config'
+            'vllm.model_executor.layers.ascend.fused_moe.token_dispatcher.get_current_vllm_config'
         )
         self.mock_get_config = self.config_patcher.start()
 
@@ -100,7 +96,7 @@ class TestTokenDispatcherWithMC2(TestBase):
         self.mc2_group.rank_in_group = 0
         self.mc2_group.world_size = 8
         self.mc2_group_patch = patch(
-            "vllm_ascend.ops.fused_moe.token_dispatcher.get_mc2_group",
+            "vllm.model_executor.layers.ascend.fused_moe.token_dispatcher.get_mc2_group",
             return_value=self.mc2_group)
         self.mc2_group_patch.start()
 
@@ -118,7 +114,7 @@ class TestTokenDispatcherWithMC2(TestBase):
 
         # Mock get_ascend_device_type()
         self.ascend_soc_version_patch = patch(
-            "vllm_ascend.ops.fused_moe.token_dispatcher.get_ascend_device_type",
+            "vllm.model_executor.layers.ascend.fused_moe.token_dispatcher.get_ascend_device_type",
             return_value=AscendDeviceType.A3)
         self.ascend_soc_version_patch.start()
 
@@ -417,7 +413,7 @@ class TestTokenDispatcherWithAll2AllV(TestBase):
 
         # Mock async_all_to_all
         patcher6 = patch(
-            'vllm_ascend.ops.fused_moe.comm_utils.async_all_to_all')
+            'vllm.model_executor.layers.ascend.fused_moe.comm_utils.async_all_to_all')
         self.mock_async_all_to_all = patcher6.start()
         self.addCleanup(patcher6.stop)
         self.mock_async_all_to_all.return_value = (None, torch.randn(16, 16),
@@ -425,7 +421,7 @@ class TestTokenDispatcherWithAll2AllV(TestBase):
 
         # Mock gather_from_sequence_parallel_region
         patcher7 = patch(
-            'vllm_ascend.ops.fused_moe.token_dispatcher.gather_from_sequence_parallel_region'
+            'vllm.model_executor.layers.ascend.fused_moe.token_dispatcher.gather_from_sequence_parallel_region'
         )
         self.mock_gather_from_sequence_parallel_region = patcher7.start()
         self.addCleanup(patcher7.stop)

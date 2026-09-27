@@ -10,8 +10,8 @@ fake_store = types.ModuleType("mooncake.store")
 fake_store.ReplicateConfig = MagicMock()  # type: ignore[attr-defined]
 sys.modules["mooncake.store"] = fake_store
 
-from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.backend.mooncake_backend import (  # noqa: E402
-    _convert_to_bytes, _parse_global_segment_size)
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.backend.mooncake_backend import _convert_to_bytes
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.backend.mooncake_backend import _parse_global_segment_size
 
 
 class TestParseGlobalSegmentSize(unittest.TestCase):

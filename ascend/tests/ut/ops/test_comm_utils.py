@@ -20,9 +20,9 @@ import torch
 from pytest_mock import MockerFixture
 
 from tests.ut.base import PytestBase
-from vllm_ascend.ops.fused_moe.comm_utils import (
-    _gather_along_first_dim, async_all_to_all,
-    gather_from_sequence_parallel_region)
+from vllm.model_executor.layers.ascend.fused_moe.comm_utils import _gather_along_first_dim
+from vllm.model_executor.layers.ascend.fused_moe.comm_utils import async_all_to_all
+from vllm.model_executor.layers.ascend.fused_moe.comm_utils import gather_from_sequence_parallel_region
 
 
 class TestDistributedCommunication(PytestBase):

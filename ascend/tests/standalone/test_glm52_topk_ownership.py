@@ -9,7 +9,7 @@ import torch
 
 
 def consumer(shared, shrink):
-    path = Path(__file__).resolve().parents[2] / "vllm_ascend/attention/sfa_v1.py"
+    path = Path(__file__).resolve().parents[2] / "../vllm/v1/attention/backends/ascend/sfa_v1.py"
     tree = ast.parse(path.read_text(encoding="utf8"))
     names = {"_get_indexcache_topk_indices", "_update_indexcache_topk_indices"}
     nodes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name in names]
@@ -39,7 +39,7 @@ def test_read_only_consumer_does_not_add_a_copy():
 
 
 def test_prefiller_shared_consumer_records_its_latent_write_event():
-    path = Path(__file__).resolve().parents[2] / "vllm_ascend/attention/sfa_v1.py"
+    path = Path(__file__).resolve().parents[2] / "../vllm/v1/attention/backends/ascend/sfa_v1.py"
     tree = ast.parse(path.read_text(encoding="utf8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "AscendSFAImpl")
     forward = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "forward")
@@ -59,7 +59,7 @@ def test_prefiller_shared_consumer_records_its_latent_write_event():
 
 
 def test_staged_consumer_prepares_the_next_physical_indexer():
-    path = Path(__file__).resolve().parents[2] / "vllm_ascend/attention/sfa_v1.py"
+    path = Path(__file__).resolve().parents[2] / "../vllm/v1/attention/backends/ascend/sfa_v1.py"
     tree = ast.parse(path.read_text(encoding="utf8"))
     names = {"_cross_layer_kv_cache", "_layer_has_indexer_by_name", "cross_layer_lmcache_retrieve"}
     nodes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name in names]

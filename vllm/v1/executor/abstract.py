@@ -64,6 +64,17 @@ class Executor(ABC):
             from vllm.v1.executor.multiproc_executor import MultiprocExecutor
 
             executor_class = MultiprocExecutor
+            import os
+
+            if (
+                os.getenv("DYNAMIC_EPLB", "false").lower() in ("true", "1")
+                or os.getenv("EXPERT_MAP_RECORD", "false") == "true"
+            ):
+                from vllm.v1.executor.ascend_multiproc_executor import (
+                    AscendMultiprocExecutor,
+                )
+
+                executor_class = AscendMultiprocExecutor
         elif distributed_executor_backend == "uni":
             from vllm.v1.executor.uniproc_executor import UniProcExecutor
 

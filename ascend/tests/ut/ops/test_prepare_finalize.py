@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 import torch
 from vllm.model_executor.layers.fused_moe import FusedMoEConfig
 
-from vllm_ascend.ops.fused_moe.prepare_finalize import (
-    PrepareAndFinalizeWithAll2All, PrepareAndFinalizeWithAllGather,
-    PrepareAndFinalizeWithMC2)
+from vllm.model_executor.layers.ascend.fused_moe.prepare_finalize import PrepareAndFinalizeWithAll2All
+from vllm.model_executor.layers.ascend.fused_moe.prepare_finalize import PrepareAndFinalizeWithAllGather
+from vllm.model_executor.layers.ascend.fused_moe.prepare_finalize import PrepareAndFinalizeWithMC2
 
 
 class TestPrepareAndFinalize(unittest.TestCase):
@@ -27,12 +27,12 @@ class TestPrepareAndFinalize(unittest.TestCase):
         self.moe_config.original_num_experts = 8
 
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
         return_value=1)
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
         return_value=0)
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     def test_mc2_prepare_finalize(self, mock_get_forward_context, mock_tp_rank,
                                   mock_tp_size):
         mock_context = MagicMock()
@@ -64,12 +64,12 @@ class TestPrepareAndFinalize(unittest.TestCase):
         self.assertEqual(result.shape[0], 3)
 
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
         return_value=2)
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
         return_value=0)
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch("torch.distributed.all_gather")
     def test_mc2_tp_split_allgather(self, mock_all_gather,
                                     mock_get_forward_context, mock_tp_rank,
@@ -116,10 +116,10 @@ class TestPrepareAndFinalize(unittest.TestCase):
         self.assertEqual(final_result.shape[0], 4)
 
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
         return_value=1)
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
         return_value=0)
     def test_all2all_prepare_finalize(self, mock_tp_rank, mock_tp_size):
         layer = PrepareAndFinalizeWithAll2All(self.moe_config)
@@ -141,10 +141,10 @@ class TestPrepareAndFinalize(unittest.TestCase):
         self.assertEqual(result.shape[0], 3)
 
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_world_size",
         return_value=2)
     @patch(
-        "vllm_ascend.ops.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
+        "vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_tensor_model_parallel_rank",
         return_value=0)
     @patch("torch.distributed.all_gather")
     def test_all2all_tp_split_allgather(self, mock_all_gather, mock_tp_rank,
@@ -184,11 +184,11 @@ class TestPrepareAndFinalize(unittest.TestCase):
         # Should concat back
         self.assertEqual(final_result.shape[0], 2)
 
-    @patch("vllm_ascend.ops.fused_moe.prepare_finalize.get_dp_group")
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch("vllm_ascend.ops.fused_moe.prepare_finalize.enable_sp",
+    @patch("vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.get_dp_group")
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch("vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.enable_sp",
            return_value=False)
-    @patch("vllm_ascend.ops.fused_moe.prepare_finalize.enable_sp_by_pass",
+    @patch("vllm.model_executor.layers.ascend.fused_moe.prepare_finalize.enable_sp_by_pass",
         return_value=False)
     def test_allgather_prepare_finalize(self, mock_enable_sp_by_pass,
                                         mock_enable_sp,

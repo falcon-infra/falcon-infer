@@ -6,6 +6,8 @@ import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup
 
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
+from vllm.distributed.ascend.collectives import broadcast as npu_broadcast
 from vllm.logger import init_logger
 
 from .base_device_communicator import DeviceCommunicatorBase
@@ -48,7 +50,7 @@ class XpuCommunicator(DeviceCommunicatorBase):
                 logger.info("Using AgRs manager on XPU device.")
 
     def all_reduce(self, input_) -> torch.Tensor:
-        dist.all_reduce(input_, group=self.device_group)
+        npu_all_reduce(input_, group=self.device_group)
         return input_
 
     def reduce_scatter(self, input_: torch.Tensor, dim: int = -1):
@@ -194,7 +196,7 @@ class XpuCommunicator(DeviceCommunicatorBase):
         return output_tensor
 
     def broadcast(self, input_: torch.Tensor, src: int = 0) -> None:
-        dist.broadcast(input_, src=src, group=self.device_group)
+        npu_broadcast(input_, src=src, group=self.device_group)
 
     def dispatch_router_logits(
         self,

@@ -5,8 +5,8 @@ import torch
 from vllm.config import set_current_vllm_config
 from vllm.model_executor.layers.layernorm import RMSNorm
 
-from vllm_ascend.utils import enable_custom_op
-from vllm_ascend.utils import is_310p as is_310p_hw
+from vllm.utils.ascend import enable_custom_op
+from vllm.utils.ascend import is_310p as is_310p_hw
 
 enable_custom_op()
 
@@ -51,14 +51,14 @@ def test_RMSNorm_forward(
 ):
     layer = RMSNorm(hidden_size=8, eps=1e-05)
     if residual is not None:
-        out_x, out_residual = layer.forward_oot(dummy_tensor, residual)
+        out_x, out_residual = layer.forward_npu(dummy_tensor, residual)
         expected_out_x = 2 * dummy_tensor
         expected_out_residual = 2 * residual
         mock_add_rms_norm_bias.assert_called_once()
         assert torch.allclose(out_x, expected_out_x)
         assert torch.allclose(out_residual, expected_out_residual)
     else:
-        out_x = layer.forward_oot(dummy_tensor, residual)
+        out_x = layer.forward_npu(dummy_tensor, residual)
         expected_out_x = dummy_tensor + 1
 
         mock_rmsnorm.assert_called_once()
@@ -72,14 +72,14 @@ def test_RMSNorm_forward(
 def test_RMSNorm_forward_310p(mock_add_rmsnorm, mock_rmsnorm, residual, dummy_tensor, default_vllm_config):
     layer = RMSNorm(hidden_size=8, eps=1e-05)
     if residual is not None:
-        out_x, out_residual = layer.forward_oot(dummy_tensor, residual)
+        out_x, out_residual = layer.forward_npu(dummy_tensor, residual)
         expected_out_x = 2 * dummy_tensor
         expected_out_residual = 2 * residual
         mock_add_rmsnorm.assert_called_once()
         assert torch.allclose(out_x, expected_out_x)
         assert torch.allclose(out_residual, expected_out_residual)
     else:
-        out_x = layer.forward_oot(dummy_tensor, residual)
+        out_x = layer.forward_npu(dummy_tensor, residual)
         expected_out_x = dummy_tensor + 1
         mock_rmsnorm.assert_called_once()
         assert torch.allclose(out_x, expected_out_x)

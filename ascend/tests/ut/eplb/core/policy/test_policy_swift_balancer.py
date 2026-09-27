@@ -3,8 +3,8 @@ from typing import Dict, Set
 import numpy as np
 import pytest
 
-from vllm_ascend.eplb.core.policy.policy_swift_balancer import (DynamicConfig,
-                                                               SwiftBalanceEplb)
+from vllm.distributed.eplb.ascend.core.policy.policy_swift_balancer import DynamicConfig
+from vllm.distributed.eplb.ascend.core.policy.policy_swift_balancer import SwiftBalanceEplb
 
 
 @pytest.fixture

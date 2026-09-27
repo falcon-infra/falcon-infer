@@ -3,11 +3,11 @@ import statistics
 
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.prepare_sparse_indices import (
+from vllm.distributed.kv_transfer.ascend.sparse_offload.prepare_sparse_indices import (
     _sparse_index_op_name,
     prepare_sparse_indices,
 )
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sorted_cache import (
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import (
     allocate_sorted_resident_state,
     allocate_sorted_resident_workspace,
     coordinate_sorted_resident_finalize_,
@@ -19,10 +19,12 @@ from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sorted_cache im
     resident_shard_count,
     run_sharded_resident_finalize_,
 )
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 
-def _mtp_rows_with_half_overlap(topk: int, request_batch: int, mtp: int, device: str) -> torch.Tensor:
+def _mtp_rows_with_half_overlap(
+    topk: int, request_batch: int, mtp: int, device: str
+) -> torch.Tensor:
     if topk % 2:
         raise ValueError("topk must be even for an exact 0.5 row overlap")
     if mtp < 1:
@@ -97,8 +99,12 @@ def _seed_sorted_resident_state_for_hit_rate(
         for shard, entries in enumerate(shard_entries):
             count = len(entries)
             count_seed[request, shard, 0] = count
-            token_seed[request, shard, :count] = torch.tensor([token for token, _ in entries], dtype=torch.int32)
-            slot_seed[request, shard, :count] = torch.tensor([slot for _, slot in entries], dtype=torch.int16)
+            token_seed[request, shard, :count] = torch.tensor(
+                [token for token, _ in entries], dtype=torch.int32
+            )
+            slot_seed[request, shard, :count] = torch.tensor(
+                [slot for _, slot in entries], dtype=torch.int16
+            )
     state.tokens.copy_(token_seed.to(state.tokens.device))
     state.slots.copy_(slot_seed.to(state.slots.device))
     state.counts.copy_(count_seed.to(state.counts.device))
@@ -132,14 +138,18 @@ def _validate_resident_sharded_union(
             count = int(counts_cpu[request, shard])
             actual = packed_cpu[request, shard, :count].tolist()
             if actual != expected:
-                raise AssertionError(f"resident shard {shard} payload differs: {actual[:8]} != {expected[:8]}")
+                raise AssertionError(
+                    f"resident shard {shard} payload differs: {actual[:8]} != {expected[:8]}"
+                )
         for position, token in enumerate(source_cpu[request].reshape(-1).tolist()):
             if not 0 <= token < boundary:
                 continue
             shard = token % shard_count
             rank = int(mapping_cpu[request, shard, position])
             if int(packed_cpu[request, shard, rank]) != token:
-                raise AssertionError("resident shard mapping does not point at its token")
+                raise AssertionError(
+                    "resident shard mapping does not point at its token"
+                )
 
 
 def _validate_resident_remap(
@@ -180,7 +190,9 @@ def _summary(name: str, samples: list[float]) -> None:
     ordered = sorted(samples)
     p50 = ordered[len(ordered) // 2]
     p90 = ordered[int((len(ordered) - 1) * 0.9)]
-    print(f"{name:>12}: mean={statistics.fmean(samples):.6f} ms p50={p50:.6f} ms p90={p90:.6f} ms")
+    print(
+        f"{name:>12}: mean={statistics.fmean(samples):.6f} ms p50={p50:.6f} ms p90={p90:.6f} ms"
+    )
 
 
 def _staged_runner(
@@ -398,8 +410,12 @@ def _validate_sharded_result(
     for request in range(request_batch):
         selected_tokens = selected_cpu[request, :boundary].tolist()
         if set(selected_tokens) != expected_token_set:
-            raise AssertionError(f"{label} output is not the expected deduplicated union")
-        expected_targets = torch.arange(boundary, dtype=torch.long) + request * max_tokens
+            raise AssertionError(
+                f"{label} output is not the expected deduplicated union"
+            )
+        expected_targets = (
+            torch.arange(boundary, dtype=torch.long) + request * max_tokens
+        )
         if not torch.equal(
             targets_cpu[request, :boundary],
             expected_targets,
@@ -521,13 +537,19 @@ def production_only_main(
             torch.sort(selected_cpu[request, :expected_count]).values,
             expected_selected,
         ):
-            raise AssertionError(f"request {request} production staged union is incorrect")
-        expected_targets = torch.arange(expected_count, dtype=torch.long) + request * max_tokens
+            raise AssertionError(
+                f"request {request} production staged union is incorrect"
+            )
+        expected_targets = (
+            torch.arange(expected_count, dtype=torch.long) + request * max_tokens
+        )
         if not torch.equal(
             targets_cpu[request, :expected_count],
             expected_targets,
         ):
-            raise AssertionError(f"request {request} production staged targets are incorrect")
+            raise AssertionError(
+                f"request {request} production staged targets are incorrect"
+            )
 
     source_2d = source.reshape(row_count, topk)
     remapped = values.reshape(row_count, topk)
@@ -548,7 +570,9 @@ def production_only_main(
         remapped,
     )
     if not torch.equal(reconstructed.cpu(), source_2d.cpu()):
-        raise AssertionError("production staged remapped rows do not reconstruct the input")
+        raise AssertionError(
+            "production staged remapped rows do not reconstruct the input"
+        )
 
     samples = _measure_npu_ms(
         run,
@@ -561,11 +585,17 @@ def production_only_main(
         f"topk={topk}, MTP={mtp}, requests={request_batch}, "
         f"split_boundary={split_boundary} (source max={source_max})"
     )
-    uses_sharded_operator = _sparse_index_op_name(mtp) == "npu_dsa_prepare_sparse_indices_sharded_"
+    uses_sharded_operator = (
+        _sparse_index_op_name(mtp) == "npu_dsa_prepare_sparse_indices_sharded_"
+    )
     production_label = (
         "production-sharded-single-row"
         if uses_sharded_operator and mtp == 1
-        else ("production-sharded-sort" if uses_sharded_operator else "production-staged-sort")
+        else (
+            "production-sharded-sort"
+            if uses_sharded_operator
+            else "production-staged-sort"
+        )
     )
     _summary(production_label, samples)
 
@@ -634,7 +664,9 @@ def main(
     shards_per_row: int | None = None,
 ) -> None:
     if topk != 2048:
-        raise ValueError("the experimental staged kernels currently require --topk 2048")
+        raise ValueError(
+            "the experimental staged kernels currently require --topk 2048"
+        )
     if mtp < 1 or mtp > 8:
         raise ValueError("the sharded benchmark supports --mtp from 1 to 8")
     if not enable_custom_op():
@@ -700,7 +732,9 @@ def main(
         device="npu",
     )
     print(f"sharded split_boundary={sharded_boundary} (source max={source_max})")
-    row_requests = torch.arange(request_batch, dtype=torch.int32, device="npu").repeat_interleave(mtp)
+    row_requests = torch.arange(
+        request_batch, dtype=torch.int32, device="npu"
+    ).repeat_interleave(mtp)
 
     # The pre-union operator assigns each row its own compact scratch range.
     valid_rows = torch.arange(row_count, dtype=torch.int32, device="npu")
@@ -728,7 +762,9 @@ def main(
     native_unique_buffers = tuple(torch.empty_like(item) for item in hash_buffers)
     sharded_sort_buffers = tuple(torch.empty_like(item) for item in hash_buffers)
     sharded_vector_buffers = tuple(torch.empty_like(item) for item in hash_buffers)
-    sharded_vector_dedup_buffers = tuple(torch.empty_like(item) for item in hash_buffers)
+    sharded_vector_dedup_buffers = tuple(
+        torch.empty_like(item) for item in hash_buffers
+    )
     production_staged_buffers = (
         torch.empty_like(hash_buffers[0]),
         torch.empty_like(hash_buffers[0]),
@@ -779,7 +815,9 @@ def main(
             device="npu",
         ),
     )
-    sharded_vector_dedup_scratch = tuple(torch.empty_like(item) for item in sharded_sort_scratch)
+    sharded_vector_dedup_scratch = tuple(
+        torch.empty_like(item) for item in sharded_sort_scratch
+    )
     resident_union_workspace = (
         allocate_sorted_resident_workspace(
             request_batch,
@@ -801,9 +839,15 @@ def main(
         if mtp <= 2
         else None
     )
-    resident_request_states = torch.arange(request_batch, dtype=torch.int32, device="npu")
-    resident_request_generations = torch.ones(request_batch, dtype=torch.int64, device="npu")
-    resident_cold_generations = torch.full((request_batch,), 2, dtype=torch.int64, device="npu")
+    resident_request_states = torch.arange(
+        request_batch, dtype=torch.int32, device="npu"
+    )
+    resident_request_generations = torch.ones(
+        request_batch, dtype=torch.int64, device="npu"
+    )
+    resident_cold_generations = torch.full(
+        (request_batch,), 2, dtype=torch.int64, device="npu"
+    )
 
     def staged(values, buffers, use_sort):
         return _staged_runner(
@@ -970,9 +1014,13 @@ def main(
     pair_baselines = mtp == 2
     native_unique_baseline = mtp in (2, 3)
     if not pair_baselines:
-        print("staged-hash/staged-sort skipped: those legacy experiment kernels are fixed to two rows per request")
+        print(
+            "staged-hash/staged-sort skipped: those legacy experiment kernels are fixed to two rows per request"
+        )
     if not native_unique_baseline:
-        print("native-unique skipped: its finalize UB layout is only benchmarked through MTP=3")
+        print(
+            "native-unique skipped: its finalize UB layout is only benchmarked through MTP=3"
+        )
     no_union_result = staged_no_union()
     hash_result = staged(hash_values, hash_buffers, False) if pair_baselines else None
     sort_result = staged(sort_values, sort_buffers, True) if pair_baselines else None
@@ -1032,7 +1080,9 @@ def main(
         remap_only_seed = sort_union_only_values.clone()
         remap_only_values = remap_only_seed.clone()
     torch.npu.synchronize()
-    expected_local_indices = torch.arange(topk, dtype=torch.int32, device="npu").expand(row_count, 1, -1)
+    expected_local_indices = torch.arange(topk, dtype=torch.int32, device="npu").expand(
+        row_count, 1, -1
+    )
     if not torch.equal(no_union_result.cpu(), expected_local_indices.cpu()):
         raise AssertionError("staged no-union remapped rows are incorrect")
     full_expected_count = (mtp + 1) * topk // 2
@@ -1116,13 +1166,23 @@ def main(
         # must emit no LMCache payload while still remapping every top-k row.
         resident_fused_finalize()
         torch.npu.synchronize()
-        if resident_union_workspace.miss_counts[:, 0].cpu().tolist() != [sharded_boundary] * request_batch:
-            raise AssertionError("cold resident fused path emitted an incorrect miss count")
+        if (
+            resident_union_workspace.miss_counts[:, 0].cpu().tolist()
+            != [sharded_boundary] * request_batch
+        ):
+            raise AssertionError(
+                "cold resident fused path emitted an incorrect miss count"
+            )
         resident_union_values.copy_(source)
         resident_end_to_end()
         torch.npu.synchronize()
-        if resident_union_workspace.miss_counts[:, 0].cpu().tolist() != [0] * request_batch:
-            raise AssertionError("steady resident fused path did not eliminate all hits")
+        if (
+            resident_union_workspace.miss_counts[:, 0].cpu().tolist()
+            != [0] * request_batch
+        ):
+            raise AssertionError(
+                "steady resident fused path did not eliminate all hits"
+            )
         _validate_resident_remap(
             source,
             sharded_boundary,
@@ -1134,13 +1194,15 @@ def main(
         # Build a deterministic 90%-hit state for stage timing. All scratch
         # slots are occupied: 90% of the current union is resident and the
         # rest are stale tokens, so every measured miss requires eviction.
-        resident_hit_count, resident_expected_misses = _seed_sorted_resident_state_for_hit_rate(
-            resident_union_state,
-            request_batch=request_batch,
-            valid_token_count=sharded_boundary,
-            capacity=capacity,
-            shard_count=resident_shards,
-            hit_rate=resident_hit_rate,
+        resident_hit_count, resident_expected_misses = (
+            _seed_sorted_resident_state_for_hit_rate(
+                resident_union_state,
+                request_batch=request_batch,
+                valid_token_count=sharded_boundary,
+                capacity=capacity,
+                shard_count=resident_shards,
+                hit_rate=resident_hit_rate,
+            )
         )
         resident_state_seed = (
             resident_union_state.tokens.clone(),
@@ -1183,7 +1245,9 @@ def main(
             resident_union_workspace.shard_evictable_slots.clone(),
         )
 
-        resident_finalize_debug = torch.empty((request_batch, 16), dtype=torch.int32, device="npu")
+        resident_finalize_debug = torch.empty(
+            (request_batch, 16), dtype=torch.int32, device="npu"
+        )
 
         def resident_finalize_only():
             debug_sorted_resident_finalize_only_(
@@ -1195,13 +1259,20 @@ def main(
 
         resident_finalize_only()
         torch.npu.synchronize()
-        if resident_union_workspace.miss_counts[:, 0].cpu().tolist() != [resident_expected_misses] * request_batch:
-            raise AssertionError("resident 90%-hit finalize emitted an incorrect miss count")
+        if (
+            resident_union_workspace.miss_counts[:, 0].cpu().tolist()
+            != [resident_expected_misses] * request_batch
+        ):
+            raise AssertionError(
+                "resident 90%-hit finalize emitted an incorrect miss count"
+            )
         resident_selected_evicts = min(
             resident_expected_misses,
             capacity - resident_hit_count,
         )
-        selected_evicts = resident_union_workspace.shard_counts[:, :, 4].sum(dim=1).cpu().tolist()
+        selected_evicts = (
+            resident_union_workspace.shard_counts[:, :, 4].sum(dim=1).cpu().tolist()
+        )
         if selected_evicts != [resident_selected_evicts] * request_batch:
             raise AssertionError(
                 "resident finalize selected an incorrect evict prefix: "
@@ -1241,9 +1312,16 @@ def main(
         resident_union_workspace.shard_evictable_slots.copy_(resident_union_seed[6])
         resident_sharded_finalize_worker()
         torch.npu.synchronize()
-        if resident_union_workspace.miss_counts[:, 0].cpu().tolist() != [resident_expected_misses] * request_batch:
-            raise AssertionError("sharded resident finalize emitted an incorrect miss count")
-        coordinated_selected_evicts = resident_union_workspace.shard_counts[:, :, 4].sum(dim=1).cpu().tolist()
+        if (
+            resident_union_workspace.miss_counts[:, 0].cpu().tolist()
+            != [resident_expected_misses] * request_batch
+        ):
+            raise AssertionError(
+                "sharded resident finalize emitted an incorrect miss count"
+            )
+        coordinated_selected_evicts = (
+            resident_union_workspace.shard_counts[:, :, 4].sum(dim=1).cpu().tolist()
+        )
         if coordinated_selected_evicts != [resident_selected_evicts] * request_batch:
             raise AssertionError(
                 "resident sharded finalize selected an incorrect evict prefix: "
@@ -1503,11 +1581,17 @@ def main(
     _summary("sharded-vector-map", sharded_vector_samples)
     _summary("sharded-vector-dedup", sharded_vector_dedup_samples)
     production_staged_mean = None
-    uses_sharded_operator = _sparse_index_op_name(mtp) == "npu_dsa_prepare_sparse_indices_sharded_"
+    uses_sharded_operator = (
+        _sparse_index_op_name(mtp) == "npu_dsa_prepare_sparse_indices_sharded_"
+    )
     production_label = (
         "production-sharded-single-row"
         if uses_sharded_operator and mtp == 1
-        else ("production-sharded-sort" if uses_sharded_operator else "production-staged-sort")
+        else (
+            "production-sharded-sort"
+            if uses_sharded_operator
+            else "production-staged-sort"
+        )
     )
     if production_staged_samples:
         production_staged_mean = statistics.fmean(production_staged_samples)
@@ -1517,7 +1601,9 @@ def main(
     resident_end_to_end_mean = None
     if resident_union_samples:
         resident_union_mean = statistics.fmean(resident_union_samples)
-        resident_no_intersection_mean = statistics.fmean(resident_no_intersection_samples)
+        resident_no_intersection_mean = statistics.fmean(
+            resident_no_intersection_samples
+        )
         _summary(
             "resident-union-no-intersect",
             resident_no_intersection_samples,
@@ -1557,10 +1643,18 @@ def main(
         resident_update_mean = statistics.fmean(resident_update_samples)
         resident_plan_mean = statistics.fmean(resident_plan_samples)
         resident_coordinator_mean = statistics.fmean(resident_coordinator_samples)
-        resident_sharded_finalize_mean = statistics.fmean(resident_sharded_finalize_samples)
-        resident_coordinated_plan_mean = statistics.fmean(resident_coordinated_plan_samples)
+        resident_sharded_finalize_mean = statistics.fmean(
+            resident_sharded_finalize_samples
+        )
+        resident_coordinated_plan_mean = statistics.fmean(
+            resident_coordinated_plan_samples
+        )
         resident_isolated_sum = resident_finalize_mean + resident_update_mean
-        slower_stage = "finalize" if resident_finalize_mean >= resident_update_mean else "update+remap"
+        slower_stage = (
+            "finalize"
+            if resident_finalize_mean >= resident_update_mean
+            else "update+remap"
+        )
         print(
             "resident two-kernel breakdown: "
             f"finalize={resident_finalize_mean / resident_isolated_sum:.2%}, "
@@ -1597,7 +1691,9 @@ def main(
         _summary("staged-sort", sort_samples)
         _summary("sort-union", sort_union_only_samples)
         _summary("remap-only", remap_only_samples)
-    print(f"union overhead: {union_mean - legacy_mean:+.6f} ms ({(union_mean / legacy_mean - 1) * 100:+.2f}%)")
+    print(
+        f"union overhead: {union_mean - legacy_mean:+.6f} ms ({(union_mean / legacy_mean - 1) * 100:+.2f}%)"
+    )
     if pair_baselines:
         print(
             "staged hash union cost: "
@@ -1700,7 +1796,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resident-only",
         action="store_true",
-        help=("deprecated compatibility redirect to benchmark_resident_sparse_cache.py"),
+        help=(
+            "deprecated compatibility redirect to benchmark_resident_sparse_cache.py"
+        ),
     )
     args = parser.parse_args()
     if args.production_only and args.resident_only:

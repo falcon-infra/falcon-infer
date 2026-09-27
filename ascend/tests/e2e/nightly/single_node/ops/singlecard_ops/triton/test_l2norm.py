@@ -3,8 +3,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from vllm_ascend.ops.triton.fla.l2norm import l2norm_fwd
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.model_executor.layers.ascend.triton.fla.l2norm import l2norm_fwd
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 
 @pytest.mark.parametrize(

@@ -10,19 +10,15 @@ from vllm.config import CUDAGraphMode
 from vllm.forward_context import BatchDescriptor
 from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig, KVCacheGroupSpec, KVCacheTensor
 
-import vllm_ascend.worker.model_runner_v1 as model_runner_module
-from vllm_ascend.ascend_forward_context import (
-    STAGED_SFA_SINGLETON_GRAPH_KEY,
-    StagedSFAGraphKey,
-    StagedSFAQueryProfile,
-)
-from vllm_ascend.attention.attention_v1 import AscendAttentionState
-from vllm_ascend.utils import (
-    StagedSFARouteAction,
-    StagedSFARouteReason,
-)
-from vllm_ascend.worker.block_table import MultiGroupBlockTable
-from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+import vllm.v1.worker.npu_model_runner as model_runner_module
+from vllm.ascend_forward_context import STAGED_SFA_SINGLETON_GRAPH_KEY
+from vllm.ascend_forward_context import StagedSFAGraphKey
+from vllm.ascend_forward_context import StagedSFAQueryProfile
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
+from vllm.utils.ascend import StagedSFARouteAction
+from vllm.utils.ascend import StagedSFARouteReason
+from vllm.v1.worker.npu_block_table import MultiGroupBlockTable
+from vllm.v1.worker.npu_model_runner import NPUModelRunner
 
 
 class TestColdPerfSampleTiming(unittest.TestCase):
@@ -2502,23 +2498,15 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 "staged_sfa_graph_configured",
                 return_value=True,
             ),
-            patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
+            nullcontext(),
+            nullcontext(),
             patch.object(
                 runner,
                 "_reset_staged_sfa_startup_capture",
                 side_effect=lambda: calls.append("reset"),
             ),
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
                 side_effect=lambda _runner: calls.append("parent") or 123,
             ) as parent_capture,
@@ -2567,15 +2555,13 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 )
                 with (
                     patch.object(model_runner_module, "staged_sfa_graph_configured", return_value=mode != "nonstaged"),
-                    patch.object(model_runner_module, "_torch_cuda_wrapper", return_value=nullcontext()),
-                    patch.object(
-                        model_runner_module, "_replace_gpu_model_runner_function_wrapper", return_value=nullcontext()
-                    ),
+                    nullcontext(),
+                    nullcontext(),
                     patch.object(model_runner_module, "has_kv_transfer_group", return_value=True),
                     patch.object(model_runner_module, "get_kv_transfer_group", return_value=connector),
                     patch.object(model_runner_module.envs_ascend, "VLLM_ASCEND_MTP_DRAFT_DEBUG", False),
                     patch.object(runner, "_reset_staged_sfa_startup_capture"),
-                    patch.object(model_runner_module.GPUModelRunner, "capture_model", return_value=123),
+                    patch.object(model_runner_module.NPUModelRunnerState, "capture_model", return_value=123),
                     patch.object(runner, "_collect_staged_sfa_impls", return_value=(("layer", impl),)),
                     patch.object(
                         model_runner_module.ACLGraphWrapper,
@@ -2614,22 +2600,14 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 "staged_sfa_graph_capture_sizes",
                 return_value=(2, 4),
             ),
-            patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
+            nullcontext(),
+            nullcontext(),
             patch.object(
                 runner,
                 "_reset_staged_sfa_startup_capture",
             ),
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
                 return_value=123,
             ),
@@ -2675,19 +2653,11 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 "VLLM_ASCEND_MTP_DRAFT_DEBUG",
                 True,
             ),
-            patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
+            nullcontext(),
+            nullcontext(),
             patch.object(runner, "_reset_staged_sfa_startup_capture"),
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
                 return_value=123,
             ),
@@ -2749,19 +2719,11 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
             ),
         )
         with (
-            patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
+            nullcontext(),
+            nullcontext(),
             patch.object(runner, "_reset_staged_sfa_startup_capture"),
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
                 return_value=0,
             ),
@@ -2785,22 +2747,14 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 "staged_sfa_graph_configured",
                 return_value=True,
             ),
-            patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
+            nullcontext(),
+            nullcontext(),
             patch.object(
                 runner,
                 "_reset_staged_sfa_startup_capture",
             ),
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
                 side_effect=RuntimeError("capture failed"),
             ) as parent_capture,
@@ -2830,7 +2784,7 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
                 "_reset_staged_sfa_startup_capture",
             ) as reset,
             patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "capture_model",
             ) as parent_capture,
             self.assertRaisesRegex(
@@ -2846,18 +2800,10 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
     def test_graph_memory_profile_resets_temporary_capture_state(self):
         runner = self._build_runner()
         with (
+            nullcontext(),
+            nullcontext(),
             patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "profile_cudagraph_memory",
                 side_effect=lambda _runner: (
                     self.assertTrue(runner._profiling_cudagraph_memory)
@@ -2890,18 +2836,10 @@ class TestStagedSFAStartupCaptureValidation(unittest.TestCase):
             keys_initialized=True,
         )
         with (
+            nullcontext(),
+            nullcontext(),
             patch.object(
-                model_runner_module,
-                "_torch_cuda_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module,
-                "_replace_gpu_model_runner_function_wrapper",
-                return_value=nullcontext(),
-            ),
-            patch.object(
-                model_runner_module.GPUModelRunner,
+                model_runner_module.NPUModelRunnerState,
                 "profile_cudagraph_memory",
                 side_effect=RuntimeError("profile failed"),
             ),

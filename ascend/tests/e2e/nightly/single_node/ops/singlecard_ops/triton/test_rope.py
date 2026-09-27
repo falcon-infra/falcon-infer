@@ -3,8 +3,9 @@ import gc
 import pytest
 import torch
 
-from vllm_ascend.ops.triton.rope import rope_forward_triton, rope_forward_triton_siso
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.model_executor.layers.ascend.triton.rope import rope_forward_triton
+from vllm.model_executor.layers.ascend.triton.rope import rope_forward_triton_siso
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 IS_NEOX_STYLE = [True, False]
 DTYPES = [torch.bfloat16, torch.float16]

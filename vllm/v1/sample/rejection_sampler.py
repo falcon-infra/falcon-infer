@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+
 from collections.abc import Sequence
 from dataclasses import replace
 
@@ -8,6 +9,7 @@ import torch
 import torch.nn as nn
 
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.v1.outputs import LogprobsLists, LogprobsTensors, SamplerOutput
 from vllm.v1.sample.logits_processor.builtin import MinTokensLogitsProcessor
@@ -363,6 +365,21 @@ def rejection_sample(
     bonus_token_ids: torch.Tensor,
     sampling_metadata: SamplingMetadata,
 ) -> torch.Tensor:
+    if current_platform.is_npu():
+        from vllm.v1.sample.ascend.rejection_sampler import (
+            rejection_sample as native_impl,
+        )
+
+        return native_impl(
+            draft_token_ids=draft_token_ids,
+            num_draft_tokens=num_draft_tokens,
+            max_spec_len=max_spec_len,
+            cu_num_draft_tokens=cu_num_draft_tokens,
+            draft_probs=draft_probs,
+            target_logits=target_logits,
+            bonus_token_ids=bonus_token_ids,
+            sampling_metadata=sampling_metadata,
+        )
     assert draft_token_ids.ndim == 1
     assert draft_probs is None or draft_probs.ndim == 2
     assert cu_num_draft_tokens.ndim == 1
@@ -469,6 +486,16 @@ def apply_sampling_constraints(
         torch.Tensor: Processed logits if non-greedy sampling is used,
         otherwise returns the original logits.
     """
+    if current_platform.is_npu():
+        from vllm.v1.sample.ascend.rejection_sampler import (
+            apply_sampling_constraints as native_impl,
+        )
+
+        return native_impl(
+            logits=logits,
+            cu_num_draft_tokens=cu_num_draft_tokens,
+            sampling_metadata=sampling_metadata,
+        )
     assert logits.ndim == 2
     assert cu_num_draft_tokens.ndim == 1
     if sampling_metadata.all_greedy:
@@ -532,6 +559,18 @@ def expand_batch_to_tokens(
     Returns:
         expanded_x: [num_tokens] tensor.
     """
+    if current_platform.is_npu():
+        from vllm.v1.sample.ascend.rejection_sampler import (
+            expand_batch_to_tokens as native_impl,
+        )
+
+        return native_impl(
+            x=x,
+            cu_num_tokens=cu_num_tokens,
+            num_tokens=num_tokens,
+            replace_from=replace_from,
+            replace_to=replace_to,
+        )
     batch_size = x.shape[0]
     assert cu_num_tokens.shape[0] == batch_size
     expanded_x = x.new_empty(num_tokens)

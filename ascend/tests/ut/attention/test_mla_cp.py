@@ -5,12 +5,13 @@ from vllm.distributed.parallel_state import GroupCoordinator
 
 from tests.ut.attention.utils import patch_distributed_groups
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_config import init_ascend_config
-from vllm_ascend.attention.attention_v1 import AscendAttentionState
-from vllm_ascend.attention.context_parallel.common_cp import (
-    CPChunkedContextMetadata, _npu_attention_update, _process_attn_out_lse)
-from vllm_ascend.attention.context_parallel.mla_cp import AscendMlaCPImpl
-from vllm_ascend.attention.mla_v1 import ChunkedContextMetadata
+from vllm.config.ascend import init_ascend_config
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
+from vllm.v1.attention.backends.ascend.context_parallel.common_cp import CPChunkedContextMetadata
+from vllm.v1.attention.backends.ascend.context_parallel.common_cp import _npu_attention_update
+from vllm.v1.attention.backends.ascend.context_parallel.common_cp import _process_attn_out_lse
+from vllm.v1.attention.backends.ascend.context_parallel.mla_cp import AscendMlaCPImpl
+from vllm.v1.attention.backends.ascend.mla_v1 import ChunkedContextMetadata
 
 
 def get_pcp_split_info(pcp_rank, pcp_size, seq_lens):
@@ -170,8 +171,8 @@ class TestAscendMLAImpl(TestBase):
            new_callable=lambda: MagicMock(spec=GroupCoordinator))
     @patch("vllm.distributed.get_tensor_model_parallel_world_size",
            return_value=2)
-    @patch("vllm_ascend.attention.mla_v1.get_current_vllm_config")
-    @patch("vllm_ascend.attention.mla_v1.get_ascend_config")
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_current_vllm_config")
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_ascend_config")
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
     def setUp(self, ascend_config, get_current_vllm_config, mock_get_tp_size,
               mock_tp):
@@ -253,7 +254,7 @@ class TestAscendMLAImpl(TestBase):
         self.assertEqual(self.impl.dcp_size, 2)
 
     @patch("torch.ops.vllm.maybe_all_gather_and_maybe_unpad")
-    @patch("vllm_ascend.attention.mla_v1.get_weight_prefetch_method",
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_weight_prefetch_method",
            return_value=MagicMock())
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
     def test_mla_preprocess_dcp(self, mock_get_weight_prefetch_method,
@@ -329,7 +330,7 @@ class TestAscendMLAImpl(TestBase):
 
     @patch('torch_npu._npu_reshape_and_cache')
     @patch("torch.ops.vllm.maybe_all_gather_and_maybe_unpad")
-    @patch("vllm_ascend.attention.mla_v1.get_weight_prefetch_method",
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_weight_prefetch_method",
            return_value=MagicMock())
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
     def test_mla_preprocess_pcp(self, mock_get_weight_prefetch_method,
@@ -454,7 +455,7 @@ class TestAscendMLAImpl(TestBase):
         self.assertEqual(result.shape[1], N)
         self.assertEqual(result.shape[2], self.impl.kv_lora_rank + 1)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch("torch_npu.npu_fused_infer_attention_score")
     @patch('torch_npu.npu_attention_update')
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
@@ -740,10 +741,10 @@ class TestAscendMLAImpl(TestBase):
             assert torch.allclose(lse, expected_lse)
 
     @patch('torch_npu.npu_attention_update')
-    @patch('vllm_ascend.attention.context_parallel.common_cp.get_pcp_group')
+    @patch('vllm.v1.attention.backends.ascend.context_parallel.common_cp.get_pcp_group')
     @patch('vllm.distributed.parallel_state._PCP',
            new_callable=lambda: MagicMock(spec=GroupCoordinator))
-    @patch('vllm_ascend.attention.context_parallel.common_cp.get_dcp_group')
+    @patch('vllm.v1.attention.backends.ascend.context_parallel.common_cp.get_dcp_group')
     @patch('vllm.distributed.parallel_state._DCP',
            new_callable=lambda: MagicMock(spec=GroupCoordinator))
     def test_npu_attention_update_with_dcp_pcp(self, mock_dcp,

@@ -32,30 +32,28 @@ from vllm.platforms.interface import Platform, PlatformEnum
 # todo: please remove it when solve cuda hard code in vllm
 os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
-import vllm_ascend.envs as envs_ascend
-from vllm_ascend.ascend_config import init_ascend_config
+import vllm.envs_ascend as envs_ascend
+from vllm.config.ascend import init_ascend_config
 
 # isort: off
-from vllm_ascend.utils import (
-    ASCEND_QUANTIZATION_METHOD,
-    COMPILATION_PASS_KEY,
-    COMPRESSED_TENSORS_METHOD,
-    AscendDeviceType,
-    check_kv_extra_config,
-    flashcomm2_enable,
-    get_ascend_device_type,
-    is_moe_model,
-    refresh_block_size,
-    staged_sfa_graph_configured,
-    update_aclgraph_sizes,
-    update_cudagraph_capture_sizes,
-    is_310p,
-    enable_sp,
-)
+from vllm.utils.ascend import ASCEND_QUANTIZATION_METHOD
+from vllm.utils.ascend import COMPILATION_PASS_KEY
+from vllm.utils.ascend import COMPRESSED_TENSORS_METHOD
+from vllm.utils.ascend import AscendDeviceType
+from vllm.utils.ascend import check_kv_extra_config
+from vllm.utils.ascend import flashcomm2_enable
+from vllm.utils.ascend import get_ascend_device_type
+from vllm.utils.ascend import is_moe_model
+from vllm.utils.ascend import refresh_block_size
+from vllm.utils.ascend import staged_sfa_graph_configured
+from vllm.utils.ascend import update_aclgraph_sizes
+from vllm.utils.ascend import update_cudagraph_capture_sizes
+from vllm.utils.ascend import is_310p
+from vllm.utils.ascend import enable_sp
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
-    from vllm.utils import FlexibleArgumentParser
+    from vllm.utils.argparse_utils import FlexibleArgumentParser
 else:
     ModelConfig = None
     VllmConfig = None
@@ -110,23 +108,7 @@ class NPUPlatform(Platform):
 
     @classmethod
     def register_builtin_components(cls) -> None:
-        """Register packaged Ascend components in each engine/worker process.
-
-        Implementations keep their P1 namespaces during this migration, but
-        their initialization no longer depends on entry-point discovery or
-        VLLM_PLUGINS. Connector registration is lazy and does not import LMCache.
-        """
-        from vllm_ascend.distributed.kv_transfer import register_connector
-
-        register_connector()
-
-        from vllm_ascend.model_loader.netloader import register_netloader
-        from vllm_ascend.model_loader.rfork import register_rforkloader
-
-        register_netloader()
-        register_rforkloader()
-
-        from vllm_ascend.profiling_config import generate_service_profiling_config
+        from vllm.utils.ascend_profiling_config import generate_service_profiling_config
 
         generate_service_profiling_config()
 
@@ -149,7 +131,7 @@ class NPUPlatform(Platform):
         It will be registered as a custom pass under the current_platform.pass_key.
         """
         return (
-            "vllm_ascend.compilation.graph_fusion_pass_manager.GraphFusionPassManager"
+            "vllm.compilation.ascend.graph_fusion_pass_manager.GraphFusionPassManager"
         )
 
     @classmethod
@@ -158,38 +140,13 @@ class NPUPlatform(Platform):
         Get the custom compile backend. Previously, we used EagerAdaptor by default.
         To use graph fusion operations, we defined our own backend compiler.
         """
-        return "vllm_ascend.compilation.compiler_interface.AscendCompiler"
+        return "vllm.compilation.ascend.compiler_interface.AscendCompiler"
 
     @classmethod
     def pre_register_and_update(
         cls, parser: FlexibleArgumentParser | None = None
     ) -> None:
-        # Adapt the global patch here.
-        from vllm_ascend.utils import adapt_patch
-
-        adapt_patch(is_global_patch=True)
-
-        # For online serving, "ascend" quantization method is not a choice natively,
-        # so we need to add "ascend" quantization method to quantization methods list
-        # and the user can enable quantization using "vllm serve --quantization ascend".
-        if parser is not None:
-            quant_action = parser._option_string_actions.get("--quantization")
-            if (
-                quant_action
-                and hasattr(quant_action, "choices")
-                and quant_action.choices
-            ):
-                if ASCEND_QUANTIZATION_METHOD not in quant_action.choices:
-                    quant_action.choices.append(ASCEND_QUANTIZATION_METHOD)
-
-        if not is_310p():
-            from vllm_ascend.quantization import (  # noqa: F401
-                AscendCompressedTensorsConfig,
-                AscendModelSlimConfig,
-            )
-        else:
-            from vllm_ascend._310p.quantization import AscendModelSlimConfig310  # noqa: F401
-
+        # Platform, quantization and component factories are declared in-tree.
         config_deprecated_logging()
 
     @classmethod
@@ -240,7 +197,7 @@ class NPUPlatform(Platform):
         """Apply Ascend-specific defaults. Set sp_min_token_num=1 when enable_sp and not set."""
         pass_config = vllm_config.compilation_config.pass_config
         if pass_config.enable_sp and pass_config.sp_min_token_num is None:
-            from vllm_ascend.compilation.passes.sequence_parallelism import (
+            from vllm.compilation.ascend.passes.sequence_parallelism import (
                 get_sp_min_token_num,
             )
 
@@ -298,7 +255,9 @@ class NPUPlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
-        from vllm_ascend.quantization.utils import maybe_auto_detect_quantization
+        from vllm.model_executor.layers.quantization.ascend.utils import (
+            maybe_auto_detect_quantization,
+        )
 
         if vllm_config.model_config is not None:
             maybe_auto_detect_quantization(vllm_config)
@@ -516,17 +475,17 @@ class NPUPlatform(Platform):
                 parallel_config.all2all_backend = "flashinfer_all2allv"
             if is_310p():
                 parallel_config.worker_cls = (
-                    "vllm_ascend._310p.worker_310p.NPUWorker310"
+                    "vllm.platforms.ascend_310p.worker_310p.NPUWorker310"
                 )
             elif ascend_config.xlite_graph_config.enabled:
                 logger.info(
                     "openEuler Xlite enabled. See: https://atomgit.com/openeuler/GVirt/tree/master/xlite"
                 )
                 parallel_config.worker_cls = (
-                    "vllm_ascend.xlite.xlite_worker.XliteWorker"
+                    "vllm.compilation.xlite.xlite_worker.XliteWorker"
                 )
             else:
-                parallel_config.worker_cls = "vllm_ascend.worker.worker.NPUWorker"
+                parallel_config.worker_cls = "vllm.v1.worker.npu_worker.NPUWorker"
 
         refresh_block_size(vllm_config)
 
@@ -535,17 +494,25 @@ class NPUPlatform(Platform):
             compilation_config.custom_ops = ["all"]
 
         if ascend_config.recompute_scheduler_enable:
-            from vllm_ascend.core.recompute_scheduler import RecomputeSchedulerConfig
+            from vllm.v1.core.mc2_recovery import decoder_recovery_budget
 
-            recompute_scheduler_config = (
-                RecomputeSchedulerConfig.initialize_from_config(vllm_config)
+            scheduler = vllm_config.scheduler_config
+            suffix = (
+                "AsyncRecomputeScheduler"
+                if scheduler.async_scheduling
+                else "RecomputeScheduler"
             )
-            vllm_config.scheduler_config = recompute_scheduler_config
+            scheduler.scheduler_cls = "vllm.v1.core.sched.recompute_scheduler." + suffix
+            scheduler.mc2_recovery_token_budget = (
+                decoder_recovery_budget(vllm_config)
+                if is_moe_model(vllm_config)
+                else None
+            )
 
         # Extend original scheduler_config to use SchedulerDynamicBatch.
         if ascend_config.SLO_limits_for_dynamic_batch != -1:
             vllm_config.scheduler_config.scheduler_cls = (
-                "vllm_ascend.core.scheduler_dynamic_batch.SchedulerDynamicBatch"
+                "vllm.v1.core.sched.dynamic_batch_scheduler.SchedulerDynamicBatch"
             )
             vllm_config.scheduler_config.enable_chunked_prefill = True
             vllm_config.scheduler_config.SLO_limits_for_dynamic_batch = (
@@ -645,12 +612,12 @@ class NPUPlatform(Platform):
 
     @classmethod
     def import_kernels(cls) -> None:
-        # Directly importing vllm_ascend_C prevents ASCEND_RT_VISIBLE_DEVICES
+        # Directly importing _ascend_C prevents ASCEND_RT_VISIBLE_DEVICES
         # from being applied during runtime initialization, which causes bugs
         # in the RL module. Therefore, we currently use lazy initialization
         # to avoid this issue. See https://github.com/vllm-project/vllm-ascend/pull/884.
         # TODO: when the above issue is fixed, we can uncomment the following lines.
-        # from vllm_ascend.utils import enable_custom_op
+        # from vllm.utils.ascend import enable_custom_op
         # enable_custom_op()
         # set custom ops path
         global _CUSTOM_OP_REGISTERED
@@ -658,9 +625,9 @@ class NPUPlatform(Platform):
             return
         # Native libraries still live in the packaged Ascend resource directory.
         # Do not anchor them to this relocated platform or resolve editable links.
-        import vllm_ascend
+        import vllm
 
-        CUR_DIR = os.path.dirname(os.path.abspath(vllm_ascend.__file__))
+        CUR_DIR = os.path.dirname(os.path.abspath(vllm.__file__))
         CUSTOM_OPP_PATH = os.path.join(
             CUR_DIR, "_cann_ops_custom", "vendors", "vllm-ascend"
         )
@@ -681,15 +648,18 @@ class NPUPlatform(Platform):
         key = (attn_selector_config.use_mla, attn_selector_config.use_sparse)
 
         backend_map = {
-            (True, False): "vllm_ascend.attention.mla_v1.AscendMLABackend",
-            (False, False): "vllm_ascend.attention.attention_v1.AscendAttentionBackend",
-            (True, True): "vllm_ascend.attention.sfa_v1.AscendSFABackend",
+            (True, False): "vllm.v1.attention.backends.ascend.mla_v1.AscendMLABackend",
+            (
+                False,
+                False,
+            ): "vllm.v1.attention.backends.ascend.attention_v1.AscendAttentionBackend",
+            (True, True): "vllm.v1.attention.backends.ascend.sfa_v1.AscendSFABackend",
         }
         backend_map_310 = {
             (
                 False,
                 False,
-            ): "vllm_ascend._310p.attention.attention_v1.AscendAttentionBackend310",
+            ): "vllm.platforms.ascend_310p.attention.attention_v1.AscendAttentionBackend310",
             # TODO If MLA/SFA is supported in the future, consider implementing the logic described in these comments.
             # (True, False): "...AscendMLABackend310",
             # (True, True):  "...AscendSFABackend310",
@@ -702,7 +672,7 @@ class NPUPlatform(Platform):
 
     @classmethod
     def get_punica_wrapper(cls) -> str:
-        return "vllm_ascend.lora.punica_npu.PunicaWrapperNPU"
+        return "vllm.lora.ascend.punica_npu.PunicaWrapperNPU"
 
     @classmethod
     def get_current_memory_usage(
@@ -713,7 +683,7 @@ class NPUPlatform(Platform):
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
-        return "vllm_ascend.distributed.device_communicators.npu_communicator.NPUCommunicator"
+        return "vllm.distributed.device_communicators.npu_communicator.NPUCommunicator"
 
     @classmethod
     def is_pin_memory_available(cls):
@@ -728,7 +698,7 @@ class NPUPlatform(Platform):
         """
         Get piecewise backend class for piecewise graph.
         """
-        return "vllm_ascend.compilation.acl_graph.ACLGraphWrapper"  # noqa
+        return "vllm.compilation.ascend.acl_graph.ACLGraphWrapper"  # noqa
 
     @classmethod
     def support_hybrid_kv_cache(cls) -> bool:
@@ -773,11 +743,11 @@ class NPUPlatform(Platform):
             dict[str, Any]: _description_
         """
         # NOTE(Ronald1995): avoid circular import.
-        from vllm_ascend.ascend_forward_context import (
-            get_mc2_mask,
-            select_moe_comm_method,
+        from vllm.ascend_forward_context import get_mc2_mask
+        from vllm.ascend_forward_context import select_moe_comm_method
+        from vllm.model_executor.layers.ascend.fused_moe.moe_comm_method import (
+            get_moe_comm_method,
         )
-        from vllm_ascend.ops.fused_moe.moe_comm_method import get_moe_comm_method
         from vllm.distributed import get_dp_group, get_tensor_model_parallel_world_size
 
         # NOTE(Ronald1995): avoid circular import, cudagraph_runtime_mode is

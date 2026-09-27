@@ -23,7 +23,7 @@ class BuildAclnnTests(unittest.TestCase):
         self.root = Path(temporary.name) / "aclnn source"
         self.csrc = self.root / "csrc"
         (self.csrc / "third_party/catlass/include").mkdir(parents=True)
-        self.install_dir = self.root / "vllm_ascend/_cann_ops_custom"
+        self.install_dir = self.root / "vllm/_cann_ops_custom"
         self.installer_called = self.csrc / "installer-called"
         self.build_script = self.csrc / "build.sh"
         self.installer = self.csrc / "installer-fixture.sh"

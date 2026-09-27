@@ -51,9 +51,9 @@ class ResourcePaths(unittest.TestCase):
             compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"),
             namespace,
         )
-        package = ModuleType("vllm_ascend")
+        package = ModuleType("vllm")
         package.__file__ = str(installed)
-        self.enterContext(patch.dict(sys.modules, {"vllm_ascend": package}))
+        self.enterContext(patch.dict(sys.modules, {"vllm": package}))
         namespace["import_kernels"](None)
         return namespace, str(vendor)
 

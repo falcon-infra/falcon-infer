@@ -3,15 +3,13 @@
 import numpy as np
 import torch
 
-from vllm_ascend.attention.mtp_dw_diag import (
-    diagnostic_int_checksum,
-    diagnostic_values_to_list,
-    logical_to_physical_slots,
-    post_commit_sample_requests,
-    scheduled_decode_requests,
-    scratch_live_slot_aliases,
-    scratch_target_safety,
-)
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import diagnostic_int_checksum
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import diagnostic_values_to_list
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import logical_to_physical_slots
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import post_commit_sample_requests
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import scheduled_decode_requests
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import scratch_live_slot_aliases
+from vllm.v1.attention.backends.ascend.mtp_dw_diag import scratch_target_safety
 
 
 def test_scheduled_decode_requests_excludes_unscheduled_and_prefill() -> None:

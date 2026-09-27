@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import torch
 
-import vllm_ascend.ops.register_custom_ops  # noqa
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+import vllm.model_executor.layers.ascend.register_custom_ops  # noqa
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 NUM_TOKENS = [1, 8, 32]
 NUM_QKV_HEADS = [(6, 1), (8, 2)]

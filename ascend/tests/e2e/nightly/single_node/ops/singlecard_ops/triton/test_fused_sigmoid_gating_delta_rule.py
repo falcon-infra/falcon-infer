@@ -3,8 +3,7 @@ import torch
 from vllm.model_executor.layers.fla.ops import fused_recurrent_gated_delta_rule
 from vllm.model_executor.models.qwen3_next import fused_gdn_gating
 
-from vllm_ascend.ops.triton.fla.sigmoid_gating import \
-    fused_sigmoid_gating_delta_rule_update
+from vllm.model_executor.layers.ascend.triton.fla.sigmoid_gating import fused_sigmoid_gating_delta_rule_update
 
 
 def test_triton_fusion_ops():

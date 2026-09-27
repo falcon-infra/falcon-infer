@@ -7,12 +7,12 @@ import torch
 from vllm import config
 
 from tests.ut.base import TestBase
-from vllm_ascend import ascend_config
-from vllm_ascend.distributed import parallel_state
-from vllm_ascend.ops.linear import (AscendMergedColumnParallelLinear,
-                                    AscendReplicatedLinear,
-                                    AscendRowParallelLinear,
-                                    AscendUnquantizedLinearMethod)
+from vllm.config import ascend as ascend_config
+from vllm.distributed.ascend import parallel_state
+from vllm.model_executor.layers.ascend.linear import AscendMergedColumnParallelLinear
+from vllm.model_executor.layers.ascend.linear import AscendReplicatedLinear
+from vllm.model_executor.layers.ascend.linear import AscendRowParallelLinear
+from vllm.model_executor.layers.ascend.linear import AscendUnquantizedLinearMethod
 
 
 class BaseLinearTest(unittest.TestCase):
@@ -30,20 +30,20 @@ class BaseLinearTest(unittest.TestCase):
         self.mock_ascend_config.finegrained_tp_config.mlp_tensor_parallel_size = 2
 
         self.patches = [
-            patch("vllm_ascend.ascend_config.get_ascend_config",
+            patch("vllm.config.ascend.get_ascend_config",
                   return_value=self.mock_ascend_config),
-            patch("vllm_ascend.distributed.parallel_state.get_otp_group",
+            patch("vllm.distributed.ascend.parallel_state.get_otp_group",
                   return_value=self.mock_group),
-            patch("vllm_ascend.distributed.parallel_state.get_mlp_tp_group",
+            patch("vllm.distributed.ascend.parallel_state.get_mlp_tp_group",
                   return_value=self.mock_group),
-            patch("vllm_ascend.ops.linear_op.get_tp_group",
+            patch("vllm.model_executor.layers.ascend.linear_op.get_tp_group",
                   return_value=self.mock_group),
             patch(
                 "vllm.distributed.parallel_state.get_tp_group",
                 return_value=self.mock_group,
             ),
-            patch("vllm_ascend.utils.mlp_tp_enable", return_value=True),
-            patch("vllm_ascend.utils.oproj_tp_enable", return_value=True)
+            patch("vllm.utils.ascend.mlp_tp_enable", return_value=True),
+            patch("vllm.utils.ascend.oproj_tp_enable", return_value=True)
         ]
 
         for p in self.patches:
@@ -83,7 +83,7 @@ class TestAscendUnquantizedLinearMethod(TestBase):
 
 class TestAscendRowParallelLinear(BaseLinearTest):
 
-    @patch("vllm_ascend.ops.linear_op.get_weight_prefetch_method",
+    @patch("vllm.model_executor.layers.ascend.linear_op.get_weight_prefetch_method",
            return_value=MagicMock())
     def test_mlp_optimize(self, mock_get_weight_prefetch_method):
 
@@ -102,7 +102,7 @@ class TestAscendRowParallelLinear(BaseLinearTest):
         input_tensor = torch.randn(16, 8)
         linear(input_tensor)
 
-    @patch("vllm_ascend.ops.linear_op.get_weight_prefetch_method",
+    @patch("vllm.model_executor.layers.ascend.linear_op.get_weight_prefetch_method",
            return_value=MagicMock())
     def test_oproj_tp(self, mock_get_weight_prefetch_method):
 

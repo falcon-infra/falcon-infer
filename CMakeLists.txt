@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.26.1)
-project(vllm_ascend_unified LANGUAGES C CXX)
+project(vllm_npu_unified LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(PYBIND11_FINDPYTHON ON)

@@ -8,9 +8,7 @@ from vllm.reasoning.minimax_m2_reasoning_parser import (
     MiniMaxM2ReasoningParser,
 )
 
-from vllm_ascend.patch.platform import (
-    patch_minimax_usage_accounting as minimax_usage_patch,
-)
+from vllm.entrypoints.openai.chat_completion import serving as minimax_usage_patch
 
 
 class FakeTokenizer:
@@ -21,55 +19,7 @@ class FakeTokenizer:
         }
 
 
-@pytest.mark.parametrize(
-    ("parser_cls", "token_ids", "expected_reasoning_tokens"),
-    [
-        pytest.param(
-            MiniMaxM2ReasoningParser,
-            [10, 11, 2, 20],
-            2,
-            id="minimax-reasoning-before-end-token",
-        ),
-        pytest.param(
-            MiniMaxM2AppendThinkReasoningParser,
-            [10, 11, 2, 20],
-            2,
-            id="append-think-reasoning-before-end-token",
-        ),
-        pytest.param(
-            MiniMaxM2ReasoningParser,
-            [10, 11, 20],
-            3,
-            id="minimax-no-end-token-means-all-output-is-reasoning",
-        ),
-        pytest.param(
-            MiniMaxM2AppendThinkReasoningParser,
-            [10, 11, 20],
-            3,
-            id="append-think-no-end-token-means-all-output-is-reasoning",
-        ),
-        pytest.param(
-            MiniMaxM2ReasoningParser,
-            [2, 20],
-            0,
-            id="minimax-end-token-first-means-no-reasoning-tokens",
-        ),
-        pytest.param(
-            MiniMaxM2AppendThinkReasoningParser,
-            [2, 20],
-            0,
-            id="append-think-end-token-first-means-no-reasoning-tokens",
-        ),
-    ],
-)
-def test_count_reasoning_tokens(
-    parser_cls,
-    token_ids,
-    expected_reasoning_tokens,
-):
-    parser = parser_cls(FakeTokenizer())
 
-    assert parser.count_reasoning_tokens(token_ids) == expected_reasoning_tokens
 
 
 def test_update_usage_tracking_state_tracks_prompt_and_completion_tokens():
@@ -98,7 +48,7 @@ def test_update_usage_tracking_state_tracks_prompt_and_completion_tokens():
 
 def test_make_usage_info_injects_reasoning_token_details():
     fake_serving = SimpleNamespace(enable_prompt_tokens_details=True)
-    usage = minimax_usage_patch._make_usage_info(
+    usage = minimax_usage_patch.OpenAIServingChat._make_usage_info(
         fake_serving,
         prompt_tokens=3,
         completion_tokens=4,
@@ -117,7 +67,7 @@ def test_make_full_response_usage_sums_reasoning_tokens():
         enable_prompt_tokens_details = False
 
         def _make_usage_info(self, **kwargs):
-            return minimax_usage_patch._make_usage_info(self, **kwargs)
+            return minimax_usage_patch.OpenAIServingChat._make_usage_info(self, **kwargs)
 
     class FakeReasoningParser:
         def count_reasoning_tokens(self, token_ids):

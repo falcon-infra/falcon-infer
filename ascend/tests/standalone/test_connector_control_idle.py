@@ -31,7 +31,7 @@ def method(file, name):
 
 
 def test_active_scheduling_never_queries_connector_control():
-    has_requests = method(ROOT / "vllm_ascend/core/recompute_scheduler.py", "has_requests")
+    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
     obj = NS(
         has_unfinished_requests=lambda: True,
         has_finished_requests=lambda: pytest.fail("active path consulted cleanup"),
@@ -52,10 +52,10 @@ def test_idle_work_follows_the_actual_multi_connector_release_queue():
         "has_pending_control",
     )
     multi_pending = method(
-        root / "vllm/ascend/vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py",
+        root / "vllm/vllm/distributed/kv_transfer/ascend/ascend_multi_connector.py",
         "has_pending_control",
     )
-    has_requests = method(ROOT / "vllm_ascend/core/recompute_scheduler.py", "has_requests")
+    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
     impl = NS(_checkpoint_restore_releases=[("r", 1, 7)])
     impl.has_pending_control = lambda: impl_pending(impl)
     child = NS(_lmcache_engine=impl)
@@ -73,7 +73,7 @@ def test_idle_work_follows_the_actual_multi_connector_release_queue():
 
 
 def test_idle_scheduler_without_connector_remains_idle():
-    has_requests = method(ROOT / "vllm_ascend/core/recompute_scheduler.py", "has_requests")
+    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
     assert not has_requests(
         NS(
             connector=None,
@@ -91,7 +91,7 @@ def scheduler_type(request):
         (vllm / "interface.py", {"SchedulerInterface"}),
         (vllm / "scheduler.py", {"Scheduler"}),
         (vllm / "async_scheduler.py", {"AsyncScheduler"}),
-        (ROOT / "vllm_ascend/core/recompute_scheduler.py", {"RecomputeScheduler", "AsyncRecomputeScheduler"}),
+        (ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", {"RecomputeScheduler", "AsyncRecomputeScheduler"}),
     ]
     nodes = []
     for path, names in sources:

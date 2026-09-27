@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.quantization.methods.w8a8_static import AscendW8A8LinearMethod310
+from vllm.platforms.ascend_310p.quantization.methods.w8a8_static import AscendW8A8LinearMethod310
 
 
 class TestAscendW8A8LinearMethod310(TestBase):

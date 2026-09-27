@@ -17,10 +17,12 @@ from unittest.mock import patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.sample.rejection_sampler import (
-    expand_batch_to_tokens, expand_pytorch, rejection_greedy_sample_pytorch,
-    rejection_random_sample_block_verify_pytorch,
-    rejection_random_sample_pytorch, sample_recovered_tokens_pytorch)
+from vllm.v1.sample.ascend.rejection_sampler import expand_batch_to_tokens
+from vllm.v1.sample.ascend.rejection_sampler import expand_pytorch
+from vllm.v1.sample.ascend.rejection_sampler import rejection_greedy_sample_pytorch
+from vllm.v1.sample.ascend.rejection_sampler import rejection_random_sample_block_verify_pytorch
+from vllm.v1.sample.ascend.rejection_sampler import rejection_random_sample_pytorch
+from vllm.v1.sample.ascend.rejection_sampler import sample_recovered_tokens_pytorch
 
 # Global constants
 PLACEHOLDER_TOKEN_ID = -1
@@ -218,8 +220,8 @@ class TestAscendRejectionSampler(TestBase):
         cu_num_tokens = torch.tensor([2, 5, 7])
         num_tokens = 7
         # Test PyTorch path
-        with patch("vllm_ascend.sample.rejection_sampler.HAS_TRITON", False):
-            with patch("vllm_ascend.sample.rejection_sampler.expand_pytorch"
+        with patch("vllm.v1.sample.ascend.rejection_sampler.HAS_TRITON", False):
+            with patch("vllm.v1.sample.ascend.rejection_sampler.expand_pytorch"
                        ) as mock_pytorch:
                 expand_batch_to_tokens(x, cu_num_tokens, num_tokens)
                 mock_pytorch.assert_called_once()
@@ -228,8 +230,8 @@ class TestAscendRejectionSampler(TestBase):
                 assert (args[2] == cu_num_tokens).all()
 
         # Test Triton kernel path
-        with patch("vllm_ascend.sample.rejection_sampler.HAS_TRITON", True):
-            with patch("vllm_ascend.sample.rejection_sampler.expand_triton"
+        with patch("vllm.v1.sample.ascend.rejection_sampler.HAS_TRITON", True):
+            with patch("vllm.v1.sample.ascend.rejection_sampler.expand_triton"
                        ) as mock_triton:
                 expand_batch_to_tokens(x, cu_num_tokens, num_tokens)
                 mock_triton.assert_called_once()
@@ -238,7 +240,7 @@ class TestAscendRejectionSampler(TestBase):
                 assert (call_args[3] == cu_num_tokens).all()
 
         # Run actual function
-        with patch("vllm_ascend.sample.rejection_sampler.HAS_TRITON", False):
+        with patch("vllm.v1.sample.ascend.rejection_sampler.HAS_TRITON", False):
             result = expand_batch_to_tokens(x, cu_num_tokens, num_tokens)
             expected = torch.tensor([10, 10, 20, 20, 20, 30, 30])
             assert torch.equal(result, expected)

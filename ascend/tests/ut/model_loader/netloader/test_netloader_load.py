@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vllm_ascend.model_loader.netloader.load import elastic_load
+from vllm.model_executor.model_loader.ascend.netloader.load import elastic_load
 
 
 @pytest.fixture
@@ -35,8 +35,8 @@ def mock_sources():
     ]
 
 
-@patch("vllm_ascend.model_loader.netloader.interaction.elastic.ElasticClient")
-@patch("vllm_ascend.model_loader.netloader.executor.elastic_load.P2PLoad")
+@patch("vllm.model_executor.model_loader.ascend.netloader.interaction.elastic.ElasticClient")
+@patch("vllm.model_executor.model_loader.ascend.netloader.executor.elastic_load.P2PLoad")
 def test_sources_this_device_empty(mock_p2p, mock_client):
     sources = [{"device_id": 1, "sources": ["c"]}]
     result = elastic_load("model", 0, "model_path", sources, 1, 1)
@@ -45,8 +45,8 @@ def test_sources_this_device_empty(mock_p2p, mock_client):
     mock_p2p.assert_not_called()
 
 
-@patch("vllm_ascend.model_loader.netloader.interaction.elastic.ElasticClient")
-@patch("vllm_ascend.model_loader.netloader.executor.elastic_load.P2PLoad")
+@patch("vllm.model_executor.model_loader.ascend.netloader.interaction.elastic.ElasticClient")
+@patch("vllm.model_executor.model_loader.ascend.netloader.executor.elastic_load.P2PLoad")
 def test_client_s_none(mock_p2p, mock_client, mock_sources):
     # Simulate ElasticClient.s as None
     mock_instance = MagicMock()
@@ -56,8 +56,8 @@ def test_client_s_none(mock_p2p, mock_client, mock_sources):
     assert result is None
 
 
-@patch("vllm_ascend.model_loader.netloader.interaction.elastic.ElasticClient")
-@patch("vllm_ascend.model_loader.netloader.executor.elastic_load.P2PLoad")
+@patch("vllm.model_executor.model_loader.ascend.netloader.interaction.elastic.ElasticClient")
+@patch("vllm.model_executor.model_loader.ascend.netloader.executor.elastic_load.P2PLoad")
 def test_client_ack_none(mock_p2p, mock_client, mock_sources):
     # Simulate ElasticClient.ack as None
     mock_instance = MagicMock()
@@ -68,15 +68,15 @@ def test_client_ack_none(mock_p2p, mock_client, mock_sources):
     assert result is None
 
 
-@patch("vllm_ascend.model_loader.netloader.load.P2PLoad")
-@patch("vllm_ascend.model_loader.netloader.load.logger")
+@patch("vllm.model_executor.model_loader.ascend.netloader.load.P2PLoad")
+@patch("vllm.model_executor.model_loader.ascend.netloader.load.logger")
 def test_model_load_fail(mock_logger, mock_p2p):
     mock_client = MagicMock()
     mock_client.s = True
     mock_client.ack = ["foo", "bar"]
     mock_client.server_addr = "addr"
 
-    with patch("vllm_ascend.model_loader.netloader.load.ElasticClient",
+    with patch("vllm.model_executor.model_loader.ascend.netloader.load.ElasticClient",
                return_value=mock_client):
         # P2PLoad.load returns None
         mock_p2p_instance = MagicMock()
@@ -89,15 +89,15 @@ def test_model_load_fail(mock_logger, mock_p2p):
         mock_logger.error.assert_called_once()
 
 
-@patch("vllm_ascend.model_loader.netloader.load.P2PLoad")
-@patch("vllm_ascend.model_loader.netloader.load.logger")
+@patch("vllm.model_executor.model_loader.ascend.netloader.load.P2PLoad")
+@patch("vllm.model_executor.model_loader.ascend.netloader.load.logger")
 def test_model_load_success(mock_logger, mock_p2p):
     mock_client = MagicMock()
     mock_client.s = True
     mock_client.ack = ["foo", "bar"]
     mock_client.server_addr = "addr"
 
-    with patch("vllm_ascend.model_loader.netloader.load.ElasticClient",
+    with patch("vllm.model_executor.model_loader.ascend.netloader.load.ElasticClient",
                return_value=mock_client):
         expected_model = object()
         mock_p2p_instance = MagicMock()

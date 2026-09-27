@@ -10,6 +10,7 @@ from vllm.platforms import current_platform
 logger = init_logger(__name__)
 
 QuantizationMethods = Literal[
+    "ascend",
     "awq",
     "fp8",
     "ptpc_fp8",
@@ -100,6 +101,27 @@ def register_quantization_config(quantization: str):
 
 
 def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
+
+    if current_platform.is_npu() and quantization in ("ascend", "compressed-tensors"):
+        from vllm.utils.ascend import is_310p
+
+        if quantization == "ascend":
+            if is_310p():
+                from vllm.platforms.ascend_310p.quantization.modelslim_config import (
+                    AscendModelSlimConfig310,
+                )
+
+                return AscendModelSlimConfig310
+            from vllm.model_executor.layers.quantization.ascend.modelslim_config import (
+                AscendModelSlimConfig,
+            )
+
+            return AscendModelSlimConfig
+        from vllm.model_executor.layers.quantization.ascend.compressed_tensors_config import (
+            AscendCompressedTensorsConfig,
+        )
+
+        return AscendCompressedTensorsConfig
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 

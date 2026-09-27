@@ -1,6 +1,6 @@
 # test_policy_abstract.py
-from vllm_ascend.eplb.core.policy.policy_abstract import (DynamicConfig,
-                                                          EplbPolicy)
+from vllm.distributed.eplb.ascend.core.policy.policy_abstract import DynamicConfig
+from vllm.distributed.eplb.ascend.core.policy.policy_abstract import EplbPolicy
 
 
 class DummyPolicy(EplbPolicy):

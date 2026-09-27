@@ -20,8 +20,8 @@ import torch
 from vllm.config import set_current_vllm_config
 from vllm.model_executor.layers.activation import QuickGELU, SiluAndMul
 
-from vllm_ascend.utils import AscendDeviceType
-from vllm_ascend.utils import is_310p as is_310p_hw
+from vllm.utils.ascend import AscendDeviceType
+from vllm.utils.ascend import is_310p as is_310p_hw
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_QuickGELU_forward(mock_gelu, dummy_tensor, default_vllm_config):
 
 
 @pytest.mark.skipif(is_310p_hw(), reason="non_310P device unittest case.")
-@patch("vllm_ascend.ops.activation.get_weight_prefetch_method",
+@patch("vllm.model_executor.layers.ascend.activation.get_weight_prefetch_method",
        return_value=MagicMock())
 @patch("torch_npu.npu_swiglu", side_effect=lambda x: x + 1)
 def test_SiluAndMul_forward(

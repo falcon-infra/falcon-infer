@@ -16,7 +16,7 @@
 import pytest
 import torch
 
-from vllm_ascend._310p.fused_moe.experts_selector import select_experts
+from vllm.platforms.ascend_310p.fused_moe.experts_selector import select_experts
 
 
 class TestExpertsSelector310:

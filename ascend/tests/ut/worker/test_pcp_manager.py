@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from vllm_ascend.worker.pcp_utils import PCPManager
+from vllm.v1.worker.npu_pcp_utils import PCPManager
 
 
 @pytest.mark.parametrize(

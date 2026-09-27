@@ -4,21 +4,19 @@ from pathlib import Path
 import pytest
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sorted_cache import (
-    INDEX_TOPK,
-    RESIDENT_FINALIZE_DEBUG_INTS,
-    RESIDENT_READ_PROBE_DEBUG_INTS,
-    allocate_sorted_resident_state,
-    allocate_sorted_resident_workspace,
-    debug_sorted_resident_finalize_only_,
-    prepare_resident_sharded_union_,
-    prepare_sorted_resident_cache_fused_,
-    prepare_sorted_resident_cache_no_remap_,
-    probe_sorted_resident_reads_,
-    remap_sorted_resident_cache_,
-    resident_shard_count,
-)
-from vllm_ascend.utils import enable_custom_op
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import INDEX_TOPK
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import RESIDENT_FINALIZE_DEBUG_INTS
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import RESIDENT_READ_PROBE_DEBUG_INTS
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import allocate_sorted_resident_state
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import allocate_sorted_resident_workspace
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import debug_sorted_resident_finalize_only_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import prepare_resident_sharded_union_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import prepare_sorted_resident_cache_fused_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import prepare_sorted_resident_cache_no_remap_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import probe_sorted_resident_reads_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import remap_sorted_resident_cache_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import resident_shard_count
+from vllm.utils.ascend import enable_custom_op
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -34,7 +32,7 @@ def _load_sorted_resident_ops():
         "npu_dsa_resident_sorted_finalize_debug_",
     ):
         if not hasattr(torch.ops._C_ascend, name):
-            pytest.fail(f"vllm_ascend_C does not contain {name}")
+            pytest.fail(f"vllm_C does not contain {name}")
 
 
 def _source(mtp: int, offset: int, requests: int = 1) -> torch.Tensor:

@@ -24,11 +24,11 @@ from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import ensure_model_parallel_initialized, init_distributed_environment
 from vllm.utils.system_utils import update_environment_variables
 
-import vllm_ascend.ops.register_custom_ops  # noqa
+import vllm.model_executor.layers.ascend.register_custom_ops  # noqa
 from tests.e2e.singlecard.compile.backend import TestBackend
-from vllm_ascend.ascend_forward_context import set_ascend_forward_context
-from vllm_ascend.compilation.passes.norm_quant_fusion_pass import AddRMSNormQuantFusionPass
-from vllm_ascend.utils import enable_custom_op
+from vllm.ascend_forward_context import set_ascend_forward_context
+from vllm.compilation.ascend.passes.norm_quant_fusion_pass import AddRMSNormQuantFusionPass
+from vllm.utils.ascend import enable_custom_op
 
 # Cache backend to avoid duplicate pattern registration
 _backend_cache = None

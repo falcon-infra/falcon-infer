@@ -20,8 +20,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vllm_ascend.model_loader.netloader.utils import (find_free_port,
-                                                      is_valid_path_prefix)
+from vllm.model_executor.model_loader.ascend.netloader.utils import find_free_port
+from vllm.model_executor.model_loader.ascend.netloader.utils import is_valid_path_prefix
 
 
 def test_find_free_port():

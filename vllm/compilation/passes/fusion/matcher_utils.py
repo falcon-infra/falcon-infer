@@ -26,29 +26,35 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
 from vllm.platforms import current_platform
 
-RMS_OP = torch.ops._C.rms_norm.default
-RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
-ROTARY_OP = torch.ops._C.rotary_embedding.default
-FLASHINFER_ROTARY_OP = torch.ops.vllm.flashinfer_rotary_embedding.default
+if not current_platform.is_npu():
+    RMS_OP = torch.ops._C.rms_norm.default
+    RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
+    ROTARY_OP = torch.ops._C.rotary_embedding.default
+    FLASHINFER_ROTARY_OP = torch.ops.vllm.flashinfer_rotary_embedding.default
 
-QUANT_OPS: dict[QuantKey, OpOverload] = {
-    kFp8StaticTensorSym: torch.ops._C.static_scaled_fp8_quant.default,  # noqa: E501
-    kFp8DynamicTensorSym: torch.ops._C.dynamic_scaled_fp8_quant.default,  # noqa: E501
-    kFp8DynamicTokenSym: torch.ops._C.dynamic_per_token_scaled_fp8_quant.default,  # noqa: E501
-}
+    QUANT_OPS: dict[QuantKey, OpOverload] = {
+        kFp8StaticTensorSym: torch.ops._C.static_scaled_fp8_quant.default,  # noqa: E501
+        kFp8DynamicTensorSym: torch.ops._C.dynamic_scaled_fp8_quant.default,  # noqa: E501
+        kFp8DynamicTokenSym: torch.ops._C.dynamic_per_token_scaled_fp8_quant.default,  # noqa: E501
+    }
 
-if current_platform.is_cuda() and hasattr(torch.ops._C, "scaled_fp4_quant"):
-    QUANT_OPS[kNvfp4Dynamic] = torch.ops._C.scaled_fp4_quant.out  # noqa: E501
+    if current_platform.is_cuda() and hasattr(torch.ops._C, "scaled_fp4_quant"):
+        QUANT_OPS[kNvfp4Dynamic] = torch.ops._C.scaled_fp4_quant.out  # noqa: E501
 
-if current_platform.is_cuda():
-    QUANT_OPS[kFp8Dynamic128Sym] = torch.ops._C.per_token_group_fp8_quant.default  # noqa: E501
-    QUANT_OPS[kFp8Dynamic64Sym] = torch.ops._C.per_token_group_fp8_quant.default  # noqa: E501
+    if current_platform.is_cuda():
+        QUANT_OPS[kFp8Dynamic128Sym] = torch.ops._C.per_token_group_fp8_quant.default  # noqa: E501
+        QUANT_OPS[kFp8Dynamic64Sym] = torch.ops._C.per_token_group_fp8_quant.default  # noqa: E501
 
-SILU_MUL_OP = torch.ops._C.silu_and_mul.default
+    SILU_MUL_OP = torch.ops._C.silu_and_mul.default
 
 
 class MatcherCustomOp(ABC):
     def __init__(self, enabled: bool) -> None:
+
+        if current_platform.is_npu():
+            raise RuntimeError(
+                "CUDA fusion matchers are not used by the native NPU compiler"
+            )
         config = get_current_vllm_config()
         self.model_dtype = config.model_config.dtype if config.model_config else None
         self.device = config.device_config.device if config.device_config else None

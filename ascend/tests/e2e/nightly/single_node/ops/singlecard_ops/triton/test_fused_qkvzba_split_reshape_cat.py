@@ -4,8 +4,7 @@ import torch
 from einops import rearrange
 from vllm.model_executor.models.qwen3_next import Qwen3NextGatedDeltaNet
 
-from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import \
-    fused_qkvzba_split_reshape_cat
+from vllm.model_executor.layers.ascend.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat
 
 
 def validate_cmp(y_cal, y_ref, dtype, device='npu'):

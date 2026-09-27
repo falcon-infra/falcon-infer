@@ -25,7 +25,6 @@ from typing import Any
 
 import torch
 
-
 DEFAULT_MODEL = "/workspace/models/GLM-5.1-w4a8"
 DEFAULT_DATASET_PATH = "/workspace/dataset/custom_32_context_64k.jsonl"
 DEFAULT_DATASET_NAME = "custom"
@@ -88,19 +87,6 @@ class RunConfig:
     correctness_baseline: bool
 
 
-def maybe_add_vllm_ascend_repo() -> None:
-    configured = os.getenv("VLLM_ASCEND_REPO")
-    candidates = []
-    if configured:
-        candidates.append(Path(configured))
-    candidates.append(Path(__file__).resolve().parent.parent / "vllm-ascend")
-
-    for candidate in candidates:
-        if (candidate / "vllm_ascend").is_dir():
-            sys.path.insert(0, str(candidate))
-            return
-
-
 def parse_json_dict(raw: str | None, name: str) -> dict[str, Any]:
     if raw is None or raw == "":
         return {}
@@ -123,9 +109,7 @@ def parse_args() -> RunConfig:
         help="GLM5.1 model path or HF id. Can also be set by GLM51_MODEL.",
     )
     parser.add_argument("--tp", type=int, default=int(os.getenv("TP_SIZE", "1")))
-    parser.add_argument(
-        "--max-model-len", "--max_model_len", type=int, default=70000
-    )
+    parser.add_argument("--max-model-len", "--max_model_len", type=int, default=70000)
     parser.add_argument("--max-num-seqs", "--max_num_seqs", type=int, default=64)
     parser.add_argument(
         "--max-num-batched-tokens",
@@ -248,14 +232,22 @@ def parse_args() -> RunConfig:
     argv = sys.argv[1:]
 
     def _arg_was_set(*names: str) -> bool:
-        return any(arg == name or arg.startswith(f"{name}=") for arg in argv for name in names)
+        return any(
+            arg == name or arg.startswith(f"{name}=") for arg in argv for name in names
+        )
 
     load_format = args.load_format
     hf_overrides_raw = args.hf_overrides
     if args.correctness_baseline:
-        if not _arg_was_set("--load-format", "--load_format") and "VLLM_LOAD_FORMAT" not in os.environ:
+        if (
+            not _arg_was_set("--load-format", "--load_format")
+            and "VLLM_LOAD_FORMAT" not in os.environ
+        ):
             load_format = "auto"
-        if not _arg_was_set("--hf-overrides", "--hf_overrides") and "VLLM_HF_OVERRIDES" not in os.environ:
+        if (
+            not _arg_was_set("--hf-overrides", "--hf_overrides")
+            and "VLLM_HF_OVERRIDES" not in os.environ
+        ):
             hf_overrides_raw = "{}"
 
     hf_overrides = parse_json_dict(hf_overrides_raw, "--hf-overrides")
@@ -388,7 +380,9 @@ def load_custom_dataset_prompts(
     return prompts
 
 
-def make_synthetic_prompts(model: str, target_tokens: int, batch_size: int) -> list[str]:
+def make_synthetic_prompts(
+    model: str, target_tokens: int, batch_size: int
+) -> list[str]:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
@@ -446,7 +440,10 @@ def run_generation(config: RunConfig) -> None:
             f"--prompt-tokens={config.prompt_tokens} must be > index_topk={index_topk} "
             "to exercise DSA latent shrink."
         )
-    if shrink_enabled and config.max_model_len <= config.prompt_tokens + config.max_tokens:
+    if (
+        shrink_enabled
+        and config.max_model_len <= config.prompt_tokens + config.max_tokens
+    ):
         raise RuntimeError(
             "--max-model-len must exceed prompt_tokens + max_tokens "
             f"({config.prompt_tokens + config.max_tokens})."
@@ -573,12 +570,8 @@ def run_cpu_simulation(config: RunConfig) -> None:
     )
     latent_prefill_bundles = _ceil_div(prompt_blocks, layout.latent_blocks_per_bundle)
     indexer_prefill_bundles = _ceil_div(prompt_blocks, layout.indexer_blocks_per_bundle)
-    keep_latent_blocks = _align_up(
-        scratch_blocks, layout.latent_blocks_per_bundle
-    )
-    keep_latent_bundles = _ceil_div(
-        keep_latent_blocks, layout.latent_blocks_per_bundle
-    )
+    keep_latent_blocks = _align_up(scratch_blocks, layout.latent_blocks_per_bundle)
+    keep_latent_bundles = _ceil_div(keep_latent_blocks, layout.latent_blocks_per_bundle)
 
     allocator = DSASharedBundleAllocator(layout)
     latent_bundles = allocator.allocate(
@@ -642,7 +635,7 @@ def run_cpu_simulation(config: RunConfig) -> None:
         raise RuntimeError("latent block table contains an unpinned/freed latent block")
 
     try:
-        from vllm_ascend.worker.dsa_shared_pool import reshape_dsa_shared_pool_raw
+        from vllm.v1.worker.dsa_shared_pool import reshape_dsa_shared_pool_raw
 
         raw = torch.empty(
             layout.slot_count * layout.bundle_page_size_bytes,
@@ -692,7 +685,7 @@ def run_cpu_simulation(config: RunConfig) -> None:
 
 class _TrackingInMemoryBackend:
     def __init__(self, device: str = "cpu") -> None:
-        from vllm_ascend.distributed.kv_transfer.sparse_offload.offload_backend import (
+        from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_backend import (
             InMemoryLatentOffloadBackend,
         )
 
@@ -763,16 +756,16 @@ def run_cpu_lmcache_gather_simulation(
     index_topk: int,
     block_size: int,
 ) -> None:
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.decode_latent_pool import (
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.decode_latent_pool import (
         GrowingDecodeLatentPool,
     )
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.offload_manager import (
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.offload_manager import (
         SparseLatentOffloadManager,
         SparseOffloadConfig,
         build_gather_plan,
         resolve_scratch_gather,
     )
-    from vllm_ascend.distributed.kv_transfer.sparse_offload.paged_latent_pool import (
+    from vllm.distributed.kv_transfer.ascend.sparse_offload.paged_latent_pool import (
         PagedLatentPool,
     )
 
@@ -799,7 +792,8 @@ def run_cpu_lmcache_gather_simulation(
         topk_tokens=index_topk,
         dtype=dtype,
         device=torch.device("cpu"),
-        pool_num_blocks=batch_size * (_ceil_div(max_prompt + decode_count, block_size) + 2),
+        pool_num_blocks=batch_size
+        * (_ceil_div(max_prompt + decode_count, block_size) + 2),
     )
     scratch_knope = torch.zeros(
         (
@@ -914,7 +908,9 @@ def run_cpu_lmcache_gather_simulation(
     ) = manager.gather_decode_layer(layer_name, req_ids, plan)
 
     if len(backend.load_calls) != 1:
-        raise RuntimeError(f"expected one LMCache load call, got {len(backend.load_calls)}")
+        raise RuntimeError(
+            f"expected one LMCache load call, got {len(backend.load_calls)}"
+        )
     load_layer, selected_tokens, token_start_index, load_req_ids = backend.load_calls[0]
     if load_layer != layer_name:
         raise RuntimeError("LMCache load used the wrong layer")
@@ -925,7 +921,9 @@ def run_cpu_lmcache_gather_simulation(
             f"LMCache token_start_index mismatch: {token_start_index} vs {expected_starts}"
         )
     if not torch.equal(selected_tokens, expected_flat_selected):
-        raise RuntimeError("LMCache selected_tokens did not match prefill topk positions")
+        raise RuntimeError(
+            "LMCache selected_tokens did not match prefill topk positions"
+        )
 
     expected_prefill_latent = []
     starts = token_start_index + [int(expected_flat_selected.numel())]
@@ -940,7 +938,9 @@ def run_cpu_lmcache_gather_simulation(
     expected_prefill_latent_tensor = torch.cat(expected_prefill_latent)
     loaded = manager._load_buffer[: expected_prefill_latent_tensor.shape[0]].cpu()
     if not torch.equal(loaded, expected_prefill_latent_tensor):
-        raise RuntimeError("LMCache-loaded data in load_buffer does not match saved latent")
+        raise RuntimeError(
+            "LMCache-loaded data in load_buffer does not match saved latent"
+        )
 
     # This mirrors the KV rows npu_sparse_flash_attention will read from
     # (scratch_knope/scratch_kpe, sparse_indices, scratch_block_table).
@@ -963,7 +963,9 @@ def run_cpu_lmcache_gather_simulation(
         if not torch.equal(topk_indices[req_idx], expected_topk):
             raise RuntimeError(f"topk row mutated for {req_id}")
 
-        valid_local = sparse_indices[req_idx, : int(seq_lens_kv[req_idx])].to(torch.long)
+        valid_local = sparse_indices[req_idx, : int(seq_lens_kv[req_idx])].to(
+            torch.long
+        )
         phys = (
             scratch_block_table[req_idx][valid_local // block_size].to(torch.long)
             * block_size
@@ -988,7 +990,6 @@ def run_cpu_lmcache_gather_simulation(
 
 
 def main() -> int:
-    maybe_add_vllm_ascend_repo()
     config = parse_args()
     apply_env(config)
     try:

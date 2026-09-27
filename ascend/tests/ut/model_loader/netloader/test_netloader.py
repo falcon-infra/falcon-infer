@@ -21,7 +21,7 @@ import pytest
 import torch
 from torch import nn
 
-from vllm_ascend.model_loader.netloader.netloader import ModelNetLoaderElastic
+from vllm.model_executor.model_loader.ascend.netloader.netloader import ModelNetLoaderElastic
 
 
 class DummyDeviceConfig:
@@ -81,7 +81,7 @@ def test_init_with_extra_config_file(tmp_path, monkeypatch):
     dummy_logger = MagicMock()
     monkeypatch.setattr("vllm.logger.logger", dummy_logger)
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.utils.is_valid_path_prefix",
+        "vllm.model_executor.model_loader.ascend.netloader.utils.is_valid_path_prefix",
         lambda x: True)
 
     extra = {"CONFIG_FILE": str(config_file)}
@@ -97,7 +97,7 @@ def test_init_with_extra_config(monkeypatch):
     dummy_logger = MagicMock()
     monkeypatch.setattr("vllm.logger.logger", dummy_logger)
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.utils.is_valid_path_prefix",
+        "vllm.model_executor.model_loader.ascend.netloader.utils.is_valid_path_prefix",
         lambda x: True)
 
     extra = {
@@ -121,7 +121,7 @@ def test_init_with_invalid_config(monkeypatch):
     dummy_logger = MagicMock()
     monkeypatch.setattr("vllm.logger.logger", dummy_logger)
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.utils.is_valid_path_prefix",
+        "vllm.model_executor.model_loader.ascend.netloader.utils.is_valid_path_prefix",
         lambda x: False)
     # c
     extra = {
@@ -138,7 +138,7 @@ def test_init_with_invalid_config(monkeypatch):
     assert loader.output_prefix is None
 
 
-@patch("vllm_ascend.model_loader.netloader.netloader.logger")
+@patch("vllm.model_executor.model_loader.ascend.netloader.netloader.logger")
 def test_load_model_elastic_success(mock_logger, monkeypatch, tmp_path):
     monkeypatch.setattr("torch.distributed.get_rank", lambda: 0)
 
@@ -153,30 +153,30 @@ def test_load_model_elastic_success(mock_logger, monkeypatch, tmp_path):
     monkeypatch.setattr("torch.device", lambda d: FakeContext())
     # patch deep copy
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.deepcopy", lambda x: x)
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.deepcopy", lambda x: x)
     # patch set_default_torch_dtype
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.set_default_torch_dtype",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.set_default_torch_dtype",
         lambda dtype: FakeContext())
     # patch initialize_model
     dummy_model = MagicMock(spec=nn.Module)
     dummy_model.eval.return_value = dummy_model
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.initialize_model",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.initialize_model",
         lambda **kwargs: dummy_model)
     # patch elastic_load
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.elastic_load",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.elastic_load",
         lambda **kwargs: dummy_model)
     # patch process_weights_after_loading
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.process_weights_after_loading",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.process_weights_after_loading",
         lambda *a, **k: None)
     # patch get_ip
     monkeypatch.setattr("vllm.utils.network_utils.get_ip", lambda: "127.0.0.1")
     # patch find_free_port
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.find_free_port",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.find_free_port",
         lambda: 8888)
 
     # patch ElasticServer
@@ -189,7 +189,7 @@ def test_load_model_elastic_success(mock_logger, monkeypatch, tmp_path):
             pass
 
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.netloader.netloader.ElasticServer",
+        "vllm.model_executor.model_loader.ascend.netloader.netloader.ElasticServer",
         DummyElasticServer)
     # write output_prefix to the temporary directory
     extra = {

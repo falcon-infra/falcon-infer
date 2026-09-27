@@ -15,7 +15,7 @@ from vllm.model_executor.model_loader import get_model
 from vllm.v1.attention.backend import AttentionMetadataBuilder, CommonAttentionMetadata
 from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
 from vllm.v1.worker.dp_utils import coordinate_batch_across_dp
-from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
+from vllm.v1.worker.input_batch import CachedRequestState, InputBatch
 
 if TYPE_CHECKING:
     from vllm.v1.kv_cache_interface import KVCacheConfig

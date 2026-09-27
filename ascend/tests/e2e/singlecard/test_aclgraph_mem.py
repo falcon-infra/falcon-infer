@@ -24,7 +24,7 @@ import torch
 from vllm import SamplingParams
 
 from tests.e2e.conftest import VllmRunner
-from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+from vllm.v1.worker.npu_model_runner import NPUModelRunner
 
 MODELS = ["Qwen/Qwen3-0.6B", "vllm-ascend/DeepSeek-V2-Lite-W8A8"]
 

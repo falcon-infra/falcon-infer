@@ -22,15 +22,14 @@ import torch
 from vllm.config import CompilationConfig, CUDAGraphMode, ModelConfig, ParallelConfig, VllmConfig
 
 from tests.ut.base import TestBase
-from vllm_ascend import utils
-from vllm_ascend.utils import REGISTERED_ASCEND_OPS
+from vllm.utils import ascend as utils
 
 
 class TestUtils(TestBase):
     def setUp(self):
         import importlib
 
-        from vllm_ascend import platform
+        from vllm.platforms import npu as platform
 
         importlib.reload(platform)
 
@@ -835,27 +834,16 @@ class TestUtils(TestBase):
         )
         self.assertIn(utils.StagedSFAConfigReason.ADAPTER_CACHE, reasons)
 
-    @mock.patch("vllm.model_executor.custom_op.CustomOp")
-    @mock.patch("vllm_ascend.ops.activation.AscendQuickGELU")
-    @mock.patch("vllm_ascend.ops.activation.AscendSiluAndMul")
-    @mock.patch("vllm_ascend.ops.layernorm.AscendRMSNorm")
-    def test_register_ascend_customop(
-        self, mock_ascend_rmsnorm, mock_ascend_silu_and_mul, mock_ascend_quick_gelu, mock_customop
-    ):
-        utils._ASCEND_CUSTOMOP_IS_REIGISTERED = False
 
-        # ascend custom op is not registered
-        utils.register_ascend_customop()
-        self.assertEqual(mock_customop.register_oot.call_count, len(REGISTERED_ASCEND_OPS))
-        self.assertTrue(utils._ASCEND_CUSTOMOP_IS_REIGISTERED)
-
-        # ascend custom op is already registered
-        utils.register_ascend_customop()
-        self.assertEqual(mock_customop.register_oot.call_count, len(REGISTERED_ASCEND_OPS))
+    def test_native_layer_binding_is_immutable(self):
+        from vllm.model_executor.layers.ascend.registry import NPU_LAYERS
+        self.assertIn("RMSNorm", NPU_LAYERS)
+        with self.assertRaises(TypeError):
+            NPU_LAYERS["RMSNorm"] = ("wrong", "wrong")
 
     @mock.patch("torch_npu.npu_format_cast")
     def test_maybe_trans_nz(self, mock_npu_format_cast):
-        from vllm_ascend.utils import ACL_FORMAT_FRACTAL_NZ
+        from vllm.utils.ascend import ACL_FORMAT_FRACTAL_NZ
 
         mock_npu_format_cast.side_effect = lambda weight, fmt: weight
 
@@ -869,7 +857,7 @@ class TestUtils(TestBase):
         # Test case 1: non-310P, NZ is disabled
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "0"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=False),
         ):
             weight = torch.randn(32, 64, dtype=torch.float16)
             result = utils.maybe_trans_nz(weight)
@@ -880,7 +868,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "0"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=True),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=True),
         ):
             weight = torch.randn(32, 64, dtype=torch.float16)
             result = utils.maybe_trans_nz(weight)
@@ -891,7 +879,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "1"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=True),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=True),
         ):
             weight = torch.randn(32, 64, dtype=torch.float32)
             result = utils.maybe_trans_nz(weight)
@@ -902,7 +890,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "1"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=False),
         ):
             weight = torch.randn(32, 64, dtype=torch.float16)
             result = utils.maybe_trans_nz(weight)
@@ -913,7 +901,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "2"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=False),
         ):
             weight = torch.randn(32, 64, dtype=torch.float16)
             result = utils.maybe_trans_nz(weight)
@@ -924,7 +912,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "2"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=False),
         ):
             weight = torch.randn(32, 64, dtype=torch.bfloat16)
             result = utils.maybe_trans_nz(weight)
@@ -935,7 +923,7 @@ class TestUtils(TestBase):
         mock_npu_format_cast.reset_mock()
         with (
             mock.patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_NZ": "1"}),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
+            mock.patch("vllm.utils.ascend.is_310p", return_value=False),
         ):
             weight = torch.zeros(32, 64, dtype=torch.int8)
             result = utils.maybe_trans_nz(weight)

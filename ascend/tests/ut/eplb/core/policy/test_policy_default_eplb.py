@@ -3,7 +3,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from vllm_ascend.eplb.core.policy.policy_default_eplb import DefaultEplb
+from vllm.distributed.eplb.ascend.core.policy.policy_default_eplb import DefaultEplb
 
 
 class TestDefaultEplb:

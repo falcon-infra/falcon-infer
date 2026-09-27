@@ -10,14 +10,12 @@ from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import ensure_model_parallel_initialized, init_distributed_environment
 from vllm.utils.system_utils import update_environment_variables
 
-from vllm_ascend.ascend_forward_context import set_ascend_forward_context
-from vllm_ascend.compilation.passes.norm_quant_fusion_pass import (
-    AddRMSNormQuantPattern,
-    AddRMSNormQuantPatternWithBias,
-    AddRMSNormQuantSPPattern,
-    AddRMSNormQuantSPPatternWithBias,
-)
-from vllm_ascend.utils import enable_custom_op
+from vllm.ascend_forward_context import set_ascend_forward_context
+from vllm.compilation.ascend.passes.norm_quant_fusion_pass import AddRMSNormQuantPattern
+from vllm.compilation.ascend.passes.norm_quant_fusion_pass import AddRMSNormQuantPatternWithBias
+from vllm.compilation.ascend.passes.norm_quant_fusion_pass import AddRMSNormQuantSPPattern
+from vllm.compilation.ascend.passes.norm_quant_fusion_pass import AddRMSNormQuantSPPatternWithBias
+from vllm.utils.ascend import enable_custom_op
 
 
 def find_op(gm, op_default):

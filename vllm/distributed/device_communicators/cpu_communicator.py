@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+
 import os
 from typing import Any
 
 import torch
 from torch.distributed import ProcessGroup
 
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
 from vllm.distributed.utils import pickle
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
@@ -234,7 +236,7 @@ class _CPUSHMDistributed:
             [torch.get_num_threads()],
             dtype=torch.int64,
         )
-        torch.distributed.all_reduce(
+        npu_all_reduce(
             thread_num_tensor,
             op=torch.distributed.ReduceOp.MIN,
             group=self.communicator.device_group,

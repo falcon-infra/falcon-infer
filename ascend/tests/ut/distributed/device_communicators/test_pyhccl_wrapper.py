@@ -4,10 +4,17 @@ import torch
 from torch.distributed import ReduceOp
 
 from tests.ut.base import TestBase
-from vllm_ascend.distributed.device_communicators.pyhccl_wrapper import (
-    Function, HCCLLibrary, aclrtStream_t, buffer_type, hcclComm_t,
-    hcclDataType_t, hcclDataTypeEnum, hcclRedOp_t, hcclRedOpTypeEnum,
-    hcclResult_t, hcclUniqueId)
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import Function
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import HCCLLibrary
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import aclrtStream_t
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import buffer_type
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclComm_t
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclDataType_t
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclDataTypeEnum
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclRedOp_t
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclRedOpTypeEnum
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclResult_t
+from vllm.distributed.device_communicators.ascend.pyhccl_wrapper import hcclUniqueId
 
 
 class TestHcclUniqueId(TestBase):

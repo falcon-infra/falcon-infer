@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Compare vllm_ascend.sample.penalties.apply_all_penalties (Triton-Ascend) with
+# Compare vllm.v1.sample.ascend.penalties.apply_all_penalties (Triton-Ascend) with
 # vllm.v1.sample.ops.penalties.apply_all_penalties (PyTorch via model_executor).
 # Requires NPU and Triton-Ascend.
 
@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from vllm.v1.sample.ops.penalties import apply_all_penalties as v1_apply_all_penalties
-from vllm_ascend.sample.penalties import apply_all_penalties as ascend_apply_all_penalties
+from vllm.v1.sample.ascend.penalties import apply_all_penalties as ascend_apply_all_penalties
 
 # Same scenario grid as test_apply_penalties_model_executor (equivalence + boundaries).
 APPLY_PENALTY_CASES = [
@@ -61,7 +61,7 @@ def test_apply_all_penalties_v1_vs_ascend(
     device="npu",
     seed=42,
 ):
-    from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+    from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
     init_device_properties_triton()
     torch.manual_seed(seed)

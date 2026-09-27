@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 import torch_npu
 import torchair
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 torch.manual_seed(42)
 torch_npu.npu.config.allow_internal_format = True

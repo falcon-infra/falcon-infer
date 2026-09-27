@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from vllm_ascend.eplb.adaptor.vllm_adaptor import VllmEplbAdaptor
-from vllm_ascend.quantization.methods.base import QuantType
+from vllm.distributed.eplb.ascend.adaptor.vllm_adaptor import VllmEplbAdaptor
+from vllm.model_executor.layers.quantization.ascend.methods.base import QuantType
 from transformers import DeepseekV2Config
 
 
@@ -21,8 +21,8 @@ class TestVllmAdaptor(unittest.TestCase):
         num_dense_layers = getattr(config, "first_k_dense_replace", 0)
         self.model.model.layers[num_dense_layers].mlp.experts.quant_type = QuantType.W8A8
 
-        self.mock_rank = patch("vllm_ascend.eplb.adaptor.vllm_adaptor.dist.get_rank", return_value=0).start()
-        self.mock_size = patch("vllm_ascend.eplb.adaptor.vllm_adaptor.dist.get_world_size", return_value=4).start()
+        self.mock_rank = patch("vllm.distributed.eplb.ascend.adaptor.vllm_adaptor.dist.get_rank", return_value=0).start()
+        self.mock_size = patch("vllm.distributed.eplb.ascend.adaptor.vllm_adaptor.dist.get_world_size", return_value=4).start()
 
     @patch("torch.empty_like", return_value=torch.zeros(16, 32))
     def test_init_fp16(self, mock_func):

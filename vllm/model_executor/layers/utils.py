@@ -94,8 +94,11 @@ def default_unquantized_gemm(
     x: torch.Tensor,
     weight: torch.Tensor,
     bias: torch.Tensor | None = None,
-):
-    return torch.nn.functional.linear(x, weight, bias)
+) -> torch.Tensor:
+    if x.device.type == "npu":
+        return torch.ops.vllm.unquantized_gemm(x, weight, bias)
+    else:
+        return torch.nn.functional.linear(x, weight, bias)
 
 
 def use_aiter_triton_gemm(n, m, k, dtype):
@@ -306,3 +309,29 @@ def dispatch_unquantized_gemm() -> Callable[..., torch.Tensor]:
         return cpu_unquantized_gemm
     else:
         return default_unquantized_gemm
+
+
+def unquantized_gemm(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    return torch.nn.functional.linear(x, weight, bias)
+
+
+def unquantized_gemm_fake(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    output_shape = (x.shape[0], weight.shape[0])
+    return torch.empty(output_shape, dtype=x.dtype, device=x.device)
+
+
+direct_register_custom_op(
+    op_name="unquantized_gemm",
+    op_func=unquantized_gemm,
+    fake_impl=unquantized_gemm_fake,
+    mutates_args=[],
+    dispatch_key="PrivateUse1",
+)

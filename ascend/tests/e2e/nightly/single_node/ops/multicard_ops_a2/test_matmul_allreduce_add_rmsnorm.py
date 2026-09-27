@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 import torch_npu
 import torchair
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 config = torchair.CompilerConfig()
 config.mode = "reduce-overhead"

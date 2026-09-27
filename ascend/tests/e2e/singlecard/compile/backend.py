@@ -23,7 +23,7 @@ from torch._inductor.decomposition import select_decomp_table
 from vllm.compilation.passes.fx_utils import OpOverload
 from vllm.config import get_current_vllm_config
 
-from vllm_ascend.compilation.compiler_interface import compile_fx
+from vllm.compilation.ascend.compiler_interface import compile_fx
 
 
 class TestBackend:

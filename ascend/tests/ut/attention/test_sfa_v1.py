@@ -15,31 +15,25 @@ from vllm.forward_context import BatchDescriptor
 
 from tests.ut.attention.utils import patch_distributed_groups
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_forward_context import (
-    STAGED_SFA_SINGLETON_GRAPH_KEY,
-    StagedSFAGraphKey,
-)
-from vllm_ascend.attention.attention_v1 import AscendAttentionState
+from vllm.ascend_forward_context import STAGED_SFA_SINGLETON_GRAPH_KEY
+from vllm.ascend_forward_context import StagedSFAGraphKey
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
 
 if "torch_npu._inductor" not in sys.modules:
     sys.modules["torch_npu._inductor"] = MagicMock()
 
-import vllm_ascend.attention.sfa_v1 as sfa_v1
-import vllm_ascend.attention.target_sfa_diagnostics as target_diag
-import vllm_ascend.attention.utils as attention_utils
-from vllm_ascend.attention.sfa_v1 import (
-    AscendSFABackend,
-    AscendSFAImpl,
-    AscendSFAMetadata,
-    AscendSFAMetadataBuilder,
-    _update_dsa_split_boundary_in_place,
-)
-from vllm_ascend.utils import (
-    StagedSFARouteAction,
-    StagedSFARouteDecision,
-    StagedSFARouteReason,
-    enable_dsa_cp,
-)
+import vllm.v1.attention.backends.ascend.sfa_v1 as sfa_v1
+import vllm.v1.attention.backends.ascend.target_sfa_diagnostics as target_diag
+import vllm.v1.attention.backends.ascend.utils as attention_utils
+from vllm.v1.attention.backends.ascend.sfa_v1 import AscendSFABackend
+from vllm.v1.attention.backends.ascend.sfa_v1 import AscendSFAImpl
+from vllm.v1.attention.backends.ascend.sfa_v1 import AscendSFAMetadata
+from vllm.v1.attention.backends.ascend.sfa_v1 import AscendSFAMetadataBuilder
+from vllm.v1.attention.backends.ascend.sfa_v1 import _update_dsa_split_boundary_in_place
+from vllm.utils.ascend import StagedSFARouteAction
+from vllm.utils.ascend import StagedSFARouteDecision
+from vllm.utils.ascend import StagedSFARouteReason
+from vllm.utils.ascend import enable_dsa_cp
 
 
 def test_sfa_metadata_declares_cached_decode_split_boundary() -> None:
@@ -431,7 +425,7 @@ def test_sparse_boundary_rejects_empty_frontiers_with_decode_rows():
 
 
 def test_sparse_boundary_prefers_explicit_committed_end():
-    from vllm_ascend.attention import utils as attention_utils
+    from vllm.v1.attention.backends.ascend import utils as attention_utils
 
     metadata = SimpleNamespace(
         requests=[
@@ -489,7 +483,7 @@ def test_sparse_boundary_prefers_explicit_committed_end():
 
 
 def test_sparse_boundary_uses_wrapped_connector_metadata():
-    from vllm_ascend.attention import utils as attention_utils
+    from vllm.v1.attention.backends.ascend import utils as attention_utils
 
     child_metadata = SimpleNamespace(
         requests=[
@@ -3515,10 +3509,10 @@ class TestAscendSFAMetadataBuilder(TestBase):
         self.patcher.stop()
         self.parent_init_patcher.stop()
 
-    @patch("vllm_ascend.attention.sfa_v1.is_v1_kv_transfer_group")
-    @patch("vllm_ascend.attention.sfa_v1.has_kv_transfer_group")
-    @patch("vllm_ascend.attention.sfa_v1.get_cos_and_sin_mla")
-    @patch("vllm_ascend.attention.sfa_v1.enable_dsa_cp")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.is_v1_kv_transfer_group")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.has_kv_transfer_group")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.enable_dsa_cp")
     def test_dsa_sparse_metadata_reuses_builder_storage(
         self,
         mock_enable_dsa_cp,
@@ -3811,9 +3805,9 @@ class TestAscendSFAMetadataBuilder(TestBase):
         assert builder.device == device
         assert builder.vllm_config == vllm_config
 
-    @patch("vllm_ascend.attention.sfa_v1.get_current_vllm_config")
-    @patch("vllm_ascend.attention.sfa_v1.get_cos_and_sin_mla")
-    @patch("vllm_ascend.attention.sfa_v1.enable_dsa_cp")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_current_vllm_config")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.enable_dsa_cp")
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
     def test_ascend_sfa_metadata_builder_build(
         self,
@@ -3871,8 +3865,8 @@ class TestAscendSFAMetadataBuilder(TestBase):
         assert metadata.num_actual_tokens == common_attn_metadata.num_actual_tokens
         assert metadata.slot_mapping.shape == (100, 4, 1024)
 
-    @patch("vllm_ascend.attention.sfa_v1.get_current_vllm_config")
-    @patch("vllm_ascend.attention.sfa_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_current_vllm_config")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_cos_and_sin_mla")
     @patch_distributed_groups(dcp_size=2, pcp_size=2, needs_mocks=False)
     def test_ascend_sfa_metadata_builder_build_for_graph_capture(
         self, mock_get_cos_and_sin_mla, mock_get_current_vllm_config
@@ -3925,8 +3919,8 @@ class TestAscendSFAMetadataBuilder(TestBase):
         assert isinstance(attn_metadata, AscendSFAMetadata)
         assert attn_metadata.attn_state == AscendAttentionState.DecodeOnly
 
-    @patch("vllm_ascend.attention.sfa_v1.staged_sfa_connector_supports_sparse_load", return_value=True)
-    @patch("vllm_ascend.attention.sfa_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.staged_sfa_connector_supports_sparse_load", return_value=True)
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_cos_and_sin_mla")
     def test_q1_sparse_rows_reuse_builder_storage(self, mock_get_cos_and_sin_mla, _):
         vllm_config = MagicMock()
         vllm_config.cache_config.block_size = 16
@@ -4037,8 +4031,8 @@ class TestAscendSFAMetadataBuilder(TestBase):
             torch.tensor([0, 1], dtype=torch.int32),
         )
 
-    @patch("vllm_ascend.attention.sfa_v1.staged_sfa_connector_supports_sparse_load", return_value=True)
-    @patch("vllm_ascend.attention.sfa_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.staged_sfa_connector_supports_sparse_load", return_value=True)
+    @patch("vllm.v1.attention.backends.ascend.sfa_v1.get_cos_and_sin_mla")
     def test_mtp2_sparse_rows_reuse_fixed_layout_storage(self, mock_get_cos_and_sin_mla, _):
         vllm_config = MagicMock()
         vllm_config.cache_config.block_size = 16

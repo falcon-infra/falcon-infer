@@ -3,11 +3,13 @@
 
 
 # ===================== import region =====================
+
 import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup, ReduceOp
 
 import vllm.envs as envs
+from vllm.distributed.ascend.collectives import broadcast as npu_broadcast
 from vllm.distributed.device_communicators.pynccl_wrapper import (
     NCCLLibrary,
     buffer_type,
@@ -119,7 +121,7 @@ class PyNcclCommunicator:
             tensor = torch.ByteTensor(list(self.unique_id.internal))
             ranks = dist.get_process_group_ranks(group)
             # arg `src` in `broadcast` is the global rank
-            dist.broadcast(tensor, src=ranks[0], group=group)
+            npu_broadcast(tensor, src=ranks[0], group=group)
             byte_list = tensor.tolist()
             for i, byte in enumerate(byte_list):
                 self.unique_id.internal[i] = byte

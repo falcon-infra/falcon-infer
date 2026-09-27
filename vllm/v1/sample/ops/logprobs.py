@@ -22,4 +22,6 @@ def batched_count_greater_than(x: torch.Tensor, values: torch.Tensor) -> torch.T
     Returns:
         torch.Tensor: A 1D tensor of shape (batch_size,) with the counts.
     """
+    if current_platform.is_npu():
+        return (x >= values).sum(-1)
     return (x >= values).sum(-1)

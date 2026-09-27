@@ -18,16 +18,14 @@ import unittest
 
 import torch
 
-import vllm_ascend.ops.fused_moe.moe_runtime_args as runtime_args
-from vllm_ascend.ops.fused_moe.moe_runtime_args import (
-    MoEAllGatherCombineMetadata,
-    MoETokenDispatchOutput,
-    MoEWeights,
-    build_fused_experts_input,
-    build_mlp_compute_input,
-    build_token_dispatch_input,
-)
-from vllm_ascend.quantization.quant_type import QuantType
+import vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args as runtime_args
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEAllGatherCombineMetadata
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoETokenDispatchOutput
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEWeights
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import build_fused_experts_input
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import build_mlp_compute_input
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import build_token_dispatch_input
+from vllm.model_executor.layers.quantization.ascend.quant_type import QuantType
 
 
 class TestMoERuntimeArgs(unittest.TestCase):

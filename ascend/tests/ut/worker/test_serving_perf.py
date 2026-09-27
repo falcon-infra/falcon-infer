@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vllm_ascend.worker import serving_perf as perf
+from vllm.v1.worker import npu_serving_perf as perf
 
 
 def _forbidden(*args, **kwargs):
@@ -75,15 +75,15 @@ def test_completed_device_interval_emits_existing_fields(monkeypatch):
 
 
 def test_mtp_snapshot_helpers_use_shared_implementation():
-    from vllm_ascend import diagnostic_utils
-    from vllm_ascend.spec_decode import mtp_draft_diagnostics
+    from vllm.utils import diagnostic_utils
+    from vllm.v1.spec_decode.ascend import mtp_draft_diagnostics
 
     for name in ("cpu_snapshot", "atomic_torch_save", "tensor_layout", "snapshot_cache_components"):
         assert getattr(mtp_draft_diagnostics, name) is getattr(diagnostic_utils, name)
 
 
 def test_shared_snapshot_preserves_metadata_and_cycles():
-    from vllm_ascend.diagnostic_utils import cpu_snapshot
+    from vllm.utils.diagnostic_utils import cpu_snapshot
 
     value = {"value": [1, 2]}
     value["cycle"] = value
@@ -140,7 +140,7 @@ def _prefill_harness(monkeypatch, enabled=True, tokens=4096, mtp=True, asynchron
         has_kv_transfer_group=lambda: True,
         npu_content_diagnostics_enabled=lambda: False,
         ModelRunnerOutput=output,
-        AsyncGPUModelRunnerOutput=lambda **k: SimpleNamespace(**k),
+        AsyncNPUModelRunnerOutput=lambda **k: SimpleNamespace(**k),
         get_pp_group=lambda: SimpleNamespace(world_size=1),
     )
     module = ast.Module(

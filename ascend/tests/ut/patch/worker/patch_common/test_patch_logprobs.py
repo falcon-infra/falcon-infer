@@ -4,7 +4,7 @@ import torch
 import vllm.v1.sample.ops.logprobs as logprobs
 import vllm.v1.sample.sampler as sampler
 
-from vllm_ascend.patch.worker.patch_logprobs import batched_count_greater_than
+from vllm.v1.sample.ops.logprobs import batched_count_greater_than
 
 
 def test_logprobs_count_uses_eager_ascend_helper():

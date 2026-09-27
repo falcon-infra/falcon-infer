@@ -38,7 +38,7 @@ def test_plain_preemption_does_not_bind_or_clear_new_metadata():
         clear_connector_metadata=lambda: pytest.fail("cleared unrelated metadata"),
     )
     execute = compile_function(
-        ROOT / "vllm_ascend/worker/model_runner_v1.py",
+        ROOT / "../vllm/v1/worker/npu_model_runner.py",
         "execute_model",
         {"has_kv_transfer_group": lambda: True, "get_kv_transfer_group": lambda: connector},
         prefix_only=True,
@@ -50,7 +50,7 @@ def test_plain_preemption_does_not_bind_or_clear_new_metadata():
 
 def test_ordinary_execution_does_not_touch_checkpoint_connector():
     execute = compile_function(
-        ROOT / "vllm_ascend/worker/model_runner_v1.py",
+        ROOT / "../vllm/v1/worker/npu_model_runner.py",
         "execute_model",
         {"has_kv_transfer_group": lambda: pytest.fail("connector checked during ordinary decode")},
         prefix_only=True,
@@ -73,7 +73,7 @@ def test_multi_connector_scopes_checkpoint_metadata_to_the_checkpoint_child():
         bind_connector_metadata=lambda meta: pytest.fail("bound unrelated child metadata"),
     )
     dispatch = compile_function(
-        ROOT / "vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py",
+        ROOT / "../vllm/distributed/kv_transfer/ascend/ascend_multi_connector.py",
         "handle_preemptions_with_metadata",
         {"MultiKVConnectorMetadata": Metadata},
     )
@@ -87,14 +87,14 @@ def test_queued_model_call_cannot_continue_after_preemption_failure():
 
     connector = NS(handle_preemptions=fail)
     execute = compile_function(
-        ROOT / "vllm_ascend/worker/model_runner_v1.py",
+        ROOT / "../vllm/v1/worker/npu_model_runner.py",
         "execute_model",
         {"has_kv_transfer_group": lambda: True, "get_kv_transfer_group": lambda: connector},
         prefix_only=True,
     )
     runner = NS(vllm_config=NS(model_config=NS(enable_return_routed_experts=False)), execute_model_state=None)
     reject = compile_function(
-        ROOT / "vllm_ascend/worker/model_runner_v1.py", "_reject_work_after_preemption_failure", {}
+        ROOT / "../vllm/v1/worker/npu_model_runner.py", "_reject_work_after_preemption_failure", {}
     )
     runner._reject_work_after_preemption_failure = MethodType(reject, runner)
     runner.execute_model = MethodType(execute, runner)

@@ -10,12 +10,10 @@ from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import ensure_model_parallel_initialized, init_distributed_environment
 from vllm.utils.system_utils import update_environment_variables
 
-from vllm_ascend.ascend_forward_context import set_ascend_forward_context
-from vllm_ascend.compilation.passes.qknorm_rope_fusion_pass import (
-    QKNormRopeFusionPattern,
-    QKNormRopeFusionPatternWithBias,
-)
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.ascend_forward_context import set_ascend_forward_context
+from vllm.compilation.ascend.passes.qknorm_rope_fusion_pass import QKNormRopeFusionPattern
+from vllm.compilation.ascend.passes.qknorm_rope_fusion_pass import QKNormRopeFusionPatternWithBias
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 MAX_POSITION_EMBEDDING = 262144
 

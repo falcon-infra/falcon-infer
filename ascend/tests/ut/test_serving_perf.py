@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from vllm.logger import logger
 
-import vllm_ascend.serving_perf as cold_perf
+import vllm.utils.serving_perf as cold_perf
 
 
 @pytest.mark.parametrize(
@@ -24,7 +24,7 @@ import vllm_ascend.serving_perf as cold_perf
 )
 def test_startup_mode_is_stable(monkeypatch, mode, enabled, device):
     monkeypatch.setenv("PD_SERVING_PERF", mode)
-    namespace = runpy.run_path(str(Path(__file__).parents[2] / "vllm_ascend/serving_perf.py"))
+    namespace = runpy.run_path(str(Path(__file__).parents[2] / "vllm/serving_perf.py"))
     monkeypatch.setenv("PD_SERVING_PERF", "0" if enabled else "1")
     assert namespace["cold_perf_enabled"]() is enabled
     assert namespace["cold_perf_device_timing_enabled"]() is device

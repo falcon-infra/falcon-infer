@@ -26,7 +26,8 @@ import torch
 from vllm.utils.network_utils import get_open_port
 
 from tests.e2e.conftest import wait_until_npu_memory_free
-from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type
+from vllm.utils.ascend import AscendDeviceType
+from vllm.utils.ascend import get_ascend_device_type
 
 MODELS = [
     # Offline data parallel mode will be not supported/useful for dense models
@@ -37,7 +38,7 @@ MODELS = [
 
 def _install_spies(counters: dict[str, Any]) -> contextlib.ExitStack:
     """Installs thread-safe spies on NPU methods to track invocation counts."""
-    from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+    from vllm.v1.worker.npu_model_runner import NPUModelRunner
 
     def make_spy(cls, method_name, counter):
         original = getattr(cls, method_name)
@@ -183,7 +184,7 @@ def test_models_aclgraph_capture_replay_metrics_dp2(
     num_comm_groups = sum(1 for s in [dp_size, 1] if s > 1)  # dp_size=2, tp_size=1
 
     # Metric 1: Graph Capture (ACL Graph Construction)
-    # Ref: vllm_ascend.utils.update_aclgraph_sizes
+    # Ref: vllm.utils.ascend.update_aclgraph_sizes
     max_batch_sizes = math.floor((1800 - num_comm_groups * 40) / num_acl_graphs / (1 + num_comm_groups * 2))
 
     expected_capture = max_batch_sizes * num_acl_graphs * dp_size

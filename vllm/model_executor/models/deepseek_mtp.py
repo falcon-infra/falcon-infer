@@ -92,6 +92,22 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
             config=self.config,
             topk_indices_buffer=topk_indices_buffer,
         )
+        quant_description = getattr(vllm_config.quant_config, "quant_description", None)
+
+        self.is_rot_used = (
+            quant_description.get("is_rot_used", False)
+            if quant_description is not None
+            else False
+        )
+
+        self.target_model_type = (
+            vllm_config.speculative_config.target_model_config.hf_text_config.model_type
+        )
+
+        if self.is_rot_used and self.target_model_type == "glm_moe_dsa":
+            self.rot = nn.Linear(
+                self.config.hidden_size, self.config.hidden_size, bias=False
+            )
 
     def forward(
         self,
@@ -105,6 +121,8 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         # masking inputs at position 0, as not needed by MTP
         inputs_embeds = torch.where(positions.unsqueeze(-1) == 0, 0, inputs_embeds)
         inputs_embeds = self.enorm(inputs_embeds)
+        if self.is_rot_used and self.target_model_type == "glm_moe_dsa":
+            previous_hidden_states = self.rot(previous_hidden_states)
         previous_hidden_states = self.hnorm(previous_hidden_states)
 
         hidden_states = self.eh_proj(
@@ -443,6 +461,8 @@ class DeepSeekMTP(nn.Module, DeepseekV2MixtureOfExperts):
         Add .mtp_block for modules in transformer layer block for spec layer
         and rename shared layer weights to be top level.
         """
+        if name == "rot.weight":
+            return f"model.layers.{spec_layer}.rot.weight"
         spec_layer_weight_names = [
             "embed_tokens",
             "enorm",

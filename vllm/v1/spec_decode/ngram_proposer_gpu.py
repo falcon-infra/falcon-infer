@@ -20,7 +20,7 @@ from vllm.config import (
 from vllm.forward_context import set_forward_context
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.utils import record_function_or_nullcontext
-from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
+from vllm.v1.worker.input_batch import CachedRequestState, InputBatch
 
 
 @support_torch_compile()

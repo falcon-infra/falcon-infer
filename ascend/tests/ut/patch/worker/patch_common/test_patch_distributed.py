@@ -19,7 +19,7 @@ import torch
 from vllm.distributed.parallel_state import GroupCoordinator
 
 from tests.ut.base import TestBase
-from vllm_ascend.patch.worker.patch_distributed import GroupCoordinatorPatch
+from vllm.distributed.parallel_state import GroupCoordinator as GroupCoordinatorPatch
 
 
 class TestPatchDistributed(TestBase):
@@ -35,25 +35,20 @@ class TestPatchDistributed(TestBase):
                                   return_value=MagicMock())
         patcher_is_cuda_alike = patch(
             "vllm.platforms.current_platform.is_cuda_alike", return_value=True)
-        patcher_device_comm_cls = patch(
-            "vllm.distributed.parallel_state.resolve_obj_by_qualname",
-            return_value=MagicMock())
         patcher_calculate_dp_buffer = patch(
-            "vllm_ascend.utils.calculate_dp_buffer_size", return_value=64)
+            "vllm.utils.ascend.calculate_dp_buffer_size", return_value=64)
         patcher_npu_current_device = patch("torch.npu.current_device",
                                            return_value=MagicMock())
 
         self.mock_get_rank = patcher_get_rank.start()
         self.mock_new_group = patcher_new_group.start()
         self.mock_is_cuda_alike = patcher_is_cuda_alike.start()
-        self.mock_resolve_obj = patcher_device_comm_cls.start()
         self.mock_calculate_dp_buffer = patcher_calculate_dp_buffer.start()
         self.mock_npu_current_device = patcher_npu_current_device.start()
 
         self.addCleanup(patcher_get_rank.stop)
         self.addCleanup(patcher_new_group.stop)
         self.addCleanup(patcher_is_cuda_alike.stop)
-        self.addCleanup(patcher_device_comm_cls.stop)
         self.addCleanup(patcher_calculate_dp_buffer.stop)
         self.addCleanup(patcher_npu_current_device.stop)
 

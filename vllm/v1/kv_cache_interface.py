@@ -243,16 +243,126 @@ class MLAAttentionSpec(FullAttentionSpec):
         )
         cache_dtype_str_set = set(spec.cache_dtype_str for spec in specs)
         assert len(cache_dtype_str_set) == 1, (
-            "All attention layers in the same KV cache group must use the same "
-            "quantization method."
+            "All attention layers in the same KV cache group must use the same quantization method."
+        )
+        # Layers with different per-token sizes (e.g. DSA un-bundled latent head_size=576
+        # vs indexer head_size=128) must NOT collapse into one merged spec — otherwise the
+        # smaller page is applied to all layers, mis-sizing the larger ones and over-counting
+        # num_blocks. Asserting here makes is_kv_cache_spec_uniform() route them to the
+        # per-layer UniformTypeKVCacheSpecs path instead.
+        assert len({spec.head_size for spec in specs}) == 1, (
+            "All attention layers in the same KV cache group must have the same head_size."
+        )
+        assert len({spec.sparse_head_dim for spec in specs}) == 1, (
+            "All attention layers in the same KV cache group must have the same sparse_head_dim."
         )
         return cls(
             block_size=specs[0].block_size,
             num_kv_heads=specs[0].num_kv_heads,
             head_size=specs[0].head_size,
+            sparse_head_dim=specs[0].sparse_head_dim,
             dtype=specs[0].dtype,
-            page_size_padded=specs[0].page_size_padded,
             cache_dtype_str=cache_dtype_str_set.pop(),
+            cache_sparse_c8=specs[0].cache_sparse_c8,
+        )
+
+    sparse_head_dim: tuple[int, ...] | None = None
+
+    cache_sparse_c8: bool = False
+
+    c8_k_cache_dtype: torch.dtype = torch.int8
+
+    c8_k_scale_cache_dtype: torch.dtype = torch.float16
+
+    @property
+    def page_size_bytes(self) -> int:
+        if self.cache_sparse_c8:
+            assert self.sparse_head_dim is not None
+            assert len(self.sparse_head_dim) == 3
+            num_heads_per_page = self.block_size * self.num_kv_heads
+            # kv_cache[0]: bfloat16, kv_cache[1]: bfloat16
+            kv_lora_rank, qk_rope_head_dim = self.sparse_head_dim[:2]
+            k_pe_nope_bytes = (
+                num_heads_per_page
+                * (kv_lora_rank + qk_rope_head_dim)
+                * get_dtype_size(self.dtype)
+            )
+            # kv_cache[2]: int8
+            index_head_dim = self.sparse_head_dim[-1]
+            indexer_k_bytes = (
+                num_heads_per_page
+                * index_head_dim
+                * get_dtype_size(self.c8_k_cache_dtype)
+            )
+            # kv_cache[3]: float16
+            # since the scale is stored per token, head_dim is set to 1.
+            index_scale_head_dim = 1
+            indexer_k_scale_bytes = (
+                num_heads_per_page
+                * index_scale_head_dim
+                * get_dtype_size(self.c8_k_scale_cache_dtype)
+            )
+            return k_pe_nope_bytes + indexer_k_bytes + indexer_k_scale_bytes
+
+        return (
+            self.block_size
+            * self.num_kv_heads
+            * self.head_size
+            * get_dtype_size(self.dtype)
+        )
+
+    @property
+    def sparse_kv_cache_ratio(self) -> tuple[float, float, float, float | None]:
+        """
+        Compute the relative byte share of each KV cache entry.
+
+        Returns:
+            A tuple containing the ratios for:
+            - kv_cache[0]
+            - kv_cache[1]
+            - kv_cache[2]
+            - kv_cache[3] (None if Sparse C8 is disabled)
+        """
+
+        assert self.sparse_head_dim is not None
+
+        def get_sparse_head_dim_virtual() -> tuple[int, int, int, int]:
+            assert self.sparse_head_dim is not None
+            assert self.cache_sparse_c8 is True
+
+            kv_lora_rank, qk_rope_head_dim, index_k_head_dim = self.sparse_head_dim
+
+            factor = get_dtype_size(self.dtype) // get_dtype_size(self.c8_k_cache_dtype)
+            index_k_head_dim_virtual = index_k_head_dim // factor
+
+            assert get_dtype_size(self.dtype) == get_dtype_size(
+                self.c8_k_scale_cache_dtype
+            )
+            index_k_scale_head_dim_virtual = 1
+
+            return (
+                kv_lora_rank,
+                qk_rope_head_dim,
+                index_k_head_dim_virtual,
+                index_k_scale_head_dim_virtual,
+            )
+
+        if self.cache_sparse_c8:
+            virtual_dims = get_sparse_head_dim_virtual()
+            total_virtual_head_dim = sum(virtual_dims)
+
+            return (
+                total_virtual_head_dim / virtual_dims[0],  # kv_cache[0]
+                total_virtual_head_dim / virtual_dims[1],  # kv_cache[1]
+                total_virtual_head_dim / virtual_dims[2],  # kv_cache[2]
+                total_virtual_head_dim / virtual_dims[3],  # kv_cache[3]
+            )
+
+        return (
+            self.head_size / self.sparse_head_dim[0],  # kv_cache[0]
+            self.head_size / self.sparse_head_dim[1],  # kv_cache[1]
+            self.head_size / self.sparse_head_dim[2],  # kv_cache[2]
+            None,  # kv_cache[3] does not exist
         )
 
 

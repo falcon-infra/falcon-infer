@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from vllm_ascend import lmcache_diagnostics as bridge
+from vllm.distributed.kv_transfer import lmcache_diagnostics as bridge
 
 
 @pytest.fixture(autouse=True)
@@ -78,10 +78,10 @@ def test_installed_callback_bundle_routes_every_operation() -> None:
 @pytest.mark.parametrize(
     "relative_path",
     [
-        "vllm_ascend/attention/sfa_v1.py",
-        "vllm_ascend/worker/model_runner_v1.py",
+        "vllm/attention/sfa_v1.py",
+        "vllm/worker/model_runner_v1.py",
         (
-            "vllm_ascend/distributed/kv_transfer/kv_p2p/"
+            "vllm/distributed/kv_transfer/kv_p2p/"
             "mooncake_connector.py"
         ),
     ],
@@ -113,7 +113,7 @@ def test_live_p2p_first_consume_diagnostic_is_not_persistent_load_gated() -> Non
     """Keep live P2P observable when the persistent index load is disabled."""
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/attention/sfa_v1.py").read_text(
+        (repository_root / "vllm/attention/sfa_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -153,7 +153,7 @@ def test_live_p2p_first_consume_diagnostic_is_not_persistent_load_gated() -> Non
 def test_cache_boundary_diagnostics_cover_both_groups_and_scatter_sides() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/attention/sfa_v1.py").read_text(
+        (repository_root / "vllm/attention/sfa_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -197,7 +197,7 @@ def test_group1_scatter_excludes_graph_and_speculative_padding() -> None:
     """Group 1 must obey the same real-row frontier as Group 0."""
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/attention/sfa_v1.py").read_text(
+        (repository_root / "vllm/attention/sfa_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -226,7 +226,7 @@ def test_group1_scatter_excludes_graph_and_speculative_padding() -> None:
 def test_graph_bootstrap_snapshot_is_not_cleared_before_forward() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/worker/model_runner_v1.py").read_text(
+        (repository_root / "vllm/worker/model_runner_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -258,7 +258,7 @@ def test_graph_bootstrap_snapshot_is_not_cleared_before_forward() -> None:
 def test_graph_bootstrap_waits_for_group1_before_snapshot() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/attention/sfa_v1.py").read_text(
+        (repository_root / "vllm/attention/sfa_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -287,7 +287,7 @@ def test_graph_bootstrap_waits_for_group1_before_snapshot() -> None:
 def test_graph_post_readback_occurs_after_behavior_critical_sampling() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/worker/model_runner_v1.py").read_text(
+        (repository_root / "vllm/worker/model_runner_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -314,7 +314,7 @@ def test_graph_post_readback_occurs_after_behavior_critical_sampling() -> None:
 def test_two_group_indexer_never_falls_back_to_latent_addresses() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     tree = ast.parse(
-        (repository_root / "vllm_ascend/attention/sfa_v1.py").read_text(
+        (repository_root / "vllm/attention/sfa_v1.py").read_text(
             encoding="utf-8"
         )
     )
@@ -359,7 +359,7 @@ def test_spec_decode_metadata_rebuilds_preserve_group1_addresses() -> None:
     tree = ast.parse(
         (
             repository_root
-            / "vllm_ascend/spec_decode/eagle_proposer.py"
+            / "vllm/spec_decode/eagle_proposer.py"
         ).read_text(encoding="utf-8")
     )
     proposer = next(

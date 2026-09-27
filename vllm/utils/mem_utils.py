@@ -93,12 +93,12 @@ class MemorySnapshot:
         device = self.device_
 
         # we measure the torch peak memory usage via allocated_bytes,
-        # rather than `torch.accelerator.memory_reserved()` .
-        # After `torch.accelerator.reset_peak_memory_stats()`,
-        # `torch.accelerator.memory_reserved()` will keep growing, and only shrink
-        # when we call `torch.accelerator.empty_cache()` or OOM happens.
-        self.torch_peak = torch.accelerator.memory_stats(device).get(
-            "allocated_bytes.all.peak", 0
+        # rather than `_memory_backend().memory_reserved()` .
+        # After `_memory_backend().reset_peak_memory_stats()`,
+        # `_memory_backend().memory_reserved()` will keep growing, and only shrink
+        # when we call `_memory_backend().empty_cache()` or OOM happens.
+        self.torch_peak = (
+            _memory_backend().memory_stats(device).get("allocated_bytes.all.peak", 0)
         )
 
         self.free_memory, self.total_memory = current_platform.mem_get_info(device)
@@ -123,10 +123,10 @@ class MemorySnapshot:
 
         self.cuda_memory = self.total_memory - self.free_memory
 
-        # torch.accelerator.memory_reserved() is how many bytes
+        # _memory_backend().memory_reserved() is how many bytes
         # PyTorch gets from cuda (by calling cudaMalloc, etc.)
         # this is used to measure the non-torch memory usage
-        self.torch_memory = torch.accelerator.memory_reserved(device)
+        self.torch_memory = _memory_backend().memory_reserved(device)
 
         self.non_torch_memory = self.cuda_memory - self.torch_memory
         self.timestamp = time.time()
@@ -243,15 +243,15 @@ def memory_profiling(
     The memory used for loading weights (a.) is directly given from the
     argument `weights_memory`.
 
-    The increase of `torch.accelerator.memory_stats()["allocated_bytes.all.peak"]`
+    The increase of `_memory_backend().memory_stats()["allocated_bytes.all.peak"]`
     during profiling gives (b.).
 
     The increase of `non_torch_memory` from creating the current vLLM instance
     until after profiling to get (c.).
     """
     gc.collect()
-    torch.accelerator.empty_cache()
-    torch.accelerator.reset_peak_memory_stats(baseline_snapshot.device_)
+    _memory_backend().empty_cache()
+    _memory_backend().reset_peak_memory_stats(baseline_snapshot.device_)
 
     result = MemoryProfilingResult(
         before_create=baseline_snapshot,
@@ -264,7 +264,7 @@ def memory_profiling(
     yield result
 
     gc.collect()
-    torch.accelerator.empty_cache()
+    _memory_backend().empty_cache()
 
     result.after_profile.measure()
 
@@ -279,3 +279,8 @@ def memory_profiling(
     result.non_kv_cache_memory = (
         non_torch_memory + peak_activation_memory + result.weights_memory
     )
+
+
+def _memory_backend():
+    """torch.accelerator does not delegate all memory APIs to PrivateUse1."""
+    return torch.npu if current_platform.is_npu() else torch.accelerator

@@ -18,13 +18,11 @@ from unittest.mock import call, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.fused_moe.moe_mlp import unified_apply_mlp
-from vllm_ascend.ops.fused_moe.moe_runtime_args import (
-    MoEMlpComputeInput,
-    MoEQuantParams,
-    MoEWeights,
-)
-from vllm_ascend.quantization.quant_type import QuantType
+from vllm.platforms.ascend_310p.fused_moe.moe_mlp import unified_apply_mlp
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEMlpComputeInput
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEQuantParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEWeights
+from vllm.model_executor.layers.quantization.ascend.quant_type import QuantType
 
 
 def build_mlp_compute_input_fixture(

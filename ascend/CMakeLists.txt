@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(vllm_ascend_C)
+project(_ascend_C)
 
 # include(CheckCXXcompilerFlag)
 # check_cxx_compiler_flag("-std=c++17", COMPILER_SUPPORTS_CXX17)
@@ -129,10 +129,10 @@ set(
   ${ASCEND_HOME_PATH}/x86_64-linux/include/experiment/platform
 )
 
-pybind11_add_module(vllm_ascend_C ${VLLM_ASCEND_SRC})
+pybind11_add_module(_ascend_C ${VLLM_ASCEND_SRC})
 
 target_link_directories(
-  vllm_ascend_C
+  _ascend_C
   PRIVATE
   ${TORCH_LIBRARY_DIRS}
   ${TORCH_NPU_PATH}/lib/
@@ -140,7 +140,7 @@ target_link_directories(
 )
 
 target_link_libraries(
-  vllm_ascend_C
+  _ascend_C
   PUBLIC
   ${TORCH_LIBRARIES}
   torch_npu
@@ -154,6 +154,6 @@ target_link_libraries(
   opapi
 )
 
-target_link_options(vllm_ascend_C PRIVATE "-Wl,-rpath,$ORIGIN:$ORIGIN/lib:$ORIGIN/_cann_ops_custom/vendors/vllm-ascend/op_api/lib")
+target_link_options(_ascend_C PRIVATE "-Wl,-rpath,$ORIGIN:$ORIGIN/lib:$ORIGIN/_cann_ops_custom/vendors/vllm-ascend/op_api/lib")
 
-install(TARGETS vllm_ascend_C vllm_ascend_kernels DESTINATION ${VLLM_ASCEND_INSTALL_PATH})
+install(TARGETS _ascend_C vllm_ascend_kernels DESTINATION ${VLLM_ASCEND_INSTALL_PATH})

@@ -6,8 +6,8 @@ import pickle
 import msgspec
 import pytest
 
-from vllm_ascend.distributed.kv_transfer.kv_p2p import live_split_protocol as protocol
-from vllm_ascend.distributed.kv_transfer.kv_p2p import mooncake_connector as connector
+from vllm.distributed.kv_transfer.ascend.kv_p2p import live_split_protocol as protocol
+from vllm.distributed.kv_transfer.ascend.kv_p2p import mooncake_connector as connector
 
 
 @pytest.mark.parametrize(

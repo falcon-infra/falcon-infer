@@ -26,15 +26,9 @@ from vllm.distributed.kv_transfer.kv_connector.v1.multi_connector import (  # no
 )
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks  # noqa: E402
 
-from vllm_ascend.distributed.kv_transfer.ascend_multi_connector import (  # noqa: E402
-    AscendMultiConnector,
-)
-from vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector import (  # noqa: E402
-    MooncakeConnector,
-)
-from vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_dsa_index_connector import (  # noqa: E402
-    MooncakeDSAIndexConnector,
-)
+from vllm.distributed.kv_transfer.ascend.ascend_multi_connector import AscendMultiConnector
+from vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_connector import MooncakeConnector
+from vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_dsa_index_connector import MooncakeDSAIndexConnector
 
 
 class _Block:
@@ -62,9 +56,7 @@ def _remote_index_params(remote_block_ids=None):
 def test_lmcache_ascend_connector_advertises_dsa_index_support():
     pytest.importorskip("lmcache_ascend")
 
-    from vllm_ascend.distributed.kv_transfer.kv_pool.lmcache_ascend_connector import (
-        LMCacheConnectorV1,
-    )
+    from vllm.distributed.kv_transfer.ascend.kv_pool.lmcache_ascend_connector import LMCacheConnectorV1
 
     assert getattr(LMCacheConnectorV1, "supports_dsa_index_lmcache", False) is True
 

@@ -28,17 +28,16 @@ import torch
 import torch_npu
 from vllm.model_executor.layers.activation import SiluAndMul
 
-from vllm_ascend.ops.fused_moe.experts_selector import check_npu_moe_gating_top_k, select_experts
-from vllm_ascend.ops.fused_moe.moe_mlp import unified_apply_mlp
-from vllm_ascend.ops.fused_moe.moe_runtime_args import (
-    build_fused_experts_input,
-    build_mlp_compute_input,
-    MoEQuantParams,
-    MoERoutingParams,
-    MoETokenDispatchInput,
-)
-from vllm_ascend.ops.fused_moe.token_dispatcher import TokenDispatcherWithAllGather
-from vllm_ascend.quantization.quant_type import QuantType
+from vllm.model_executor.layers.ascend.fused_moe.experts_selector import check_npu_moe_gating_top_k
+from vllm.model_executor.layers.ascend.fused_moe.experts_selector import select_experts
+from vllm.model_executor.layers.ascend.fused_moe.moe_mlp import unified_apply_mlp
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import build_fused_experts_input
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import build_mlp_compute_input
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEQuantParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoERoutingParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoETokenDispatchInput
+from vllm.model_executor.layers.ascend.fused_moe.token_dispatcher import TokenDispatcherWithAllGather
+from vllm.model_executor.layers.quantization.ascend.quant_type import QuantType
 
 NUM_EXPERTS = [8, 64]
 EP_SIZE = [1]
@@ -193,7 +192,7 @@ def test_token_dispatcher_with_all_gather_quant(
 ):
     context_mock = MagicMock()
     context_mock.fused_moe_state = 0
-    with patch("vllm_ascend.ops.fused_moe.moe_mlp.get_forward_context", return_value=context_mock):
+    with patch("vllm.model_executor.layers.ascend.fused_moe.moe_mlp.get_forward_context", return_value=context_mock):
         a = torch.randn((m, k), device=device, dtype=dtype) / 10
         w1 = torch.randn((e, k, 2 * n), device=device, dtype=torch.int8)
         w1_scale = torch.empty((e, 2 * n), device=device, dtype=dtype)
@@ -299,8 +298,8 @@ def test_select_experts(
         custom_routing_function.return_value = (mock_weights, mock_ids)
 
     with (
-        patch("vllm_ascend.ops.fused_moe.experts_selector._native_grouped_topk") as mock_native_grouped_topk,
-        patch("vllm_ascend.ops.fused_moe.experts_selector.get_weight_prefetch_method", return_value=MagicMock()),
+        patch("vllm.model_executor.layers.ascend.fused_moe.experts_selector._native_grouped_topk") as mock_native_grouped_topk,
+        patch("vllm.model_executor.layers.ascend.fused_moe.experts_selector.get_weight_prefetch_method", return_value=MagicMock()),
     ):
         mock_native_grouped_topk.side_effect = lambda x, num_groups, k: torch.randn_like(x)
 
@@ -337,7 +336,7 @@ def test_select_experts(
 @pytest.mark.parametrize("device", DEVICE)
 def test_select_experts_invalid_scoring_func(device: str):
     with (
-        patch("vllm_ascend.ops.fused_moe.experts_selector.get_weight_prefetch_method", return_value=MagicMock()),
+        patch("vllm.model_executor.layers.ascend.fused_moe.experts_selector.get_weight_prefetch_method", return_value=MagicMock()),
         pytest.raises(ValueError, match="Unsupported scoring function: invalid"),
     ):
         select_experts(

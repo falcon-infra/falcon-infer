@@ -6,7 +6,7 @@ import torch.multiprocessing as mp
 import torch_npu
 from torch.distributed.distributed_c10d import _get_default_group
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 enable_custom_op()
 

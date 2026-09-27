@@ -45,8 +45,8 @@ class TestBlockTableComputeSlotMapping(TestBase):
                            pcp_rank, cp_kv_cache_interleave_size):
         """Helper method to create BlockTable with mocked distributed groups"""
 
-        with patch('vllm_ascend.worker.block_table.get_dcp_group') as mock_get_dcp_group, \
-             patch('vllm_ascend.worker.block_table.get_pcp_group') as mock_get_pcp_group:
+        with patch('vllm.v1.worker.npu_block_table.get_dcp_group') as mock_get_dcp_group, \
+             patch('vllm.v1.worker.npu_block_table.get_pcp_group') as mock_get_pcp_group:
 
             # Mock DCP group
             mock_dcp_group = MagicMock(spec=GroupCoordinator)
@@ -60,7 +60,7 @@ class TestBlockTableComputeSlotMapping(TestBase):
             mock_pcp_group.rank_in_group = pcp_rank
             mock_get_pcp_group.return_value = mock_pcp_group
 
-            from vllm_ascend.worker.block_table import BlockTable
+            from vllm.v1.worker.npu_block_table import BlockTable
 
             block_table = BlockTable(
                 block_size=self.block_size,

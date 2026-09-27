@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import torch
 
-import vllm_ascend.ops.register_custom_ops  # noqa
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+import vllm.model_executor.layers.ascend.register_custom_ops  # noqa
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 MAX_POSITION_EMBEDDINGS = [262144]
 NUM_TOKENS = [1, 4, 8, 16, 1024]
@@ -102,7 +102,7 @@ def test_split_qkv_rmsnorm_rope(max_position_embeddings, num_tokens, num_q_heads
                                               eps=eps,
                                               cos_sin_cache=cos_sin_cache,
                                               positions=positions)
-    
+
     cos, sin = cos_sin_cache.index_select(0, positions).view(num_tokens, 2, -1).repeat(1, 1, 2).chunk(2, dim=-2)
     cos = cos.unsqueeze(1)
     sin = sin.unsqueeze(1)
@@ -185,7 +185,7 @@ def test_split_qkv_rmsnorm_rope_with_bias(max_position_embeddings, num_tokens, n
                                               k_bias=k_bias,
                                               cos_sin_cache=cos_sin_cache,
                                               positions=positions)
-    
+
     cos, sin = cos_sin_cache.index_select(0, positions).view(num_tokens, 2, -1).repeat(1, 1, 2).chunk(2, dim=-2)
     cos = cos.unsqueeze(1)
     sin = sin.unsqueeze(1)

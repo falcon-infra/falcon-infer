@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 from vllm.distributed.utils import StatelessProcessGroup
 
 from tests.ut.base import TestBase
-from vllm_ascend.distributed.device_communicators.pyhccl import \
-    PyHcclCommunicator
-from vllm_ascend.utils import ACL_FORMAT_FRACTAL_NZ, vllm_version_is
+from vllm.distributed.device_communicators.ascend.pyhccl import PyHcclCommunicator
+from vllm.utils.ascend import ACL_FORMAT_FRACTAL_NZ
+from vllm.utils.ascend import vllm_version_is
 
 
 class MockHcclLib:
@@ -37,13 +37,13 @@ class TestPyHcclCommunicator(TestBase):
         self.assertTrue(comm.disabled)
 
     @patch(
-        "vllm_ascend.distributed.device_communicators.pyhccl_wrapper.HCCLLibrary",
+        "vllm.distributed.device_communicators.ascend.pyhccl_wrapper.HCCLLibrary",
         MockHcclLib)
     @patch(
-        "vllm_ascend.distributed.device_communicators.pyhccl_wrapper.hcclUniqueId",
+        "vllm.distributed.device_communicators.ascend.pyhccl_wrapper.hcclUniqueId",
         MockUniqueId)
     @patch("torch.npu.device")
-    @patch("vllm_ascend.utils.current_stream",
+    @patch("vllm.utils.ascend.current_stream",
            return_value=MagicMock(npu_stream=5678))
     def test_stateless_group(self, *_):
         if vllm_version_is("0.18.0"):
@@ -63,10 +63,10 @@ class TestPyHcclCommunicator(TestBase):
 
     @patch.dict(os.environ, {"RANK": "1", "WORLD_SIZE": "2"})
     @patch(
-        "vllm_ascend.distributed.device_communicators.pyhccl_wrapper.HCCLLibrary",
+        "vllm.distributed.device_communicators.ascend.pyhccl_wrapper.HCCLLibrary",
         MockHcclLib)
     @patch(
-        "vllm_ascend.distributed.device_communicators.pyhccl_wrapper.hcclUniqueId",
+        "vllm.distributed.device_communicators.ascend.pyhccl_wrapper.hcclUniqueId",
         MockUniqueId)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_backend", return_value="nccl")
@@ -75,7 +75,7 @@ class TestPyHcclCommunicator(TestBase):
     @patch("torch.distributed.get_process_group_ranks", return_value=[0, 1])
     @patch("torch.distributed.broadcast")
     @patch("torch.npu.device")
-    @patch("vllm_ascend.utils.current_stream",
+    @patch("vllm.utils.ascend.current_stream",
            return_value=MagicMock(npu_stream=1234))
     def test_multi_gpu_pg_torch(
         self,
