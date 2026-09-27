@@ -3,17 +3,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from vllm.config.compilation import CompilationMode, CUDAGraphMode
-from vllm.platforms import PlatformEnum
-from vllm.v1.attention.selector import AttentionSelectorConfig  # type: ignore
-
-from tests.ut.base import TestBase
-from vllm_ascend.platform import NPUPlatform
 from vllm_ascend.utils import (
     ASCEND_QUANTIZATION_METHOD,
     COMPRESSED_TENSORS_METHOD,
     AscendDeviceType,
 )
+
+from tests.ut.base import TestBase
+from vllm.config.compilation import CompilationMode, CUDAGraphMode
+from vllm.platforms import PlatformEnum
+from vllm.platforms.npu import NPUPlatform
+from vllm.v1.attention.selector import AttentionSelectorConfig  # type: ignore
 
 
 class TestNPUPlatform(TestBase):
@@ -50,7 +50,7 @@ class TestNPUPlatform(TestBase):
         self.platform.supported_quantization[:] = ["ascend", "compressed-tensors"]
 
     def test_class_variables(self):
-        self.assertEqual(NPUPlatform._enum, PlatformEnum.OOT)
+        self.assertEqual(NPUPlatform._enum, PlatformEnum.NPU)
         self.assertEqual(NPUPlatform.device_name, "npu")
         self.assertEqual(NPUPlatform.device_type, "npu")
         self.assertEqual(NPUPlatform.simple_compile_backend, "eager")
@@ -166,9 +166,9 @@ class TestNPUPlatform(TestBase):
 
         self.assertIsNone(vllm_config.compilation_config.max_cudagraph_capture_size)
 
-    @patch("vllm_ascend.platform.refresh_block_size")
-    @patch("vllm_ascend.platform.get_ascend_device_type", return_value=AscendDeviceType.A3)
-    @patch("vllm_ascend.platform.enable_sp", return_value=False)
+    @patch("vllm.platforms.npu.refresh_block_size")
+    @patch("vllm.platforms.npu.get_ascend_device_type", return_value=AscendDeviceType.A3)
+    @patch("vllm.platforms.npu.enable_sp", return_value=False)
     @patch("vllm_ascend.ascend_config.init_ascend_config")
     @patch("vllm_ascend.quantization.utils.maybe_auto_detect_quantization")
     def test_check_and_update_config_preserves_platform_default_max_input(

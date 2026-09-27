@@ -359,6 +359,8 @@ class GroupCoordinator:
             self.device = torch.device(f"cuda:{local_rank}")
         elif current_platform.is_xpu():
             self.device = torch.device(f"xpu:{local_rank}")
+        elif current_platform.is_npu():
+            self.device = torch.device(f"npu:{local_rank}")
         elif current_platform.is_out_of_tree():
             self.device = torch.device(f"{current_platform.device_name}:{local_rank}")
         else:

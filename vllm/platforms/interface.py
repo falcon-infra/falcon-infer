@@ -43,6 +43,7 @@ class PlatformEnum(enum.Enum):
     CPU = enum.auto()
     OOT = enum.auto()
     UNSPECIFIED = enum.auto()
+    NPU = enum.auto()
 
 
 class CpuArchEnum(enum.Enum):
@@ -167,6 +168,9 @@ class Platform:
     def is_cpu(self) -> bool:
         return self._enum == PlatformEnum.CPU
 
+    def is_npu(self) -> bool:
+        return self._enum == PlatformEnum.NPU
+
     def is_zen_cpu(self) -> bool:
         return False
 
@@ -189,6 +193,14 @@ class Platform:
         # exact GPU model statelessly here. So we return True for
         # all ROCm platforms for now.
         return self._enum in (PlatformEnum.CUDA, PlatformEnum.ROCM)
+
+    @classmethod
+    def register_builtin_components(cls) -> None:
+        """Initialize built-in platform components once per process.
+
+        Called by the shared component/plugin loader before optional plugins.
+        Platforms with no packaged components need no initialization here.
+        """
 
     @classmethod
     def get_pass_manager_cls(cls) -> str:

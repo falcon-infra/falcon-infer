@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
-from vllm.distributed import get_pcp_group
 
-from vllm_ascend.platform import ModelConfig
+from vllm.distributed import get_pcp_group
+from vllm.platforms.npu import ModelConfig
 from vllm_ascend.utils import singleton
 
 

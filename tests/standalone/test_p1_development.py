@@ -199,6 +199,20 @@ class DevelopmentContracts(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Old/conflicting"):
                     DEV.check_install_target(True)
 
+    def test_install_accepts_p2_pair_and_rejects_retained_p1_vllm(self) -> None:
+        versions = {"vllm": "0.18.0+ascend.p2", "lmcache": "0.4.3+ascend.p1"}
+
+        def installed(name: str) -> str:
+            if name in versions:
+                return versions[name]
+            raise DEV.metadata.PackageNotFoundError(name)
+
+        with patch.object(DEV.metadata, "version", side_effect=installed):
+            DEV.check_install_target(True)
+            versions["vllm"] = "0.18.0+ascend.p1"
+            with self.assertRaisesRegex(RuntimeError, "Old/conflicting.*vllm"):
+                DEV.check_install_target(True)
+
     def test_command_failure_preserves_log_and_exit_status(self) -> None:
         output = self.root / "logs"
         output.mkdir()

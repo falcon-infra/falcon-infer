@@ -19,7 +19,7 @@
 def register():
     """Register the NPU platform."""
 
-    return "vllm_ascend.platform.NPUPlatform"
+    return "vllm.platforms.npu.NPUPlatform"
 
 
 def register_connector():

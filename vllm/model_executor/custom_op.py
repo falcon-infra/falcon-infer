@@ -200,7 +200,8 @@ class CustomOp(nn.Module):
             return self.forward_tpu
         elif current_platform.is_xpu():
             return self.forward_xpu
-        elif current_platform.is_out_of_tree():
+        elif current_platform.is_npu() or current_platform.is_out_of_tree():
+            # Preserve Ascend's current op bindings until their P2 migration.
             return self.forward_oot
         else:
             return self.forward_cuda

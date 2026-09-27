@@ -2,6 +2,22 @@
 
 This document provides instructions for contributors to the vLLM Ascend project. Please read and follow these guidelines to ensure code quality, maintainability, and consistency.
 
+## P2 native integration (2026-09-27)
+
+The user authorized P2 after preserving the paired P1 branches. For this fork,
+native integration supersedes the plugin-only and GPU-inheritance patterns
+below. Move implementations into vLLM with symbol mappings and focused tests;
+do not add patches or GPU inheritance merely to follow the historical guide.
+The platform implementation now belongs in `vllm/platforms/npu.py`; the old
+platform module only preserves imports during migration. Keep existing runtime
+patches until their behavior has been integrated in a later P2 batch.
+
+P1/baseline NPU retesting and their known defect repairs are deferred by the
+user. Run the relevant available host checks for P2 changes, record unavailable
+hardware checks, and retain the NPU acceptance requirements for later execution.
+Do not install CANN/torch or compile native artifacts on the source workstation.
+The `p1` branch remains the retained input; perform P2 edits on `p2`.
+
 ---
 
 ## Table of Contents

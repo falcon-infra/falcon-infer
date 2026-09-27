@@ -1,5 +1,18 @@
 # Agent Instructions for vLLM
 
+## Current fork: P2 native Ascend integration
+
+The user authorized preserving P1 and starting P2 on 2026-09-27. Use the `p2`
+branch for implementation; retain `p1` for later baseline comparisons and repairs.
+Existing `main` and the original four repositories are not the P2 work area.
+Preserve behavior when moving platform, registration, Runner, graph, and kernel
+code, and document each migration batch. P1 acceptance remains incomplete.
+
+On this source workstation, use the available Python tooling for static and
+host tests. Do not install torch/CANN or build native artifacts. Record NPU/ABI
+validation as pending for the intranet environment. The phase workflow takes
+precedence over the generic environment installation instructions below.
+
 > These instructions apply to **all** AI-assisted contributions to `vllm-project/vllm`.
 > Breaching these guidelines can result in automatic banning.
 
