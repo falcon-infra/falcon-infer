@@ -51,7 +51,7 @@ class DevelopmentContracts(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.primary, self.version = DEV.project()
-        self.addon = self.primary + "_ascend"
+        self.addon = BUILD.resource_namespace(self.primary)
         for module in (BUILD, DEV):
             self.enterContext(patch.object(module, "ROOT", self.root))
         self.dist = Distribution({"name": self.primary, "version": self.version})
@@ -118,12 +118,20 @@ class DevelopmentContracts(unittest.TestCase):
                 command.run()
 
     def test_editable_maps_all_resources_outside_pip_temporary_tree(self) -> None:
-        self.populate(self.staging, "strict-editable")
+        resources = self.populate(self.staging, "strict-editable")
         self.command.editable_mode = True
         self.command.publish_outputs(self.staging)
         mapping = self.command.get_output_mapping()
         self.assertEqual(set(self.command.get_outputs()), set(mapping))
-        self.assertGreaterEqual(len(mapping), 8)
+        expected = set(resources) | {
+            f"{namespace}/{name}"
+            for namespace in {self.primary, self.addon}
+            for name in ("__init__.py", "_version.py")
+        } | {f"{self.addon}/_build_info.py", f"{self.addon}/p1_build_info.json"}
+        self.assertEqual(
+            {str(Path(path).relative_to(self.command.build_lib)) for path in mapping},
+            expected,
+        )
         self.assertFalse(Path(self.command.build_lib).exists())
         for output, source in mapping.items():
             self.assertTrue(Path(output).is_relative_to(Path(self.command.build_lib)))
@@ -266,6 +274,20 @@ class DevelopmentContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regular wheel"):
             DEV.wheel_info(wheel)
 
+    def test_native_wheel_rejects_old_namespace_and_patch_archives(self) -> None:
+        for member in (
+            "vllm_ascend/__init__.py",
+            "ascend/legacy_patches/worker/patch_eagle.py",
+            "ascend/legacy_plugin/platform.py",
+        ):
+            with self.subTest(member=member):
+                wheel = self.root / "fixture.whl"
+                self.make_wheel(wheel)
+                with zipfile.ZipFile(wheel, "a") as archive:
+                    archive.writestr(member, "# must not be installed")
+                with self.assertRaisesRegex(ValueError, "retired plugin namespace"):
+                    DEV.wheel_info(wheel)
+
     def test_metadata_failure_does_not_import_torch_or_run_compilers(self) -> None:
         with (
             patch.object(
@@ -308,7 +330,7 @@ class DevelopmentContracts(unittest.TestCase):
             if command[0] == "bash":
                 resource = (
                     Path(command[2])
-                    / "vllm_ascend/_cann_ops_custom/vendors/vllm-ascend"
+                    / "vllm/_cann_ops_custom/vendors/vllm-ascend"
                     / "op_api/lib/fixture.so"
                 )
                 resource.parent.mkdir(parents=True)

@@ -1,12 +1,10 @@
 import pytest
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sorted_cache import (
-    allocate_sorted_resident_state,
-    allocate_sorted_resident_workspace,
-    resident_shard_count,
-    sorted_resident_workspace_prefix,
-)
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import allocate_sorted_resident_state
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import allocate_sorted_resident_workspace
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import resident_shard_count
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import sorted_resident_workspace_prefix
 
 
 @pytest.mark.parametrize(

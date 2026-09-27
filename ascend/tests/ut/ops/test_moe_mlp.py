@@ -4,14 +4,13 @@ from unittest.mock import patch
 
 import torch
 
-from vllm_ascend.ops.fused_moe.moe_mlp import cumsum_group_list, unified_apply_mlp
-from vllm_ascend.ops.fused_moe.moe_runtime_args import (
-    MoEMlpComputeInput,
-    MoEQuantParams,
-    MoEWeights,
-)
-from vllm_ascend.ops.fused_moe.moe_stage_params import MoEMxfpParams
-from vllm_ascend.quantization.quant_type import QuantType
+from vllm.model_executor.layers.ascend.fused_moe.moe_mlp import cumsum_group_list
+from vllm.model_executor.layers.ascend.fused_moe.moe_mlp import unified_apply_mlp
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEMlpComputeInput
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEQuantParams
+from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import MoEWeights
+from vllm.model_executor.layers.ascend.fused_moe.moe_stage_params import MoEMxfpParams
+from vllm.model_executor.layers.quantization.ascend.quant_type import QuantType
 
 
 class TestCumsumGroupList(unittest.TestCase):
@@ -71,8 +70,8 @@ class TestUnifiedApplyMlpRequest(unittest.TestCase):
         )
 
         with (
-            patch("vllm_ascend.ops.fused_moe.moe_mlp.unquant_apply_mlp", return_value=expected) as mock_unquant,
-            patch("vllm_ascend.ops.fused_moe.moe_mlp.quant_apply_mlp") as mock_quant,
+            patch("vllm.model_executor.layers.ascend.fused_moe.moe_mlp.unquant_apply_mlp", return_value=expected) as mock_unquant,
+            patch("vllm.model_executor.layers.ascend.fused_moe.moe_mlp.quant_apply_mlp") as mock_quant,
         ):
             output = unified_apply_mlp(mlp_compute_input=mlp_compute_input)
 
@@ -112,8 +111,8 @@ class TestUnifiedApplyMlpRequest(unittest.TestCase):
         )
 
         with (
-            patch("vllm_ascend.ops.fused_moe.moe_mlp.quant_apply_mlp", return_value=expected) as mock_quant,
-            patch("vllm_ascend.ops.fused_moe.moe_mlp.unquant_apply_mlp") as mock_unquant,
+            patch("vllm.model_executor.layers.ascend.fused_moe.moe_mlp.quant_apply_mlp", return_value=expected) as mock_quant,
+            patch("vllm.model_executor.layers.ascend.fused_moe.moe_mlp.unquant_apply_mlp") as mock_unquant,
         ):
             output = unified_apply_mlp(mlp_compute_input=mlp_compute_input)
 

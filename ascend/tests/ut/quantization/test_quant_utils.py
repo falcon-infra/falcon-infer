@@ -5,12 +5,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tests.ut.base import TestBase
-from vllm_ascend.quantization.modelslim_config import MODELSLIM_CONFIG_FILENAME
-from vllm_ascend.quantization.utils import (
-    detect_quantization_method,
-    maybe_auto_detect_quantization,
-)
-from vllm_ascend.utils import ASCEND_QUANTIZATION_METHOD, COMPRESSED_TENSORS_METHOD
+from vllm.model_executor.layers.quantization.ascend.modelslim_config import MODELSLIM_CONFIG_FILENAME
+from vllm.model_executor.layers.quantization.ascend.utils import detect_quantization_method
+from vllm.model_executor.layers.quantization.ascend.utils import maybe_auto_detect_quantization
+from vllm.utils.ascend import ASCEND_QUANTIZATION_METHOD
+from vllm.utils.ascend import COMPRESSED_TENSORS_METHOD
 
 
 class TestDetectQuantizationMethod(TestBase):
@@ -107,14 +106,14 @@ class TestMaybeAutoDetectQuantization(TestBase):
         vllm_config.model_config.revision = revision
         return vllm_config
 
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=None)
     def test_no_detection_does_nothing(self, mock_detect):
         vllm_config = self._make_vllm_config()
         maybe_auto_detect_quantization(vllm_config)
         self.assertIsNone(vllm_config.model_config.quantization)
 
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=ASCEND_QUANTIZATION_METHOD)
     def test_user_specified_same_method_no_change(self, mock_detect):
         vllm_config = self._make_vllm_config(
@@ -125,7 +124,7 @@ class TestMaybeAutoDetectQuantization(TestBase):
 
     @patch("vllm.config.VllmConfig._get_quantization_config",
            return_value=MagicMock())
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=ASCEND_QUANTIZATION_METHOD)
     def test_auto_detect_sets_quantization_and_logs_info(
             self, mock_detect, mock_get_quant_config):
@@ -134,7 +133,7 @@ class TestMaybeAutoDetectQuantization(TestBase):
         vllm_config = self._make_vllm_config(
             model_path="/fake/quant_model", quantization=None)
 
-        with patch("vllm_ascend.quantization.utils.logger") as mock_logger:
+        with patch("vllm.model_executor.layers.quantization.ascend.utils.logger") as mock_logger:
             maybe_auto_detect_quantization(vllm_config)
 
         self.assertEqual(vllm_config.model_config.quantization,
@@ -145,7 +144,7 @@ class TestMaybeAutoDetectQuantization(TestBase):
         self.assertIn(ASCEND_QUANTIZATION_METHOD, call_args)
         self.assertIn("/fake/quant_model", call_args)
 
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=ASCEND_QUANTIZATION_METHOD)
     def test_user_mismatch_logs_warning(self, mock_detect):
         """When user specifies a different method than auto-detected,
@@ -154,7 +153,7 @@ class TestMaybeAutoDetectQuantization(TestBase):
             model_path="/fake/quant_model",
             quantization=COMPRESSED_TENSORS_METHOD)
 
-        with patch("vllm_ascend.quantization.utils.logger") as mock_logger:
+        with patch("vllm.model_executor.layers.quantization.ascend.utils.logger") as mock_logger:
             maybe_auto_detect_quantization(vllm_config)
 
         self.assertEqual(vllm_config.model_config.quantization,
@@ -165,13 +164,13 @@ class TestMaybeAutoDetectQuantization(TestBase):
         self.assertIn(ASCEND_QUANTIZATION_METHOD, call_args)
         self.assertIn(COMPRESSED_TENSORS_METHOD, call_args)
 
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=None)
     def test_no_detection_emits_no_log(self, mock_detect):
         """When no quantization is detected, no log should be emitted."""
         vllm_config = self._make_vllm_config(quantization=None)
 
-        with patch("vllm_ascend.quantization.utils.logger") as mock_logger:
+        with patch("vllm.model_executor.layers.quantization.ascend.utils.logger") as mock_logger:
             maybe_auto_detect_quantization(vllm_config)
 
         mock_logger.info.assert_not_called()
@@ -180,7 +179,7 @@ class TestMaybeAutoDetectQuantization(TestBase):
 
     @patch("vllm.config.VllmConfig._get_quantization_config",
            return_value=MagicMock())
-    @patch("vllm_ascend.quantization.utils.detect_quantization_method",
+    @patch("vllm.model_executor.layers.quantization.ascend.utils.detect_quantization_method",
            return_value=ASCEND_QUANTIZATION_METHOD)
     def test_passes_revision_to_detect(self, mock_detect, mock_get_quant):
         """Verify that model revision is forwarded to detect_quantization_method."""

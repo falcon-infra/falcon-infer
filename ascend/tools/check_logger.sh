@@ -15,55 +15,8 @@
 # limitations under the License.
 # This file is a part of the vllm-ascend project.
 #
-# Check that vllm_ascend modules do not use init_logger(__name__).
-#
-# vllm's logging config registers a handler only for the "vllm" logger
-# namespace.  Any logger created via init_logger(__name__) inside a
-# vllm_ascend module ends up in the "vllm_ascend.*" namespace, which has
-# no handler, so every log call is silently dropped.
-#
-# The correct pattern is:
-#   from vllm.logger import logger
-#
-
+# P2 uses vllm's native logger namespace. Preserve this historical tool entry
+# as a wrapper around the native ownership gate; there is no plugin logger rule.
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PATCH_DIR="$REPO_ROOT/vllm_ascend/"
-
-VIOLATIONS=0
-
-for FILE in $(find "$PATCH_DIR" -type f -name "*.py" 2>/dev/null); do
-    [[ -f "$FILE" ]] || continue
-
-    # Find lines that call init_logger(__name__)
-    while IFS= read -r MATCH; do
-        LINENUM=$(echo "$MATCH" | cut -d: -f1)
-        LINE=$(echo "$MATCH" | cut -d: -f2-)
-        if [[ $VIOLATIONS -eq 0 ]]; then
-            echo ""
-        fi
-        echo "  $FILE:$LINENUM: $LINE"
-        VIOLATIONS=$(( VIOLATIONS + 1 ))
-    done < <(grep -n 'init_logger[[:space:]]*([[:space:]]*__name__[[:space:]]*)' "$FILE" 2>/dev/null || true)
-done
-
-if [[ $VIOLATIONS -gt 0 ]]; then
-    echo ""
-    echo "Found $VIOLATIONS violation(s): init_logger(__name__) must not be used in vllm_ascend modules."
-    echo ""
-    echo "vllm's logging handler is registered only for the 'vllm' namespace."
-    echo "Loggers created with init_logger(__name__) inside vllm_ascend end up"
-    echo "in the 'vllm_ascend.*' namespace, which has no handler — all log"
-    echo "messages are silently dropped."
-    echo ""
-    echo "Fix: replace"
-    echo "   from vllm.logger import init_logger"
-    echo "   logger = init_logger(__name__)"
-    echo "with"
-    echo "   from vllm.logger import logger"
-    exit 1
-fi
-
-exit 0
+NATIVE_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 "$NATIVE_REPO_ROOT/tools/check_npu_native.py"

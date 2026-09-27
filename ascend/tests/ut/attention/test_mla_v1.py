@@ -8,15 +8,16 @@ from vllm.model_executor.layers.linear import (LinearBase,
                                                UnquantizedLinearMethod)
 
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_config import init_ascend_config
-from vllm_ascend.attention.attention_v1 import AscendAttentionState
-from vllm_ascend.attention.mla_v1 import (AscendMLABackend,
-                                          AscendMLADecodeMetadata,
-                                          AscendMLAImpl, AscendMLAMetadata,
-                                          AscendMLAMetadataBuilder,
-                                          AscendMLAPrefillMetadata,
-                                          ChunkedContextMetadata)
-from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
+from vllm.config.ascend import init_ascend_config
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLABackend
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLADecodeMetadata
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLAImpl
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLAMetadata
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLAMetadataBuilder
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLAPrefillMetadata
+from vllm.v1.attention.backends.ascend.mla_v1 import ChunkedContextMetadata
+from vllm.v1.attention.backends.ascend.utils import AscendCommonAttentionMetadata
 
 
 class TestAscendMLABackend(TestBase):
@@ -31,11 +32,11 @@ class TestAscendMLABackend(TestBase):
         self.mock_config.parallel_config = mock_parallel_config
 
         self.utils_patcher = patch(
-            'vllm_ascend.attention.utils.get_current_vllm_config',
+            'vllm.v1.attention.backends.ascend.utils.get_current_vllm_config',
             return_value=self.mock_config)
         self.utils_patcher.start()
 
-        from vllm_ascend.attention.utils import enable_cp
+        from vllm.v1.attention.backends.ascend.utils import enable_cp
         enable_cp.cache_clear()
 
     def test_get_name(self):
@@ -246,7 +247,7 @@ class TestAscendMLAMetadataBuilder(TestBase):
         mock_vllm_config.speculative_config = None
 
         ascend_config = MagicMock()
-        with patch("vllm_ascend.attention.mla_v1.get_ascend_config",
+        with patch("vllm.v1.attention.backends.ascend.mla_v1.get_ascend_config",
                    return_value=ascend_config):
             builder = AscendMLAMetadataBuilder(None, None, mock_vllm_config,
                                                mock_device)
@@ -274,7 +275,7 @@ class TestAscendMLAMetadataBuilder(TestBase):
         mock_vllm_config.speculative_config = mock_spec_config
 
         ascend_config = MagicMock()
-        with patch("vllm_ascend.attention.mla_v1.get_ascend_config",
+        with patch("vllm.v1.attention.backends.ascend.mla_v1.get_ascend_config",
                    return_value=ascend_config):
             builder = AscendMLAMetadataBuilder(None, None, mock_vllm_config,
                                                mock_device)
@@ -285,8 +286,8 @@ class TestAscendMLAMetadataBuilder(TestBase):
                 builder.chunked_prefill_enabled,
                 mock_vllm_config.scheduler_config.enable_chunked_prefill)
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
-    @patch('vllm_ascend.attention.attention_mask.get_pcp_group')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
+    @patch('vllm.v1.attention.backends.ascend.attention_mask.get_pcp_group')
     @patch('vllm.distributed.parallel_state.get_pcp_group')
     def test_ascend_mla_metadata_builder_build_full_graph(
             self, mock_get_pcp_group, mock_get_pcp_group_mask,
@@ -352,7 +353,7 @@ class TestAscendMLAMetadataBuilder(TestBase):
 
         mock_vllm_config.speculative_config = None
 
-        with patch("vllm_ascend.attention.mla_v1.get_ascend_config",
+        with patch("vllm.v1.attention.backends.ascend.mla_v1.get_ascend_config",
                    return_value=ascend_config):
             builder = AscendMLAMetadataBuilder(None, None, mock_vllm_config,
                                                mock_device)
@@ -480,10 +481,10 @@ class TestAscendMLAMetadataBuilderBuild(TestBase):
     def tearDown(self):
         self.parent_init_patcher.stop()
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
-    @patch('vllm_ascend.attention.attention_mask.get_pcp_group')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
+    @patch('vllm.v1.attention.backends.ascend.attention_mask.get_pcp_group')
     @patch('vllm.distributed.parallel_state.get_pcp_group')
-    @patch("vllm_ascend.attention.mla_v1.torch.zeros", wraps=torch.zeros)
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.torch.zeros", wraps=torch.zeros)
     @patch("torch.Tensor.npu", new=lambda self: self)
     @patch("torch.npu.is_available")
     def test_build_prefix_no_cache_metadata(self, mock_npu_available,
@@ -543,10 +544,10 @@ class TestAscendMLAMetadataBuilderBuild(TestBase):
             torch.all(metadata.slot_mapping == base_inputs["slot_mapping"]))
         self.assertEqual(metadata.head_dim, self.kv_cache_spec.head_size)
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
-    @patch('vllm_ascend.attention.attention_mask.get_pcp_group')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
+    @patch('vllm.v1.attention.backends.ascend.attention_mask.get_pcp_group')
     @patch('vllm.distributed.parallel_state.get_pcp_group')
-    @patch("vllm_ascend.attention.mla_v1.torch.zeros", wraps=torch.zeros)
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.torch.zeros", wraps=torch.zeros)
     @patch("torch.Tensor.npu", new=lambda self: self)
     @patch("torch.npu.is_available")
     def test_build_chunked_prefix_metadata(self, mock_npu_available,
@@ -607,8 +608,8 @@ class TestAscendMLAMetadataBuilderBuild(TestBase):
             torch.all(metadata.slot_mapping == base_inputs["slot_mapping"]))
         self.assertEqual(metadata.head_dim, self.kv_cache_spec.head_size)
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
-    @patch('vllm_ascend.attention.attention_mask.get_pcp_group')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
+    @patch('vllm.v1.attention.backends.ascend.attention_mask.get_pcp_group')
     @patch('vllm.distributed.parallel_state.get_pcp_group')
     def test_build_decode_only_metadata(self, mock_get_pcp_group,
                                         mock_get_pcp_group_mask,
@@ -659,8 +660,8 @@ class TestAscendMLAMetadataBuilderBuild(TestBase):
             torch.all(metadata.slot_mapping == base_inputs["slot_mapping"]))
         self.assertEqual(metadata.head_dim, self.kv_cache_spec.head_size)
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
-    @patch('vllm_ascend.attention.attention_mask.get_pcp_group')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
+    @patch('vllm.v1.attention.backends.ascend.attention_mask.get_pcp_group')
     @patch('vllm.distributed.parallel_state.get_pcp_group')
     def test_build_for_graph_capture_decode_only(self, mock_get_pcp_group,
                                                  mock_get_pcp_group_mask,
@@ -712,7 +713,7 @@ class TestAscendMLAMetadataBuilderBuild(TestBase):
             torch.all(metadata.slot_mapping == base_inputs["slot_mapping"]))
         self.assertEqual(metadata.head_dim, self.kv_cache_spec.head_size)
 
-    @patch("vllm_ascend.attention.mla_v1.get_cos_and_sin_mla")
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_cos_and_sin_mla")
     def test_build_for_graph_capture_prefill(self, mock_get_cos_and_sin_mla):
         torch.Tensor.pin_memory = lambda x: x  # noqa
         common_attn_metadata = AscendCommonAttentionMetadata(
@@ -750,7 +751,7 @@ class TestAscendMLAImpl(TestBase):
 
     @patch('vllm.distributed.parallel_state._TP',
            new_callable=lambda: MagicMock(spec=GroupCoordinator))
-    @patch("vllm_ascend.attention.mla_v1.get_current_vllm_config")
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_current_vllm_config")
     def setUp(self, get_current_vllm_config, mock_tp):
         mock_tp.world_size = 2
         mock_tp.rank_in_group = MagicMock()
@@ -937,8 +938,8 @@ class TestAscendMLAImpl(TestBase):
 
         self.assertEqual(out.shape, prefix_out.shape)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch("vllm_ascend.attention.mla_v1.AscendMLAImpl._v_up_proj")
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.AscendMLAImpl._v_up_proj")
     @patch("torch_npu.npu_fused_infer_attention_score_v2")
     def test_forward_decode_without_graph(self,
                                           mock_npu_fused_infer_attention_score_v2,
@@ -975,7 +976,7 @@ class TestAscendMLAImpl(TestBase):
         mock_npu_fused_infer_attention_score_v2.assert_called_once()
 
     @patch("torch.ops.vllm.maybe_all_gather_and_maybe_unpad")
-    @patch("vllm_ascend.attention.mla_v1.get_weight_prefetch_method",
+    @patch("vllm.v1.attention.backends.ascend.mla_v1.get_weight_prefetch_method",
            return_value=MagicMock())
     def test_mla_preprocess(self, mock_get_weight_prefetch_method,
                             mock_maybe_all_gather_and_maybe_unpad):
@@ -1103,7 +1104,7 @@ class TestAscendMLAImpl(TestBase):
         self.assertEqual(k_pe.shape[-1], self.impl.qk_rope_head_dim)
         self.assertEqual(k_nope.shape[-1], self.impl.kv_lora_rank)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch("torch_npu.npu_fused_infer_attention_score_v2")
     def test_forward_decode(self, mock_npu_fused_infer_attention_score_v2,
                             mock_get_forward_context):

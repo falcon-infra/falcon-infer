@@ -43,14 +43,14 @@ import torch.distributed._symmetric_memory
 from torch.distributed import Backend, ProcessGroup
 
 import vllm.envs as envs
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
+from vllm.distributed.ascend.collectives import broadcast as npu_broadcast
 from vllm.distributed.device_communicators.base_device_communicator import (
     DeviceCommunicatorBase,
 )
 from vllm.distributed.utils import StatelessProcessGroup
 from vllm.logger import init_logger
-from vllm.utils.import_utils import resolve_obj_by_qualname
 from vllm.utils.network_utils import get_distributed_init_method
-from vllm.utils.system_utils import suppress_stdout
 from vllm.utils.torch_utils import (
     direct_register_custom_op,
 )
@@ -322,6 +322,11 @@ class GroupCoordinator:
         use_message_queue_broadcaster: bool = False,
         group_name: str | None = None,
     ):
+        from vllm.distributed.device_communicators.npu_communicator import (
+            NPUCommunicator,
+        )
+        from vllm.utils.ascend import create_hccl_pg_options
+
         group_name = group_name or "anonymous"
         self.unique_name = _get_unique_name(group_name)
         _register_group(self)
@@ -331,15 +336,16 @@ class GroupCoordinator:
 
         self_device_group = None
         self_cpu_group = None
+        hccl_pg_options = create_hccl_pg_options(group_name)
 
         for ranks in group_ranks:
             device_group = torch.distributed.new_group(
-                ranks, backend=torch_distributed_backend
+                ranks, backend=torch_distributed_backend, pg_options=hccl_pg_options
             )
+
             # a group with `gloo` backend, to allow direct coordination between
             # processes through the CPU.
-            with suppress_stdout():
-                cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+            cpu_group = torch.distributed.new_group(ranks, backend="gloo")
             if self.rank in ranks:
                 self.ranks = ranks
                 self.world_size = len(ranks)
@@ -352,27 +358,12 @@ class GroupCoordinator:
 
         self.cpu_group = self_cpu_group
         self.device_group = self_device_group
-
-        from vllm.platforms import current_platform
-
-        if current_platform.is_cuda_alike():
-            self.device = torch.device(f"cuda:{local_rank}")
-        elif current_platform.is_xpu():
-            self.device = torch.device(f"xpu:{local_rank}")
-        elif current_platform.is_npu():
-            self.device = torch.device(f"npu:{local_rank}")
-        elif current_platform.is_out_of_tree():
-            self.device = torch.device(f"{current_platform.device_name}:{local_rank}")
-        else:
-            self.device = torch.device("cpu")
+        self.device = torch.device(f"npu:{local_rank}")
 
         self.use_device_communicator = use_device_communicator
         self.device_communicator = None
         if use_device_communicator and self.world_size > 1:
-            device_comm_cls = resolve_obj_by_qualname(
-                current_platform.get_device_communicator_cls()
-            )
-            self.device_communicator = device_comm_cls(
+            self.device_communicator = NPUCommunicator(
                 cpu_group=self.cpu_group,
                 device=self.device,
                 device_group=self.device_group,
@@ -387,15 +378,8 @@ class GroupCoordinator:
                 self.cpu_group, 1 << 22, 6
             )
 
-        # TODO(#35915): Remove is_tpu() check once tpu_inference
-        # overrides use_custom_op_collectives() to return True.
-        self.use_custom_op_call = (
-            current_platform.is_tpu() or current_platform.use_custom_op_collectives()
-        )
-
-        self.use_cpu_custom_send_recv = current_platform.is_cpu() and hasattr(
-            torch.ops._C, "init_shm_manager"
-        )
+        self.use_custom_op_call = True
+        self.use_cpu_custom_send_recv = False
 
     def create_mq_broadcaster(
         self, writer_rank=0, external_writer_handle=None, blocking=True
@@ -460,6 +444,20 @@ class GroupCoordinator:
 
     @contextmanager
     def graph_capture(self, graph_capture_context: GraphCaptureContext | None = None):
+
+        from vllm.platforms import current_platform
+
+        if current_platform.is_npu():
+            stream = (
+                graph_capture_context.stream
+                if graph_capture_context
+                else torch.npu.Stream()
+            )
+            context = graph_capture_context or GraphCaptureContext(stream)
+            stream.wait_stream(torch.npu.current_stream())
+            with torch.npu.stream(stream):
+                yield context
+            return
         if graph_capture_context is None:
             stream = torch.cuda.Stream()
             graph_capture_context = GraphCaptureContext(stream)
@@ -602,9 +600,7 @@ class GroupCoordinator:
         if self.world_size == 1:
             return input_
         # Broadcast.
-        torch.distributed.broadcast(
-            input_, src=self.ranks[src], group=self.device_group
-        )
+        npu_broadcast(input_, src=self.ranks[src], group=self.device_group)
         return input_
 
     def broadcast_object(self, obj: Any | None = None, src: int = 0):
@@ -747,12 +743,12 @@ class GroupCoordinator:
                     continue
                 if tensor.is_cpu:
                     # use metadata_group for CPU tensors
-                    handle = torch.distributed.broadcast(
+                    handle = npu_broadcast(
                         tensor, src=self.ranks[src], group=metadata_group, async_op=True
                     )
                 else:
                     # use group for GPU tensors
-                    handle = torch.distributed.broadcast(
+                    handle = npu_broadcast(
                         tensor, src=self.ranks[src], group=group, async_op=True
                     )
                 async_handles.append(handle)
@@ -774,7 +770,7 @@ class GroupCoordinator:
                         continue
                     if tensor.is_cpu:
                         # use metadata_group for CPU tensors
-                        handle = torch.distributed.broadcast(
+                        handle = npu_broadcast(
                             tensor,
                             src=self.ranks[src],
                             group=metadata_group,
@@ -782,7 +778,7 @@ class GroupCoordinator:
                         )
                     else:
                         # use group for GPU tensors
-                        handle = torch.distributed.broadcast(
+                        handle = npu_broadcast(
                             tensor, src=self.ranks[src], group=group, async_op=True
                         )
                     async_handles.append(handle)
@@ -1117,6 +1113,29 @@ class GroupCoordinator:
         else:
             return hidden_states
 
+    def all_to_all(
+        self,
+        input_: torch.Tensor,
+        scatter_dim: int = 0,
+        gather_dim: int = -1,
+        scatter_sizes: list[int] | None = None,
+        gather_sizes: list[int] | None = None,
+    ) -> torch.Tensor:
+        if self.world_size == 1:
+            return input_
+        assert -input_.dim() <= scatter_dim < input_.dim(), (
+            f"Invalid scatter dim ({scatter_dim}) for input tensor with shape {input_.size()}"
+        )
+        assert -input_.dim() <= gather_dim < input_.dim(), (
+            f"Invalid gather dim ({gather_dim}) for input tensor with shape {input_.size()}"
+        )
+        assert self.device_communicator is not None, (
+            "device_communicator should be initialized when world_size > 1"
+        )
+        return self.device_communicator.all_to_all(
+            input_, scatter_dim, gather_dim, scatter_sizes, gather_sizes
+        )
+
 
 _WORLD: GroupCoordinator | None = None
 _INNER_DP_WORLD: GroupCoordinator | None = None
@@ -1294,6 +1313,16 @@ def graph_capture(device: torch.device):
     in order to explicitly distinguish the kernels to capture
     from other kernels possibly launched on background in the default stream.
     """
+    from vllm.platforms import current_platform
+
+    if current_platform.is_npu():
+        from vllm.distributed.ascend.parallel_state import (
+            graph_capture as npu_graph_capture,
+        )
+
+        with npu_graph_capture(device) as context:
+            yield context
+        return
     context = GraphCaptureContext(torch.cuda.Stream(device=device))
     with get_tp_group().graph_capture(context), get_pp_group().graph_capture(context):
         yield context
@@ -2017,7 +2046,7 @@ def in_the_same_node_as(
             shm.unlink()
 
     if isinstance(pg, ProcessGroup):
-        torch.distributed.all_reduce(is_in_the_same_node, group=pg)
+        npu_all_reduce(is_in_the_same_node, group=pg)
         aggregated_data = is_in_the_same_node
     else:
         aggregated_data = torch.zeros_like(is_in_the_same_node)

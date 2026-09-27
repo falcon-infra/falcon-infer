@@ -20,8 +20,9 @@ from vllm.v1.request import Request, RequestStatus
 from vllm.v1.structured_output import StructuredOutputManager
 
 from tests.ut.base import TestBase
-from vllm_ascend.core.recompute_scheduler import AsyncRecomputeScheduler, RecomputeScheduler
-from vllm_ascend.core.scheduler_dynamic_batch import SchedulerDynamicBatch
+from vllm.v1.core.sched.recompute_scheduler import AsyncRecomputeScheduler
+from vllm.v1.core.sched.recompute_scheduler import RecomputeScheduler
+from vllm.v1.core.sched.dynamic_batch_scheduler import SchedulerDynamicBatch
 
 EOS_TOKEN_ID = 50256
 MODEL = "Qwen3-0.6B"

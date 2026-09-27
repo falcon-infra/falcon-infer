@@ -99,17 +99,10 @@ class NativePlatformTests(unittest.TestCase):
         )
         self.registry = load_file("vllm.platforms", "vllm/platforms/__init__.py")
 
+
     def component_stubs(self) -> None:
-        for path, name, label in (
-            ("distributed.kv_transfer", "register_connector", "connector"),
-            ("model_loader.netloader", "register_netloader", "netloader"),
-            ("model_loader.rfork", "register_rforkloader", "rfork"),
-            ("profiling_config", "generate_service_profiling_config", "profiling"),
-        ):
-            qualified = "vllm_ascend." + path
-            sys.modules[qualified] = module(
-                qualified, **{name: lambda label=label: self.calls.append(label)}
-            )
+        name = "vllm.utils.ascend_profiling_config"
+        sys.modules[name] = module(name, generate_service_profiling_config=lambda: self.calls.append("profiling"))
 
     def plugin_loader(self, entries: list) -> ModuleType:
         self.component_stubs()
@@ -176,14 +169,14 @@ class NativePlatformTests(unittest.TestCase):
         loader = self.plugin_loader([])
         loader.load_general_plugins()
         loader.load_general_plugins()
-        self.assertEqual(self.calls, ["connector", "netloader", "rfork", "profiling"])
+        self.assertEqual(self.calls, ["profiling"])
 
     def test_optional_plugin_filter_does_not_filter_required_components(self) -> None:
         entry = SimpleNamespace(name="optional", value="example:register", load=Mock())
         self.envs.VLLM_PLUGINS = []
         self.plugin_loader([entry]).load_general_plugins()
         entry.load.assert_not_called()
-        self.assertEqual(self.calls, ["connector", "netloader", "rfork", "profiling"])
+        self.assertEqual(self.calls, ["profiling"])
 
     def test_optional_plugins_run_after_native_components(self) -> None:
         entry = SimpleNamespace(
@@ -193,7 +186,7 @@ class NativePlatformTests(unittest.TestCase):
         )
         self.plugin_loader([entry]).load_general_plugins()
         self.assertEqual(
-            self.calls, ["connector", "netloader", "rfork", "profiling", "optional"]
+            self.calls, ["profiling", "optional"]
         )
 
     def test_required_component_failure_stops_loading(self) -> None:
@@ -208,16 +201,10 @@ class NativePlatformTests(unittest.TestCase):
         ):
             loader.load_general_plugins()
 
-    def test_compatibility_import_returns_same_native_class(self) -> None:
-        sys.modules["vllm.platforms.npu"] = module(
-            "vllm.platforms.npu",
-            NPUPlatform=type(self.platform),
-            config_deprecated_logging=lambda: None,
-        )
-        compatibility = load_file(
-            "vllm_ascend.platform", "ascend/vllm_ascend/platform.py"
-        )
-        self.assertIs(compatibility.NPUPlatform, type(self.platform))
+
+    def test_native_package_has_no_legacy_platform_shim(self) -> None:
+        self.assertFalse((ROOT / "ascend/vllm_ascend/platform.py").exists())
+        self.assertTrue((ROOT / "vllm/platforms/npu.py").is_file())
 
     def test_npu_custom_op_keeps_ascend_binding(self) -> None:
         method = source_node("vllm/model_executor/custom_op.py", "dispatch_forward")
@@ -234,11 +221,11 @@ class NativePlatformTests(unittest.TestCase):
         class BoundOp:
             name = "test_op"
             _enforce_enable = True
-            forward_oot = object()
+            forward_npu = object()
             forward_cuda = object()
 
         op = BoundOp()
-        self.assertIs(namespace["dispatch_forward"](op, False), op.forward_oot)
+        self.assertIs(namespace["dispatch_forward"](op, False), op.forward_npu)
 
     def test_npu_group_devices_keep_local_rank(self) -> None:
         for relative, classname in (
@@ -249,12 +236,18 @@ class NativePlatformTests(unittest.TestCase):
             constructor = next(
                 node for node in cls.body if getattr(node, "name", None) == "__init__"
             )
-            branch = next(
-                node
-                for node in constructor.body
-                if isinstance(node, ast.If)
-                and ast.unparse(node.test) == "current_platform.is_cuda_alike()"
-            )
+            if classname == "GroupCoordinator":
+                branch = next(
+                    node for node in constructor.body
+                    if isinstance(node, ast.Assign)
+                    and ast.unparse(node.targets[0]) == "self.device"
+                )
+            else:
+                branch = next(
+                    node for node in constructor.body
+                    if isinstance(node, ast.If)
+                    and ast.unparse(node.test) == "current_platform.is_cuda_alike()"
+                )
             for rank in (0, 3, 7):
                 with self.subTest(file=relative, rank=rank):
                     coordinator = SimpleNamespace()
@@ -272,7 +265,7 @@ class NativePlatformTests(unittest.TestCase):
     def test_npu_moe_keeps_existing_ascend_backend(self) -> None:
         relative = "vllm/model_executor/layers/fused_moe/oracle/unquantized.py"
         node = source_node(relative, "select_unquantized_moe_backend")
-        backend = enum.Enum("Backend", "OOT CUDA CPU TPU XPU TRITON AITER")
+        backend = enum.Enum("Backend", "NPU OOT CUDA CPU TPU XPU TRITON AITER")
         namespace = execute_nodes(
             [node],
             {
@@ -296,7 +289,7 @@ class NativePlatformTests(unittest.TestCase):
             moe_backend="auto",
         )
         self.assertIs(
-            namespace["select_unquantized_moe_backend"](config, True, True), backend.OOT
+            namespace["select_unquantized_moe_backend"](config, True, True), backend.NPU
         )
 
     def test_metadata_no_longer_requires_ascend_entry_points(self) -> None:

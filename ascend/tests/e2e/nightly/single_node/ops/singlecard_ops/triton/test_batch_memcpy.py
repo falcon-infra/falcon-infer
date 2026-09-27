@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from vllm_ascend.ops.triton.batch_memcpy import batch_memcpy_kernel
+from vllm.model_executor.layers.ascend.triton.batch_memcpy import batch_memcpy_kernel
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 def test_batch_memcpy(dtype):

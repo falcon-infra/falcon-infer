@@ -10,18 +10,18 @@ import statistics
 
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sorted_cache import (
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sorted_cache import (
     allocate_sorted_resident_state,
     allocate_sorted_resident_workspace,
     prepare_resident_sharded_union_,
     prepare_sorted_resident_cache_,
     resident_shard_count,
 )
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sparse_cache import (
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import (
     allocate_resident_workspace,
     prepare_resident_sparse_cache_,
 )
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 
 def _measure_npu_ms(run, reset, warmups: int, iterations: int) -> list[float]:
@@ -82,9 +82,7 @@ def _synthetic_union(
     # exclusive split boundary.
     split_boundary = int(rows.max().item()) - 100
     union_count = split_boundary
-    selected = torch.zeros(
-        (requests, mtp * topk), dtype=torch.int32, device=device
-    )
+    selected = torch.zeros((requests, mtp * topk), dtype=torch.int32, device=device)
     selected[:, :union_count] = torch.arange(
         union_count, dtype=torch.int32, device=device
     )
@@ -93,9 +91,7 @@ def _synthetic_union(
         local_positions,
         torch.full_like(local_positions, -1),
     )
-    topk_indices = rows.repeat(requests, 1).reshape(
-        requests * mtp, 1, topk
-    )
+    topk_indices = rows.repeat(requests, 1).reshape(requests * mtp, 1, topk)
     return topk_indices, selected, mapping, union_count
 
 
@@ -128,13 +124,9 @@ def main(
         requests,
         device=device,
     )
-    count_seed = torch.zeros(
-        (requests, 16), dtype=torch.int32, device=device
-    )
+    count_seed = torch.zeros((requests, 16), dtype=torch.int32, device=device)
     count_seed[:, 0] = union_count
-    target_seed = torch.zeros(
-        (requests, capacity), dtype=torch.int64, device=device
-    )
+    target_seed = torch.zeros((requests, capacity), dtype=torch.int64, device=device)
     blocks_per_request = max_tokens // block_size
     block_table = torch.arange(
         requests * blocks_per_request,
@@ -162,43 +154,35 @@ def main(
         dtype=torch.int32,
         device=device,
     )
-    state_generations = torch.ones(
-        (2 * requests, 8), dtype=torch.int64, device=device
-    )
-    request_states = torch.arange(
-        requests, dtype=torch.int32, device=device
-    )
-    request_generations = torch.ones(
-        requests, dtype=torch.int64, device=device
-    )
-    workspace = allocate_resident_workspace(
-        requests, capacity, device=device
-    )
+    state_generations = torch.ones((2 * requests, 8), dtype=torch.int64, device=device)
+    request_states = torch.arange(requests, dtype=torch.int32, device=device)
+    request_generations = torch.ones(requests, dtype=torch.int64, device=device)
+    workspace = allocate_resident_workspace(requests, capacity, device=device)
 
     hit_count = int(union_count * hit_rate)
     seed_token_to_slot = token_to_slot.clone()
     seed_slot_to_token = slot_to_token.clone()
     if hit_count:
         hit_tokens = union_seed[:, :hit_count].to(torch.int64)
-        hit_slots = torch.arange(
-            capacity - hit_count,
-            capacity,
-            dtype=torch.int32,
-            device=device,
-        ).to(torch.int16).expand(requests, -1)
+        hit_slots = (
+            torch.arange(
+                capacity - hit_count,
+                capacity,
+                dtype=torch.int32,
+                device=device,
+            )
+            .to(torch.int16)
+            .expand(requests, -1)
+        )
         seed_token_to_slot[
             request_states.to(torch.int64).reshape(-1, 1),
             hit_tokens,
         ] = hit_slots
-        seed_slot_to_token[
-            :requests, capacity - hit_count : capacity
-        ].copy_(
+        seed_slot_to_token[:requests, capacity - hit_count : capacity].copy_(
             union_seed[:, :hit_count]
         )
 
-    sorted_workspace = allocate_sorted_resident_workspace(
-        requests, mtp, device=device
-    )
+    sorted_workspace = allocate_sorted_resident_workspace(requests, mtp, device=device)
     sorted_state = allocate_sorted_resident_state(
         requests, requests, mtp, device=device
     )
@@ -369,9 +353,7 @@ def main(
     for request in range(requests):
         miss_count = int(sorted_workspace.miss_counts[request, 0].cpu())
         actual_miss_set = set(
-            sorted_workspace.miss_tokens[
-                request, :miss_count
-            ].cpu().tolist()
+            sorted_workspace.miss_tokens[request, :miss_count].cpu().tolist()
         )
         if (
             miss_count != union_count - hit_count
@@ -382,9 +364,7 @@ def main(
             )
 
     # Save the exact scatter payload emitted by the hybrid planner.
-    scatter_indices_seed = (
-        workspace.state_token_indices[:requests].clone()
-    )
+    scatter_indices_seed = workspace.state_token_indices[:requests].clone()
     scatter_values_seed = workspace.short_sources[:requests].clone()
 
     # Recreate the exact gather indices without invoking resident finalize.
@@ -397,9 +377,7 @@ def main(
         token_stride,
         requests,
     )
-    gather_indices_seed = (
-        workspace.state_token_indices[:requests].clone()
-    )
+    gather_indices_seed = workspace.state_token_indices[:requests].clone()
     gather_output = workspace.old_slots_i16[:requests]
     scatter_target = seed_token_to_slot.clone()
 
@@ -479,9 +457,8 @@ def main(
     _summary("sorted-end2end", sorted_end_to_end_samples)
     torch_mean = statistics.fmean(torch_samples)
     hybrid_mean = statistics.fmean(hybrid_samples)
-    gather_scatter_mean = (
-        statistics.fmean(gather_samples)
-        + statistics.fmean(scatter_samples)
+    gather_scatter_mean = statistics.fmean(gather_samples) + statistics.fmean(
+        scatter_samples
     )
     print(
         "ACLNN gather+scatter: "

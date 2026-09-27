@@ -1,7 +1,7 @@
 import torch
 import pytest
 from vllm.triton_utils import triton
-from vllm_ascend.worker.v2.sample.logprob import _topk_log_softmax_kernel
+from vllm.v1.worker.npu.v2.sample.logprob import _topk_log_softmax_kernel
 
 
 @pytest.mark.parametrize("batch_size,vocab_size,num_logprobs", [

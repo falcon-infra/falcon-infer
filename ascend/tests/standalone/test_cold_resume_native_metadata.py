@@ -37,7 +37,7 @@ def api():
         get_cos_and_sin_mla=lambda positions, _: (torch.zeros_like(positions), torch.zeros_like(positions)),
         staged_sfa_connector_supports_sparse_load=lambda: True,
     )
-    path = Path(__file__).resolve().parents[2] / "vllm_ascend/attention/sfa_v1.py"
+    path = Path(__file__).resolve().parents[2] / "../vllm/v1/attention/backends/ascend/sfa_v1.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     nodes = [
         n
@@ -233,10 +233,10 @@ def native_api():
         PrefillCacheHit="prefix",
     )
     root = Path(__file__).resolve().parents[2]
-    tree = ast.parse((root / "vllm_ascend/attention/utils.py").read_text(encoding="utf-8"))
+    tree = ast.parse((root / "../vllm/v1/attention/backends/ascend/utils.py").read_text(encoding="utf-8"))
     names = {"_dsa_remap_frontier", "staged_sfa_metadata_sparse_route", "native_sfa_cold_resume_layout"}
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-    tree = ast.parse((root / "vllm_ascend/worker/model_runner_v1.py").read_text(encoding="utf-8"))
+    tree = ast.parse((root / "../vllm/v1/worker/npu_model_runner.py").read_text(encoding="utf-8"))
     nodes.append(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_build_attn_state"))
     future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
     exec(

@@ -1,6 +1,6 @@
 import torch
 
-from vllm_ascend._310p.ops.fla.chunk_gated_delta_rule import chunk_gated_delta_rule_pytorch
+from vllm.platforms.ascend_310p.ops.fla.chunk_gated_delta_rule import chunk_gated_delta_rule_pytorch
 
 
 def test_chunk_gated_delta_rule_310_output_shape_and_dtype():

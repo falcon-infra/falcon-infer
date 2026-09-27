@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import xgrammar as xgr
 
     from vllm.tokenizers import TokenizerLike
-    from vllm.v1.worker.gpu_input_batch import InputBatch
+    from vllm.v1.worker.input_batch import InputBatch
 else:
     xgr = LazyLoader("xgr", globals(), "xgrammar")
     oc = LazyLoader("oc", globals(), "outlines_core")

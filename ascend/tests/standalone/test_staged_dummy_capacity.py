@@ -37,7 +37,7 @@ def dummy_capture():
         return result
 
     runner.input_batch = SimpleNamespace(block_table=SimpleNamespace(block_tables=[table(36, 128), table(18, 256)]))
-    path = Path(__file__).resolve().parents[2] / "vllm_ascend/worker/model_runner_v1.py"
+    path = Path(__file__).resolve().parents[2] / "../vllm/v1/worker/npu_model_runner.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "NPUModelRunner")
     methods = [

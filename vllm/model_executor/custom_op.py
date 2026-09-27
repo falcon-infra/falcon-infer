@@ -44,6 +44,11 @@ class PluggableLayer(nn.Module):
     """
 
     def __new__(cls, *args, **kwargs):
+
+        if current_platform.is_npu():
+            from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+
+            return super().__new__(get_npu_layer_class(cls.__name__) or cls)
         try:
             layer_class_name = cls.__name__
         except AttributeError:
@@ -106,6 +111,11 @@ class CustomOp(nn.Module):
     """
 
     def __new__(cls, *args, **kwargs):
+
+        if current_platform.is_npu():
+            from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+
+            return super().__new__(get_npu_layer_class(cls.__name__) or cls)
         try:
             op_name = cls.__name__
         except AttributeError:
@@ -200,8 +210,9 @@ class CustomOp(nn.Module):
             return self.forward_tpu
         elif current_platform.is_xpu():
             return self.forward_xpu
-        elif current_platform.is_npu() or current_platform.is_out_of_tree():
-            # Preserve Ascend's current op bindings until their P2 migration.
+        elif current_platform.is_npu():
+            return self.forward_npu
+        elif current_platform.is_out_of_tree():
             return self.forward_oot
         else:
             return self.forward_cuda
@@ -351,3 +362,14 @@ class CustomOp(nn.Module):
         else:
             # Handle other unexpected cases if necessary
             raise TypeError("Decorator can only be applied to classes.")
+
+    def forward_npu(self, *args, **kwargs):
+        return self.forward_native(*args, **kwargs)
+
+
+def get_platform_class_by_name(class_name: str) -> type | None:
+    if current_platform.is_npu():
+        from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+
+        return get_npu_layer_class(class_name)
+    return get_oot_class_by_name(class_name)

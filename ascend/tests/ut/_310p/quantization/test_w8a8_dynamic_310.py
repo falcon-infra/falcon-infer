@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.quantization.methods.w8a8_dynamic import AscendW8A8DynamicFusedMoEMethod310
+from vllm.platforms.ascend_310p.quantization.methods.w8a8_dynamic import AscendW8A8DynamicFusedMoEMethod310
 
 
 class TestAscendW8A8FusedMoEMethod310(TestBase):
@@ -26,10 +26,10 @@ class TestAscendW8A8FusedMoEMethod310(TestBase):
     hidden_size = 128
     intermediate_size = 128
 
-    @patch("vllm_ascend._310p.quantization.methods.w8a8_dynamic.get_ep_group")
+    @patch("vllm.platforms.ascend_310p.quantization.methods.w8a8_dynamic.get_ep_group")
     def setUp(self, mock_get_ep_group):
         with patch(
-            "vllm_ascend._310p.quantization.methods.w8a8_dynamic.get_current_vllm_config"
+            "vllm.platforms.ascend_310p.quantization.methods.w8a8_dynamic.get_current_vllm_config"
         ) as mock_get_current_vllm_config:
             mock_vllm_config = Mock()
             mock_vllm_config.quant_config = Mock(quant_description={"group_size": 0})

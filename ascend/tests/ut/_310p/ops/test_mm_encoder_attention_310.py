@@ -1,3 +1,4 @@
+from vllm.model_executor.layers.ascend import initialize_native_ops
 #
 # Copyright (c) 2026 Huawei Technologies Co., Ltd. All Rights Reserved.
 #
@@ -17,26 +18,18 @@ from unittest import mock
 
 import torch
 
-from vllm_ascend import utils
-from vllm_ascend._310p.ops.mm_encoder_attention import AscendMMEncoderAttention310
+from vllm.utils import ascend as utils
+from vllm.platforms.ascend_310p.ops.mm_encoder_attention import AscendMMEncoderAttention310
 
 
-def test_register_customop_overrides_mm_encoder_attention_for_310p():
-    original_registered = utils._ASCEND_CUSTOMOP_IS_REIGISTERED
-    try:
-        utils._ASCEND_CUSTOMOP_IS_REIGISTERED = False
-        with (
-            mock.patch("vllm.model_executor.custom_op.CustomOp.register_oot"),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=True),
-        ):
-            utils.register_ascend_customop()
 
-        assert utils.REGISTERED_ASCEND_OPS["MMEncoderAttention"] is AscendMMEncoderAttention310
-    finally:
-        utils._ASCEND_CUSTOMOP_IS_REIGISTERED = original_registered
+def test_native_mm_encoder_attention_selects_310p():
+    from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+    with mock.patch("vllm.utils.ascend.is_310p", return_value=True):
+        assert get_npu_layer_class("MMEncoderAttention") is AscendMMEncoderAttention310
 
 
-def test_mm_encoder_attention_310_forward_oot_with_padding():
+def test_mm_encoder_attention_310_forward_npu_with_padding():
     layer = AscendMMEncoderAttention310.__new__(AscendMMEncoderAttention310)
     layer.num_heads = 4
     layer.num_kv_heads = 2
@@ -62,11 +55,11 @@ def test_mm_encoder_attention_310_forward_oot_with_padding():
         out.copy_(query + 1.0)
 
     with mock.patch(
-        "vllm_ascend._310p.ops.mm_encoder_attention.torch_npu._npu_flash_attention_unpad",
+        "vllm.platforms.ascend_310p.ops.mm_encoder_attention.torch_npu._npu_flash_attention_unpad",
         side_effect=fake_flash_attention_unpad,
         create=True,
     ):
-        out = layer.forward_oot(query, key, value)
+        out = layer.forward_npu(query, key, value)
 
     assert capture["query_shape"] == (bsz * q_len, layer.num_heads, 128)
     assert capture["key_shape"] == (bsz * kv_len, layer.num_heads, 128)

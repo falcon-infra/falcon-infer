@@ -19,13 +19,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import zipfile
 from email.parser import BytesParser
 from importlib import metadata
 from importlib.machinery import PathFinder
 from pathlib import Path
-
-import tomllib
 
 # Third Party
 from packaging.requirements import Requirement
@@ -195,7 +194,7 @@ def check_install_target(isolated: bool) -> None:
 def wheel_info(path: Path) -> dict:
     """Validate this project's native wheel identity, resources and build provenance."""
     primary, version = project()
-    addon = primary + "_ascend"
+    addon = builder.resource_namespace(primary)
     with zipfile.ZipFile(path) as wheel:
         names = wheel.namelist()
         metas = [name for name in names if name.endswith(".dist-info/METADATA")]
@@ -203,6 +202,15 @@ def wheel_info(path: Path) -> dict:
             raise ValueError("Invalid wheel metadata or duplicate/corrupt entries")
         if any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
             raise ValueError("Unsafe wheel member")
+        if primary == "vllm" and any(
+            name.startswith(
+                ("vllm_ascend/", "ascend/legacy_patches/", "ascend/legacy_plugin/")
+            )
+            for name in names
+        ):
+            raise ValueError(
+                "P2 wheel contains a retired plugin namespace or patch archive"
+            )
         meta = BytesParser().parsebytes(wheel.read(metas[0]))
         if meta["Name"].lower() != primary or meta["Version"] != version:
             raise ValueError("Wheel identity does not match this P1 checkout")
@@ -309,7 +317,7 @@ def run_logged(command: list[str], output: Path) -> int:
 def verify(mode: str) -> dict:
     """Check distribution/import paths and native files without loading an NPU."""
     primary, version = project()
-    addon = primary + "_ascend"
+    addon = builder.resource_namespace(primary)
     check_install_target(True)
     distribution = metadata.distribution(primary)
     if distribution.version != version:
@@ -319,7 +327,7 @@ def verify(mode: str) -> dict:
     if editable != (mode == "editable"):
         raise RuntimeError("Installed wheel/editable mode does not match --mode")
     paths = {}
-    for namespace in (primary, addon):
+    for namespace in dict.fromkeys((primary, addon)):
         spec = PathFinder.find_spec(namespace)
         if spec is None or spec.origin is None:
             raise RuntimeError(f"Missing namespace: {namespace}")
@@ -346,7 +354,7 @@ def verify(mode: str) -> dict:
                 raise RuntimeError(
                     f"Missing installed native resource: {namespace}/{pattern}"
                 )
-    for namespace in (primary, addon):
+    for namespace in dict.fromkeys((primary, addon)):
         if not (paths[namespace] / "_version.py").is_file():
             raise RuntimeError(f"Missing generated version: {namespace}")
     if not (paths[addon] / "_build_info.py").is_file():

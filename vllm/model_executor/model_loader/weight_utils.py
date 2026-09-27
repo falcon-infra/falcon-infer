@@ -1317,7 +1317,7 @@ def initialize_single_dummy_weight(
             param.uniform_(low, high, generator=generator)
 
 
-def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> str | None:
+def _remap_common_kv_scale_name(name: str, params_dict: dict) -> str | None:
     """Remap the name of FP8 k/v_scale parameters.
 
     This function handles the remapping of FP8 k/v_scale parameter names.
@@ -1412,4 +1412,29 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> str | None:
                 return remapped_name
 
     # If there were no matches, return the untouched param name
+    return name
+
+
+def maybe_remap_kv_scale_name(name: str, params_dict: dict):
+    name = _remap_common_kv_scale_name(name, params_dict)
+
+    replace_scale_names = [
+        "fa_q.scale",
+        "fa_k.scale",
+        "fa_v.scale",
+        "fa_q.offset",
+        "fa_k.offset",
+        "fa_v.offset",
+        "indexer.q_rot",
+        "indexer.k_rot",
+    ]
+
+    for scale_name in replace_scale_names:
+        if name.endswith(scale_name):
+            remap_name = name.replace(scale_name, f"mla_attn.mla_attn.{scale_name}")
+            if remap_name in params_dict:
+                return remap_name
+            else:
+                return remap_name.replace(".mla_attn", "")
+
     return name

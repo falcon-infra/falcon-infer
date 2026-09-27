@@ -8,9 +8,12 @@ The user authorized P2 after preserving the paired P1 branches. For this fork,
 native integration supersedes the plugin-only and GPU-inheritance patterns
 below. Move implementations into vLLM with symbol mappings and focused tests;
 do not add patches or GPU inheritance merely to follow the historical guide.
-The platform implementation now belongs in `vllm/platforms/npu.py`; the old
-platform module only preserves imports during migration. Keep existing runtime
-patches until their behavior has been integrated in a later P2 batch.
+The platform implementation belongs in `vllm/platforms/npu.py`; Ascend source
+owners now live under `vllm/`. Effective patches have been integrated into their
+owners. The old plugin and patch trees are reference-only archives excluded
+from distributions. Do not restore legacy imports or process-wide patching.
+Use `vllm/envs_ascend.py` for native Ascend environment settings; the guide below
+records the original plugin conventions, not the P2 namespace.
 
 P1/baseline NPU retesting and their known defect repairs are deferred by the
 user. Run the relevant available host checks for P2 changes, record unavailable

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.attention.attention_mask import AttentionMaskBuilder310
+from vllm.platforms.ascend_310p.attention.attention_mask import AttentionMaskBuilder310
 
 
 class TestAttentionMaskBuilder310(TestBase):

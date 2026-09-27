@@ -272,6 +272,23 @@ class LlamaModel(nn.Module):
 
 class Eagle3LlamaForCausalLM(LlamaForCausalLM):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+
+        self._quarot_weight_loader = None
+        from vllm.platforms import current_platform
+
+        if current_platform.is_npu() and vllm_config.quant_config is not None:
+            from pathlib import Path
+
+            from vllm.model_executor.model_loader.ascend.quarot import (
+                get_rotation_path,
+                make_load_weights,
+            )
+
+            rotation_path = get_rotation_path(vllm_config)
+            if rotation_path is not None:
+                self._quarot_weight_loader = make_load_weights(
+                    Path(vllm_config.model_config.model), rotation_path
+                )
         nn.Module.__init__(self)
         self.config = vllm_config.speculative_config.draft_model_config.hf_config
         # Ensure draft_vocab_size is set
@@ -371,6 +388,9 @@ class Eagle3LlamaForCausalLM(LlamaForCausalLM):
         return self.model.fc(hidden_states)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]):
+
+        if self._quarot_weight_loader is not None:
+            return self._quarot_weight_loader(self, weights)
         model_weights = {}
         includes_draft_id_mapping = False
         includes_embed_tokens = False

@@ -133,7 +133,7 @@ class RoutedExpertsCapturer:
         self._device_buffer = torch.zeros(
             (max_num_batched_tokens, num_layers, num_experts_per_tok),
             dtype=torch.int32,
-            device=current_platform.device_type,
+            device=current_platform.device_name,
         )
         self.dp_rank = vllm_config.parallel_config.data_parallel_rank
 

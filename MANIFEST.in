@@ -12,3 +12,8 @@ prune ascend/.git
 prune ascend/build
 prune ascend/output
 prune ascend/.deps
+
+prune ascend/legacy_patches
+prune ascend/legacy_plugin
+prune ascend/vllm_ascend
+prune ascend/legacy_tests

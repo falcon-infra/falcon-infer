@@ -509,17 +509,7 @@ def make_tensor_with_pad(
     return tensor
 
 
-prev_set_stream = torch.cuda.set_stream
-
 _current_stream_tls = threading.local()
-
-
-def _patched_set_stream(stream: torch.cuda.Stream) -> None:
-    _current_stream_tls.value = stream
-    prev_set_stream(stream)
-
-
-torch.cuda.set_stream = _patched_set_stream
 
 
 class _StreamPlaceholder:
@@ -527,44 +517,23 @@ class _StreamPlaceholder:
         self.synchronize = lambda: None
 
 
-def current_stream() -> torch.cuda.Stream:
-    """
-    replace `torch.cuda.current_stream()` with `vllm.utils.current_stream()`.
-    it turns out that `torch.cuda.current_stream()` is quite expensive,
-    as it will construct a new stream object at each call.
-    here we patch `torch.cuda.set_stream` to keep track of the current stream
-    directly, so that we can avoid calling `torch.cuda.current_stream()`.
-
-    the underlying hypothesis is that we do not call `torch._C._cuda_setStream`
-    from C/C++ code.
-    """
+def current_stream():
+    """Return the active platform stream without replacing framework functions."""
     from vllm.platforms import current_platform
 
-    if not hasattr(_current_stream_tls, "value") or _current_stream_tls.value is None:
-        # when this function is called before any stream is set,
-        # we return the default stream.
-        # On ROCm using the default 0 stream in combination with RCCL
-        # is hurting performance.
-        # On CUDA, we capture and replay cudagraph on the same stream,
-        # so we need to avoid using the default stream as well. The default
-        # stream cannot be used for cudagraph capture, see
-        # https://github.com/pytorch/pytorch/blob/42ad9edfb754743fdae3276ade43de000beb4f60/aten/src/ATen/cuda/CUDAGraph.cpp#L77
-        # for more details. Therefore, we create a dedicated stream per process.
-        if current_platform.is_rocm() or current_platform.is_cuda():
-            # torch.cuda.set_stream here is the alias of _pathed_set_stream
+    if current_platform.is_npu():
+        return torch.npu.current_stream()
+    if current_platform.is_cuda_alike():
+        if not getattr(_current_stream_tls, "initialized", False):
             torch.cuda.set_stream(torch.cuda.Stream())
-        elif current_platform.is_cpu():
-            _current_stream_tls.value = _StreamPlaceholder()
-        else:
-            current_stream = current_platform.current_stream
-            if current_stream is not None:
-                _current_stream_tls.value = current_stream()
-            else:
-                raise ValueError(
-                    "Fail to set current stream, current platform "
-                    "may not support current_stream with torch API"
-                )
-    return _current_stream_tls.value
+            _current_stream_tls.initialized = True
+        return torch.cuda.current_stream()
+    if current_platform.is_cpu():
+        return _StreamPlaceholder()
+    stream = current_platform.current_stream
+    if stream is None:
+        raise ValueError("The selected platform does not provide a current stream")
+    return stream()
 
 
 # Global auxiliary stream for running operations in background streams.

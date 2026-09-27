@@ -38,7 +38,7 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
         model_memory_usage: int | None = None,
     ):
         """Return a minimally-configured NPUWorker mock with memory state set."""
-        from vllm_ascend.worker.worker import NPUWorker
+        from vllm.v1.worker.npu_worker import NPUWorker
 
         if model_memory_usage is None:
             model_memory_usage = int(0.5 * GiB_bytes)  # Qwen3-0.6B ~0.5 GiB
@@ -72,13 +72,13 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
         mock_ctx.__enter__ = MagicMock(return_value=profile_result)
         mock_ctx.__exit__ = MagicMock(return_value=False)
         mock_profiling = MagicMock(return_value=mock_ctx)
-        return patch("vllm_ascend.worker.worker.memory_profiling", mock_profiling)
+        return patch("vllm.v1.worker.npu_worker.memory_profiling", mock_profiling)
 
     # ------------------------------------------------------------------ #
     # Tests
     # ------------------------------------------------------------------ #
 
-    @patch("vllm_ascend.worker.worker.logger")
+    @patch("vllm.v1.worker.npu_worker.logger")
     def test_single_instance_positive_kv_cache(self, mock_logger):
         """Baseline: single instance on an empty card yields positive KV cache."""
         total = int(64 * GiB_bytes)
@@ -100,7 +100,7 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
         self.assertEqual(result, expected)
         self.assertGreater(result, 0)
 
-    @patch("vllm_ascend.worker.worker.logger")
+    @patch("vllm.v1.worker.npu_worker.logger")
     def test_second_instance_on_same_card_positive_kv_cache(self, mock_logger):
         """
         Regression test for PR #7427.
@@ -152,7 +152,7 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
         # Verify model_runner.profile_run() was called during profiling
         worker.model_runner.profile_run.assert_called_once()
 
-    @patch("vllm_ascend.worker.worker.logger")
+    @patch("vllm.v1.worker.npu_worker.logger")
     def test_second_instance_buggy_non_kv_cache_gives_negative(self, mock_logger):
         """
         Documents the *pre-fix* buggy behaviour that PR #7427 addresses.
@@ -192,7 +192,7 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
             "negative; this documents the OOM regression that PR #7427 fixed.",
         )
 
-    @patch("vllm_ascend.worker.worker.logger")
+    @patch("vllm.v1.worker.npu_worker.logger")
     def test_assert_raises_when_free_memory_increases_after_profile(self, mock_logger):
         """
         determine_available_memory() must raise AssertionError when free memory
@@ -216,7 +216,7 @@ class TestDetermineAvailableMemoryMultiInstance(TestBase):
 
         self.assertIn("Error in memory profiling", str(ctx.exception))
 
-    @patch("vllm_ascend.worker.worker.logger")
+    @patch("vllm.v1.worker.npu_worker.logger")
     def test_second_instance_tight_memory_still_positive(self, mock_logger):
         """
         Edge case: card is almost full when second instance starts.

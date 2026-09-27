@@ -5,12 +5,10 @@ from collections.abc import Mapping
 from copy import deepcopy
 from types import SimpleNamespace
 
-from vllm_ascend.distributed.kv_transfer.kv_p2p import live_split_plan as planning
-from vllm_ascend.distributed.kv_transfer.kv_p2p import mooncake_connector as connector
-from vllm_ascend.distributed.kv_transfer.kv_p2p.live_split_protocol import (
-    SplitSourceDescriptor,
-    SplitSourceSegment,
-)
+from vllm.distributed.kv_transfer.ascend.kv_p2p import live_split_plan as planning
+from vllm.distributed.kv_transfer.ascend.kv_p2p import mooncake_connector as connector
+from vllm.distributed.kv_transfer.ascend.kv_p2p.live_split_protocol import SplitSourceDescriptor
+from vllm.distributed.kv_transfer.ascend.kv_p2p.live_split_protocol import SplitSourceSegment
 
 
 def test_canonicalization_borrows_handshake_without_copy_or_iteration():

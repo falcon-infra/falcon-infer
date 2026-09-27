@@ -22,21 +22,21 @@ from vllm.config import CUDAGraphMode, VllmConfig
 from vllm.forward_context import BatchDescriptor, ForwardContext
 
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_forward_context import StagedSFAGraphKey
-from vllm_ascend.attention.attention_v1 import AscendMetadata, AscendMetadataForDecode
-from vllm_ascend.attention.context_parallel.attention_cp import AscendAttentionCPImpl
-from vllm_ascend.attention.context_parallel.mla_cp import AscendMlaCPImpl
-from vllm_ascend.attention.mla_v1 import AscendMLADecodeMetadata, AscendMLAMetadata
-from vllm_ascend.compilation.acl_graph import (
-    ACLGraphEntry,
-    ACLGraphWrapper,
-    get_draft_graph_params,
-    get_graph_params,
-    reset_graph_params,
-    set_draft_graph_params,
-    set_graph_params,
-    update_draft_graph_params_workspaces,
-)
+from vllm.ascend_forward_context import StagedSFAGraphKey
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendMetadata
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendMetadataForDecode
+from vllm.v1.attention.backends.ascend.context_parallel.attention_cp import AscendAttentionCPImpl
+from vllm.v1.attention.backends.ascend.context_parallel.mla_cp import AscendMlaCPImpl
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLADecodeMetadata
+from vllm.v1.attention.backends.ascend.mla_v1 import AscendMLAMetadata
+from vllm.compilation.ascend.acl_graph import ACLGraphEntry
+from vllm.compilation.ascend.acl_graph import ACLGraphWrapper
+from vllm.compilation.ascend.acl_graph import get_draft_graph_params
+from vllm.compilation.ascend.acl_graph import get_graph_params
+from vllm.compilation.ascend.acl_graph import reset_graph_params
+from vllm.compilation.ascend.acl_graph import set_draft_graph_params
+from vllm.compilation.ascend.acl_graph import set_graph_params
+from vllm.compilation.ascend.acl_graph import update_draft_graph_params_workspaces
 
 
 class TestACLGraphEntry(TestBase):
@@ -110,8 +110,8 @@ class TestACLGraphWrapper(TestBase):
         self.mock_forward_context.batch_descriptor = self.mock_batch_descriptor
         self.mock_forward_context.cudagraph_runtime_mode = CUDAGraphMode.FULL
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_initialization_with_default_options(self, mock_envs,
                                                  mock_current_platform):
         """Test ACLGraphWrapper initialization with default CUDAGraphOptions"""
@@ -131,8 +131,8 @@ class TestACLGraphWrapper(TestBase):
         self.assertEqual(wrapper.concrete_aclgraph_entries, {})
         self.assertTrue(wrapper.synchronize_before_replay)
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_initialization_with_custom_options(self, mock_envs,
                                                  mock_current_platform):
         """Test ACLGraphWrapper initialization with custom CUDAGraphOptions"""
@@ -153,8 +153,8 @@ class TestACLGraphWrapper(TestBase):
         self.assertEqual(wrapper.aclgraph_options, self.mock_cudagraph_options)
         self.assertEqual(wrapper.concrete_aclgraph_entries, {})
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_replay_can_skip_host_stream_synchronization(
         self,
         mock_envs,
@@ -188,7 +188,7 @@ class TestACLGraphWrapper(TestBase):
 
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=self.mock_forward_context,
             ),
             patch.object(
@@ -203,8 +203,8 @@ class TestACLGraphWrapper(TestBase):
         stream.synchronize.assert_not_called()
         graph.replay.assert_called_once_with()
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_staged_replay_synchronization_policy(
         self,
         mock_envs,
@@ -253,7 +253,7 @@ class TestACLGraphWrapper(TestBase):
 
                 with (
                     patch(
-                        'vllm_ascend.compilation.acl_graph.get_forward_context',
+                        'vllm.compilation.ascend.acl_graph.get_forward_context',
                         return_value=self.mock_forward_context,
                     ),
                     patch.object(
@@ -271,8 +271,8 @@ class TestACLGraphWrapper(TestBase):
                     stream.synchronize.assert_not_called()
                 graph.replay.assert_called_once_with()
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_cold_staged_replay_fences_once_at_replay_boundary(
         self,
         mock_envs,
@@ -309,7 +309,7 @@ class TestACLGraphWrapper(TestBase):
         stream = MagicMock()
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=context,
             ),
             patch.object(
@@ -344,7 +344,7 @@ class TestACLGraphWrapper(TestBase):
         q1_stream = MagicMock()
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=q1_context,
             ),
             patch.object(
@@ -358,8 +358,8 @@ class TestACLGraphWrapper(TestBase):
         q1_stream.synchronize.assert_not_called()
         q1_graph.replay.assert_called_once_with()
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_async_staged_replay_synchronizes_once_per_forward(
         self,
         mock_envs,
@@ -401,7 +401,7 @@ class TestACLGraphWrapper(TestBase):
         stream = MagicMock()
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=context,
             ),
             patch.object(
@@ -422,7 +422,7 @@ class TestACLGraphWrapper(TestBase):
         next_stream = MagicMock()
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=next_context,
             ),
             patch.object(
@@ -442,7 +442,7 @@ class TestACLGraphWrapper(TestBase):
         failed_stream.synchronize.side_effect = RuntimeError("fence failed")
         with (
             patch(
-                'vllm_ascend.compilation.acl_graph.get_forward_context',
+                'vllm.compilation.ascend.acl_graph.get_forward_context',
                 return_value=failed_context,
             ),
             patch.object(
@@ -457,8 +457,8 @@ class TestACLGraphWrapper(TestBase):
         self.assertFalse(failed_context.staged_sfa_replay_fenced)
         self.assertEqual(first_graph.replay.call_count, 2)
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_staged_structural_keys_do_not_alias(
         self,
         mock_envs,
@@ -496,7 +496,7 @@ class TestACLGraphWrapper(TestBase):
         )
 
         with patch(
-            'vllm_ascend.compilation.acl_graph.get_forward_context',
+            'vllm.compilation.ascend.acl_graph.get_forward_context',
             return_value=context,
         ):
             context.staged_sfa_graph_key = first_key
@@ -507,8 +507,8 @@ class TestACLGraphWrapper(TestBase):
         first_graph.replay.assert_called_once_with()
         second_graph.replay.assert_called_once_with()
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_clear_all_graphs_releases_entries(
         self,
         mock_envs,
@@ -535,8 +535,8 @@ class TestACLGraphWrapper(TestBase):
 
         self.assertEqual(wrapper.concrete_aclgraph_entries, {})
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_seal_staged_entries_requires_every_key(
         self,
         mock_envs,
@@ -568,8 +568,8 @@ class TestACLGraphWrapper(TestBase):
                 expected_islands=1,
             )
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_seal_staged_entries_requires_exact_islands_and_keys(
         self,
         mock_envs,
@@ -617,8 +617,8 @@ class TestACLGraphWrapper(TestBase):
                     expected_islands=1,
                 )
 
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_initialization_assertion_error(self, mock_envs,
                                             mock_current_platform):
         """Test ACLGraphWrapper initialization raises AssertionError for NONE mode"""
@@ -630,10 +630,10 @@ class TestACLGraphWrapper(TestBase):
                             vllm_config=self.mock_vllm_config,
                             runtime_mode=CUDAGraphMode.NONE)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_call_with_none_runtime_mode(self, mock_envs,
                                          mock_current_platform,
                                          mock_get_forward_context, mock_get_forward_context_2):
@@ -655,10 +655,10 @@ class TestACLGraphWrapper(TestBase):
         self.mock_runnable.assert_called_once_with("arg1", "arg2")
         self.assertEqual(result, "test_output")
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
     def test_call_with_mismatched_runtime_mode(self, mock_envs,
                                                mock_current_platform,
                                                mock_get_forward_context,
@@ -682,16 +682,16 @@ class TestACLGraphWrapper(TestBase):
         self.mock_runnable.assert_called_once_with("arg1", "arg2")
         self.assertEqual(result, "test_output")
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.compilation_counter')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.compilation_counter')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
     def test_call_capture_graph_first_time(
             self, mock_weak_ref_tensors, mock_compilation_counter, mock_envs,
             mock_current_platform, mock_get_forward_context,mock_get_forward_context_2,
@@ -755,16 +755,16 @@ class TestACLGraphWrapper(TestBase):
         # Should return the original output (not weak ref)
         self.assertEqual(result, "test_output")
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.compilation_counter')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.compilation_counter')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
     def test_call_replay_graph(self, mock_weak_ref_tensors,
                                mock_compilation_counter, mock_envs,
                                mock_current_platform, mock_get_forward_context,
@@ -833,15 +833,15 @@ class TestACLGraphWrapper(TestBase):
         self.assertEqual(first_result, "test_output")  # Original output
         self.assertEqual(second_result, "weak_ref_output")  # Weak ref output
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
     def test_call_with_debug_mode_input_address_check(
             self, mock_weak_ref_tensors, mock_envs, mock_current_platform,
             mock_get_forward_context,mock_get_forward_context_2,
@@ -890,15 +890,15 @@ class TestACLGraphWrapper(TestBase):
         # Should not raise AssertionError
         self.assertTrue(True)
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
     def test_call_with_debug_mode_input_address_mismatch(
             self, mock_weak_ref_tensors, mock_envs, mock_current_platform,
             mock_get_forward_context,mock_get_forward_context_2,
@@ -950,17 +950,17 @@ class TestACLGraphWrapper(TestBase):
         self.assertIn("Input addresses for aclgraphs are different",
                       str(context.exception))
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.compilation_counter')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
-    @patch('vllm_ascend.compilation.acl_graph.patch')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.compilation_counter')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.patch')
     def test_call_capture_graph_with_gc_disable(
             self, mock_patch, mock_weak_ref_tensors, mock_compilation_counter,
             mock_envs, mock_current_platform, mock_get_forward_context,mock_get_forward_context_2,
@@ -1026,16 +1026,16 @@ class TestACLGraphWrapper(TestBase):
         # Should return the original output (not weak ref) since weak_ref_output is not enabled
         self.assertEqual(result, "test_output")
 
-    @patch('vllm_ascend.compilation.acl_graph.torch')
+    @patch('vllm.compilation.ascend.acl_graph.torch')
     @patch(
-        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
     )
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.compilation_counter')
-    @patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.compilation_counter')
+    @patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors')
     def test_call_capture_graph_with_weak_ref_output(
             self, mock_weak_ref_tensors, mock_compilation_counter, mock_envs,
             mock_current_platform, mock_get_forward_context,mock_get_forward_context_2,
@@ -1097,11 +1097,11 @@ class TestACLGraphWrapper(TestBase):
         # Should return the weak ref output when weak_ref_output option is enabled
         self.assertEqual(result, "weak_ref_output")
         
-    @patch('vllm_ascend.compilation.acl_graph.get_forward_context')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
-    @patch('vllm_ascend.compilation.acl_graph.current_platform')
-    @patch('vllm_ascend.compilation.acl_graph.envs')
-    @patch('vllm_ascend.compilation.acl_graph.logger')
+    @patch('vllm.compilation.ascend.acl_graph.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
+    @patch('vllm.compilation.ascend.acl_graph.current_platform')
+    @patch('vllm.compilation.ascend.acl_graph.envs')
+    @patch('vllm.compilation.ascend.acl_graph.logger')
     def test_call_capture_graph_with_debug_log(self, mock_logger, mock_envs,
                                                mock_current_platform,
                                                mock_get_forward_context,mock_get_forward_context_2):
@@ -1117,7 +1117,7 @@ class TestACLGraphWrapper(TestBase):
         # weak_ref_output is not enabled by default
 
         # Mock torch
-        with patch('vllm_ascend.compilation.acl_graph.torch') as mock_torch:
+        with patch('vllm.compilation.ascend.acl_graph.torch') as mock_torch:
             # Mock torch.npu.NPUGraph
             mock_npu_graph = MagicMock()
             mock_torch.npu.NPUGraph.return_value = mock_npu_graph
@@ -1132,7 +1132,7 @@ class TestACLGraphWrapper(TestBase):
             mock_torch.Tensor = torch.Tensor
 
             # Mock weak_ref_tensors
-            with patch('vllm_ascend.compilation.acl_graph.weak_ref_tensors'
+            with patch('vllm.compilation.ascend.acl_graph.weak_ref_tensors'
                        ) as mock_weak_ref_tensors:
                 # Mock weak_ref_tensors to simulate the actual behavior:
                 # 1. First call (inside the graph context) should return "inner_output"
@@ -1143,7 +1143,7 @@ class TestACLGraphWrapper(TestBase):
 
                 # Mock validate_cudagraph_capturing_enabled
                 with patch(
-                        'vllm_ascend.compilation.acl_graph.validate_cudagraph_capturing_enabled'
+                        'vllm.compilation.ascend.acl_graph.validate_cudagraph_capturing_enabled'
                 ):
                     wrapper = ACLGraphWrapper(
                         runnable=self.mock_runnable,
@@ -1212,28 +1212,28 @@ class TestDraftGraphParams(TestBase):
 
     def test_reset_graph_params(self):
         with (
-            patch('vllm_ascend.compilation.acl_graph._graph_params', object()),
-            patch('vllm_ascend.compilation.acl_graph._draft_graph_params', object()),
+            patch('vllm.compilation.ascend.acl_graph._graph_params', object()),
+            patch('vllm.compilation.ascend.acl_graph._draft_graph_params', object()),
         ):
             reset_graph_params()
             self.assertIsNone(get_graph_params())
             self.assertIsNone(get_draft_graph_params())
 
     def test_set_draft_graph_params(self):
-        with patch('vllm_ascend.compilation.acl_graph._draft_graph_params',
+        with patch('vllm.compilation.ascend.acl_graph._draft_graph_params',
                    new=None):
             set_draft_graph_params([4])
-            from vllm_ascend.compilation.acl_graph import _draft_graph_params
+            from vllm.compilation.ascend.acl_graph import _draft_graph_params
             self.assertIsNotNone(_draft_graph_params)
 
-    @patch('vllm_ascend.compilation.acl_graph._draft_graph_params')
+    @patch('vllm.compilation.ascend.acl_graph._draft_graph_params')
     def test_update_draft_graph_params_workspaces(self,
                                                   draft_graph_params_mock):
         draft_graph_params_mock.workspaces = {4: 5}
         update_draft_graph_params_workspaces(4, 6)
         self.assertEqual(draft_graph_params_mock.workspaces[4], 6)
 
-    @patch('vllm_ascend.compilation.acl_graph._draft_graph_params')
+    @patch('vllm.compilation.ascend.acl_graph._draft_graph_params')
     def test_get_draft_graph_params(self, draft_graph_params_mock):
         graph_params = get_draft_graph_params()
         self.assertIs(draft_graph_params_mock, graph_params)
@@ -1256,7 +1256,7 @@ class TestPCPDCPGraphParams(TestBase):
         self.graph_params.events[4].append(mock_event)
         self.graph_params.handles[4].append(MagicMock())
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch('torch.npu.graph_task_update_end', )
     @patch('torch.npu.graph_task_update_begin', MagicMock())
     @patch('torch_npu.npu_fused_infer_attention_score.out', MagicMock())

@@ -3,7 +3,7 @@ import gc
 import torch
 import torch_npu
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 # enable internal format
 torch_npu.npu.config.allow_internal_format = True

@@ -106,6 +106,8 @@ from .utils import (
 
 logger = init_logger(__name__)
 
+MTP_ROT_WEIGHT_NAME = "rot.weight"
+
 
 class DeepseekAttention(nn.Module):
     """Normal MHA implementation used by Deepseek v1."""
@@ -1571,10 +1573,7 @@ class DeepseekV2ForCausalLM(
 
             if skip_extra_layer_weights:
                 layer_idx = get_layer_idx_from_weight_name(name)
-                if (
-                    layer_idx is not None
-                    and layer_idx >= self.config.num_hidden_layers
-                ):
+                if layer_idx is not None and layer_idx >= self.config.num_hidden_layers:
                     continue
 
             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
@@ -1781,7 +1780,7 @@ class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):
 def get_layer_idx_from_weight_name(weight_name: str) -> int | None:
     for prefix in ("model.layers.", "layers."):
         if weight_name.startswith(prefix):
-            rest = weight_name[len(prefix):]
+            rest = weight_name[len(prefix) :]
             layer_idx_str = rest.split(".", 1)[0]
             try:
                 return int(layer_idx_str)
@@ -1801,6 +1800,8 @@ def get_spec_layer_idx_from_weight_name(
     ):
         layer_idx = config.num_hidden_layers
         for i in range(config.num_nextn_predict_layers):
-            if weight_name.startswith(f"model.layers.{layer_idx + i}."):
+            if weight_name.startswith(
+                f"model.layers.{layer_idx + i}."
+            ) or weight_name.startswith(MTP_ROT_WEIGHT_NAME):
                 return layer_idx + i
     return None

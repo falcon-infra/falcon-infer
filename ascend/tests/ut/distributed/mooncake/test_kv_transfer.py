@@ -7,14 +7,10 @@ import torch
 if not hasattr(torch, "npu"):
     torch.npu = SimpleNamespace(Event=object)  # type: ignore[attr-defined]
 
-from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.config_data import (
-    LayerMultiBlockReqMeta,
-    ReqMeta,
-)
-from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.kv_transfer import (
-    KVCacheStoreLayerSendingThread,
-    KVCacheStoreSendingThread,
-)
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.config_data import LayerMultiBlockReqMeta
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.config_data import ReqMeta
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.kv_transfer import KVCacheStoreLayerSendingThread
+from vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.kv_transfer import KVCacheStoreSendingThread
 
 
 class _FakeKey:

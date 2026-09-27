@@ -38,9 +38,11 @@ CHECK_IMPORTS = {
             r"^\s*(import\s+(pickle|cloudpickle)(\s|$|\sas)"
             r"|from\s+(pickle|cloudpickle)\s+import\b)"
         ),
-        tip=("Avoid using pickle or cloudpickle or add this file to tools/check_forbidden_imports.py."),
+        tip=(
+            "Avoid using pickle or cloudpickle or add this file to tools/check_forbidden_imports.py."
+        ),
         allowed_files={
-            "vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py",
+            "vllm/distributed/kv_transfer/ascend/kv_pool/cpu_offload/metadata.py",
         },
     ),
     "re": ForbiddenImport(

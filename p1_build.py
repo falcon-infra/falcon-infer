@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""P1's Ascend-only build commands; imported without torch or device probing.
+"""P2 native Ascend build commands; imported without torch or device probing.
 
 The two repositories carry independent copies of this build helper. Native
 builds are performed only by intranet operators. Metadata/sdist preparation
@@ -85,10 +85,15 @@ def runtime_requirements() -> list[str]:
     ]
 
 
+def resource_namespace(primary: str) -> str:
+    return "vllm" if primary == "vllm" else primary + "_ascend"
+
+
 def package_names(primary: str, addon: str) -> list[str]:
-    return find_packages(str(ROOT), include=[primary, primary + ".*"]) + find_packages(
-        str(ROOT / "ascend"), include=[addon, addon + ".*"]
-    )
+    packages = find_packages(str(ROOT), include=[primary, primary + ".*"])
+    if addon != primary:
+        packages += find_packages(str(ROOT / "ascend"), include=[addon, addon + ".*"])
+    return packages
 
 
 def check_environment() -> dict:
@@ -178,7 +183,7 @@ def write_build_metadata(
     build_lib: Path, primary: str, addon: str, version: str, info: dict
 ) -> None:
     version_tuple = tuple(map(int, version.split("+", 1)[0].split(".")))
-    for name in (primary, addon):
+    for name in dict.fromkeys((primary, addon)):
         directory = build_lib / name
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "_version.py").write_text(
@@ -186,7 +191,7 @@ def write_build_metadata(
             f"__version__ = version = {version!r}\n"
             f"__version_tuple__ = version_tuple = {version_tuple!r}\n"
         )
-    if addon == "vllm_ascend":
+    if primary == "vllm":
         text = "# Generated for the approved 910B3 build.\n__device_type__ = 'A2'\n"
     else:
         text = (
@@ -207,8 +212,8 @@ def required_artifacts(primary: str, info: dict) -> dict[str, list[str]]:
     """Return required native resources for the selected compiled feature set."""
     if primary == "vllm":
         return {
-            "vllm_ascend": [
-                "vllm_ascend_C*.so",
+            "vllm": [
+                "_ascend_C*.so",
                 "libvllm_ascend_kernels.so",
                 "_cann_ops_custom/vendors/vllm-ascend/op_api/lib/*.so",
             ]
@@ -244,7 +249,7 @@ class P1BuildPy(build_py):
         info = check_environment()
         super().run()
         primary = self.distribution.get_name()
-        addon = primary + "_ascend"
+        addon = resource_namespace(primary)
         write_build_metadata(
             Path(self.build_lib), primary, addon, self.distribution.get_version(), info
         )
@@ -302,7 +307,7 @@ class P1BuildExt(build_ext):
         if self.inplace and not self.editable_mode:
             raise RuntimeError("Use pip install -e . instead of build_ext --inplace")
         primary = self.distribution.get_name()
-        addon = primary + "_ascend"
+        addon = resource_namespace(primary)
         info["submodule"] = verify_materials(primary)
         if primary == "vllm" and metadata.version("triton-ascend") != TRITON_VERSION:
             raise RuntimeError("triton-ascend differs from the approved P1 candidate")
@@ -373,7 +378,7 @@ class P1BuildExt(build_ext):
                 check=True,
             )
             shutil.copytree(
-                aclnn_root / "vllm_ascend/_cann_ops_custom",
+                aclnn_root / "vllm/_cann_ops_custom",
                 package_dir / "_cann_ops_custom",
                 dirs_exist_ok=True,
             )
@@ -431,11 +436,15 @@ class P1BuildExt(build_ext):
 
 
 def setup_arguments(primary: str) -> dict:
-    addon = primary + "_ascend"
-    module = "vllm_ascend_C" if primary == "vllm" else "c_ops"
+    addon = resource_namespace(primary)
+    module = "_ascend_C" if primary == "vllm" else "c_ops"
     return {
         "packages": package_names(primary, addon),
-        "package_dir": {primary: primary, addon: f"ascend/{addon}"},
+        "package_dir": (
+            {primary: primary}
+            if primary == addon
+            else {primary: primary, addon: f"ascend/{addon}"}
+        ),
         "install_requires": runtime_requirements(),
         "include_package_data": True,
         "package_data": {

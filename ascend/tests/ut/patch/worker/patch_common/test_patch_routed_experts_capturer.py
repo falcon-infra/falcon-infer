@@ -4,7 +4,7 @@ import uuid
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.patch.worker.patch_routed_experts_capturer import RoutedExpertsCapturer
+from vllm.model_executor.layers.fused_moe.routed_experts_capturer import RoutedExpertsCapturer
 from vllm.config import ModelConfig, VllmConfig
 from vllm.config.parallel import ParallelConfig
 from transformers import PretrainedConfig
@@ -33,7 +33,7 @@ class TestPatchRoutedExpertsCapturer(TestBase):
         max_num_batched_tokens = 1
         max_num_kv_tokens = 1
         with patch(
-            target="vllm_ascend.patch.worker.patch_routed_experts_capturer.get_tensor_model_parallel_rank",
+            target="vllm.model_executor.layers.fused_moe.routed_experts_capturer.get_tensor_model_parallel_rank",
             return_value=True
         ):
             current_platform.device_name = "cpu"

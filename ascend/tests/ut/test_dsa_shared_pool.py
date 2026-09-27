@@ -1,6 +1,6 @@
 import torch
 
-from vllm_ascend.worker.dsa_shared_pool import reshape_dsa_shared_pool_raw
+from vllm.v1.worker.dsa_shared_pool import reshape_dsa_shared_pool_raw
 
 
 def test_dsa_shared_pool_raw_views_match_bundle_layout():

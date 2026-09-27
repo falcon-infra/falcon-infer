@@ -1,3 +1,4 @@
+from vllm.model_executor.layers.ascend import initialize_native_ops
 #
 # Copyright (c) 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2023 The vLLM team.
@@ -25,15 +26,10 @@ triton_runtime.driver.active.utils.get_device_properties.return_value = {
 }
 sys.modules['triton.runtime'] = triton_runtime
 
-from vllm_ascend.utils import adapt_patch  # noqa E402
-from vllm_ascend.utils import register_ascend_customop  # noqa E402
 
 # triton and torch_npu is not available in the environment, so we need to mock them
 sys.modules['torch_npu'].npu.current_device = MagicMock(return_value=0)
 sys.modules['torch_npu._inductor'] = MagicMock()
 
-adapt_patch()
-adapt_patch(True)
-
 # register Ascend CustomOp here because uts will use this
-register_ascend_customop()
+initialize_native_ops()

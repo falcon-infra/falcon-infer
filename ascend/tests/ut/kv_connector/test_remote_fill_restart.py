@@ -10,7 +10,7 @@ import pytest
 
 
 def _restart_affected_pair():
-    path = Path(__file__).parents[3] / "vllm_ascend" / "distributed" / "kv_transfer" / "remote_fill_restart.py"
+    path = Path(__file__).parents[3] / "vllm" / "distributed" / "kv_transfer" / "remote_fill_restart.py"
     spec = importlib.util.spec_from_file_location("remote_fill_restart", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

@@ -3,7 +3,7 @@ import gc
 import pytest
 import torch
 
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 NUM_TOKENS = [1, 4, 8, 16, 1024, 4096]
 NUM_QKV_HEADS = [(8, 2), (2, 1), (16, 2)]

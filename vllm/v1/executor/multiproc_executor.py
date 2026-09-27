@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import multiprocessing
 import os
 import pickle
@@ -50,6 +51,11 @@ from vllm.utils.network_utils import (
     get_loopback_ip,
     get_open_port,
 )
+from vllm.utils.serving_perf import (
+    cold_perf_enabled,
+    log_cold_perf_event,
+    log_cold_perf_process_event,
+)
 from vllm.utils.system_utils import (
     _maybe_force_spawn,
     decorate_logs,
@@ -83,7 +89,55 @@ class FutureWrapper(Future):
             future.wait_for_response(get_response)
         return super().result()
 
-    def wait_for_response(self, get_response: Callable):
+    def wait_for_response(self, get_response):
+        if not cold_perf_enabled():
+            return self._wait_for_response_base(get_response)
+        wait_started_ns = time.perf_counter_ns()
+        try:
+            response = get_response()
+            response_received_ns = time.perf_counter_ns()
+            response = self.aggregate(response)
+            aggregate_done_ns = time.perf_counter_ns()
+            with suppress(InvalidStateError):
+                self.set_result(response)
+        except Exception as exc:
+            with suppress(InvalidStateError):
+                self.set_exception(exc)
+            return
+
+        request_ids = getattr(response, _COLD_PERF_REQUEST_IDS, ())
+        worker_timing = getattr(response, _COLD_PERF_WORKER_TIMING, None)
+        sample_return_ns = getattr(response, _COLD_PERF_SAMPLE_RETURN_NS, None)
+        if not request_ids or not isinstance(sample_return_ns, int):
+            return
+        worker_enqueue_ns = (
+            worker_timing.get("worker_enqueue_start_ns")
+            if isinstance(worker_timing, dict)
+            else None
+        )
+        worker_to_future_ms = (aggregate_done_ns - sample_return_ns) / 1e6
+        future_wait_ms = (aggregate_done_ns - wait_started_ns) / 1e6
+        if max(worker_to_future_ms, future_wait_ms) < _SLOW_ASYNC_OUTPUT_MS:
+            return
+        log_cold_perf_event(
+            "decoder_parent_response_slow",
+            request_ids=request_ids,
+            require_active=False,
+            worker_hook_timing_present=isinstance(worker_timing, dict),
+            sample_return_to_future_ms=round(worker_to_future_ms, 3),
+            worker_enqueue_to_future_ms=(
+                round((aggregate_done_ns - worker_enqueue_ns) / 1e6, 3)
+                if isinstance(worker_enqueue_ns, int)
+                else None
+            ),
+            response_dequeue_ms=round(
+                (response_received_ns - wait_started_ns) / 1e6, 3
+            ),
+            aggregate_ms=round((aggregate_done_ns - response_received_ns) / 1e6, 3),
+            future_wait_ms=round(future_wait_ms, 3),
+        )
+
+    def _wait_for_response_base(self, get_response: Callable):
         try:
             response = self.aggregate(get_response())
             with suppress(InvalidStateError):
@@ -880,30 +934,65 @@ class WorkerProc:
         SUCCESS = auto()
         FAILURE = auto()
 
-    def enqueue_output(self, output: Any):
-        """Prepares output from the worker and enqueues it to the
-        worker_response_mq. If the output is an Exception, it is
-        converted to a FAILURE response.
-        """
-        if isinstance(output, AsyncModelRunnerOutput):
-            output = output.get_output()
+    def enqueue_output(self, output):
+        if not cold_perf_enabled():
+            return self._enqueue_output_response(output)
+        queued_ns = getattr(output, _COLD_PERF_QUEUED_NS, None)
+        if queued_ns is None:
+            return self._enqueue_output_response(output)
 
-        if isinstance(output, Exception):
-            result = (WorkerProc.ResponseStatus.FAILURE, str(output))
-        else:
-            result = (WorkerProc.ResponseStatus.SUCCESS, output)
-        if (response_mq := self.worker_response_mq) is not None:
-            response_mq.enqueue(result)
+        output_start_ns = time.perf_counter_ns()
+        output_cpu_start_ns = time.thread_time_ns()
+        request_ids = getattr(output, _COLD_PERF_REQUEST_IDS)
+        sample_return_ns = getattr(output, _COLD_PERF_SAMPLE_RETURN_NS, queued_ns)
+        output = output.get_output()
+        output_end_ns = time.perf_counter_ns()
+        output_cpu_end_ns = time.thread_time_ns()
+        worker_timing = {
+            "sample_return_ns": sample_return_ns,
+            "worker_enqueue_start_ns": output_end_ns,
+            "sample_return_to_handle_ms": round(
+                (queued_ns - sample_return_ns) / 1e6, 3
+            ),
+            "queue_wait_ms": round((output_start_ns - queued_ns) / 1e6, 3),
+            "get_output_ms": round((output_end_ns - output_start_ns) / 1e6, 3),
+            "get_output_thread_cpu_ms": round(
+                (output_cpu_end_ns - output_cpu_start_ns) / 1e6, 3
+            ),
+        }
+        setattr(output, _COLD_PERF_REQUEST_IDS, request_ids)
+        setattr(output, _COLD_PERF_WORKER_TIMING, worker_timing)
+        self._enqueue_output_response(output)
+        completed_ns = time.perf_counter_ns()
+        total_ms = (completed_ns - sample_return_ns) / 1e6
+        if total_ms >= _SLOW_ASYNC_OUTPUT_MS:
+            log_cold_perf_event(
+                "decoder_async_output_slow",
+                request_ids=request_ids,
+                # sample_tokens has already retired these captured request IDs.
+                require_active=False,
+                rank=self.rank,
+                **{
+                    key: value
+                    for key, value in worker_timing.items()
+                    if not key.endswith("_ns")
+                },
+                response_enqueue_ms=round((completed_ns - output_end_ns) / 1e6, 3),
+                total_ms=round(total_ms, 3),
+            )
 
-    def handle_output(self, output: Any):
-        """Handles output from the worker. If async scheduling is enabled,
-        it is passed to the async_output_busy_loop thread. Otherwise, it is
-        enqueued directly to the worker_response_mq.
-        """
-        if self.use_async_scheduling:
-            self.async_output_queue.put(output)
-        else:
-            self.enqueue_output(output)
+    def handle_output(self, output):
+        if not cold_perf_enabled():
+            return self._handle_output_response(output)
+        global _worker_hook_reported
+        if getattr(output, _COLD_PERF_REQUEST_IDS, ()):
+            setattr(output, _COLD_PERF_QUEUED_NS, time.perf_counter_ns())
+            if not _worker_hook_reported:
+                _worker_hook_reported = True
+                log_cold_perf_process_event(
+                    "decoder_async_output_hook_active", rank=self.rank
+                )
+        self._handle_output_response(output)
 
     def async_output_busy_loop(self):
         """Entrypoint for the thread which handles outputs asynchronously."""
@@ -975,6 +1064,31 @@ class WorkerProc:
         set_process_title(name=process_name)
         decorate_logs(process_name)
 
+    def _handle_output_response(self, output: Any):
+        """Handles output from the worker. If async scheduling is enabled,
+        it is passed to the async_output_busy_loop thread. Otherwise, it is
+        enqueued directly to the worker_response_mq.
+        """
+        if self.use_async_scheduling:
+            self.async_output_queue.put(output)
+        else:
+            self.enqueue_output(output)
+
+    def _enqueue_output_response(self, output: Any):
+        """Prepares output from the worker and enqueues it to the
+        worker_response_mq. If the output is an Exception, it is
+        converted to a FAILURE response.
+        """
+        if isinstance(output, AsyncModelRunnerOutput):
+            output = output.get_output()
+
+        if isinstance(output, Exception):
+            result = (WorkerProc.ResponseStatus.FAILURE, str(output))
+        else:
+            result = (WorkerProc.ResponseStatus.SUCCESS, output)
+        if (response_mq := self.worker_response_mq) is not None:
+            response_mq.enqueue(result)
+
 
 def set_multiprocessing_worker_envs():
     """Set up environment variables that should be used when there are workers
@@ -1003,3 +1117,16 @@ def set_multiprocessing_worker_envs():
         )
         os.environ["OMP_NUM_THREADS"] = str(default_omp_num_threads)
         torch.set_num_threads(default_omp_num_threads)
+
+
+_COLD_PERF_REQUEST_IDS = "_ascend_cold_perf_request_ids"
+
+_COLD_PERF_SAMPLE_RETURN_NS = "_ascend_cold_perf_sample_return_ns"
+
+_COLD_PERF_QUEUED_NS = "_ascend_cold_perf_queued_ns"
+
+_COLD_PERF_WORKER_TIMING = "_ascend_cold_perf_worker_timing"
+
+_SLOW_ASYNC_OUTPUT_MS = 100.0
+
+_worker_hook_reported = False

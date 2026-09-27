@@ -3,12 +3,10 @@ import pytest
 import torch
 from vllm.triton_utils import triton
 
-from vllm_ascend.ops.triton.spec_decode.utils import \
-    prepare_inputs_padded_kernel
-from vllm_ascend.ops.triton.triton_utils import (get_vectorcore_num,
-                                                 init_device_properties_triton)
-from vllm_ascend.spec_decode.eagle_proposer import \
-    _PREPARE_INPUTS_BLOCK_SIZE as BLOCK_SIZE
+from vllm.model_executor.layers.ascend.triton.spec_decode.utils import prepare_inputs_padded_kernel
+from vllm.model_executor.layers.ascend.triton.triton_utils import get_vectorcore_num
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
+from vllm.v1.spec_decode.ascend.eagle_proposer import _PREPARE_INPUTS_BLOCK_SIZE as BLOCK_SIZE
 
 
 def prepare_inputs_padded_ref(

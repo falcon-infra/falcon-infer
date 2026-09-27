@@ -6,6 +6,7 @@ import torch
 from torch.distributed import ProcessGroup
 
 import vllm.envs as envs
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
 from vllm.distributed.device_communicators.all_reduce_utils import (
     should_nccl_symm_mem_allreduce,
 )
@@ -223,7 +224,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
         pynccl_comm = self.pynccl_comm
         if pynccl_comm is None or pynccl_comm.disabled:
             out = input_.clone()
-            torch.distributed.all_reduce(out, group=self.device_group)
+            npu_all_reduce(out, group=self.device_group)
             return out
         assert pynccl_comm is not None
         out = pynccl_comm.all_reduce(input_)
@@ -233,7 +234,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
             # when we run the model, allreduce only happens for the TP
             # group, where we always have either custom allreduce or pynccl.
             out = input_.clone()
-            torch.distributed.all_reduce(out, group=self.device_group)
+            npu_all_reduce(out, group=self.device_group)
         return out
 
     def reduce_scatter(self, input_: torch.Tensor, dim: int = -1):

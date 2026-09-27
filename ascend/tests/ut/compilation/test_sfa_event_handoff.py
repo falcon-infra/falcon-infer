@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 import torch
 
-SOURCE = (Path(__file__).parents[3] / "vllm_ascend/attention/sfa_v1.py").read_text(encoding="utf-8")
+SOURCE = (Path(__file__).parents[3] / "vllm/attention/sfa_v1.py").read_text(encoding="utf-8")
 
 
 @pytest.fixture

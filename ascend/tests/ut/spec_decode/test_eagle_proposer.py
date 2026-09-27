@@ -10,15 +10,11 @@ import torch
 from vllm.config import CacheConfig, CompilationMode, CUDAGraphMode, VllmConfig, set_current_vllm_config
 
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_config import init_ascend_config
-from vllm_ascend.spec_decode.eagle_proposer import (
-    AscendEagleProposer,
-    SpecDecodeBaseProposer,
-    _MTPDraftDiagnosticContext,
-)
-from vllm_ascend.spec_decode.mtp_draft_diagnostics import (
-    referenced_block_ids,
-)
+from vllm.config.ascend import init_ascend_config
+from vllm.v1.spec_decode.ascend.eagle_proposer import AscendEagleProposer
+from vllm.v1.spec_decode.ascend.eagle_proposer import SpecDecodeBaseProposer
+from vllm.v1.spec_decode.ascend.eagle_proposer import _MTPDraftDiagnosticContext
+from vllm.v1.spec_decode.ascend.mtp_draft_diagnostics import referenced_block_ids
 
 
 class TestEagleProposerInitialization(TestBase):
@@ -300,15 +296,15 @@ class TestEagleProposerInitialization(TestBase):
 
         with (
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
                 False,
             ),
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.staged_sfa_graph_configured",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.staged_sfa_graph_configured",
                 return_value=True,
             ),
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.staged_sfa_graph_capture_sizes",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.staged_sfa_graph_capture_sizes",
                 return_value=(2, 4),
             ) as capture_sizes,
             set_current_vllm_config(self.vllm_config),
@@ -333,11 +329,11 @@ class TestEagleProposerInitialization(TestBase):
 
         with (
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
                 False,
             ),
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.staged_sfa_graph_configured",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.staged_sfa_graph_configured",
                 return_value=True,
             ),
             set_current_vllm_config(self.vllm_config),
@@ -361,15 +357,15 @@ class TestEagleProposerInitialization(TestBase):
 
         with (
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.envs_ascend.VLLM_ASCEND_SFA_STAGED_MTP_DRAFT_GRAPH",
                 True,
             ),
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.staged_sfa_graph_configured",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.staged_sfa_graph_configured",
                 return_value=True,
             ),
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.staged_sfa_graph_capture_sizes",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.staged_sfa_graph_capture_sizes",
                 return_value=(3, 6),
             ),
             set_current_vllm_config(self.vllm_config),
@@ -411,9 +407,9 @@ class TestMTPDraftDiagnostics(TestBase):
     def _fake_forward(**model_kwargs):
         return model_kwargs["hidden_states"] + model_kwargs["positions"].reshape(-1, 1)
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.atomic_torch_save")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.atomic_torch_save")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize")
     def test_layer_dump_order(
         self,
         synchronize,
@@ -453,9 +449,9 @@ class TestMTPDraftDiagnostics(TestBase):
             ],
         )
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.atomic_torch_save")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.atomic_torch_save")
     @patch(
-        "vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize",
+        "vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize",
         side_effect=RuntimeError("previous device error"),
     )
     def test_layer_pre_sync_failure_does_not_run_model(
@@ -482,9 +478,9 @@ class TestMTPDraftDiagnostics(TestBase):
             "layer_pre_sync_failed",
         )
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context")
     @patch(
-        "vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize",
+        "vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize",
         side_effect=[None, RuntimeError("draft device error")],
     )
     def test_layer_post_sync_failure_preserves_input(
@@ -519,8 +515,8 @@ class TestMTPDraftDiagnostics(TestBase):
             self.assertEqual(failure["phase"], "layer_post_sync_failed")
             proposer.model.assert_called_once()
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize")
     def test_saved_pt_round_trip_preserves_draft_io(
         self,
         synchronize,
@@ -578,7 +574,7 @@ class TestMTPDraftDiagnostics(TestBase):
 
         self.assertEqual(block_ids, [3, 10, 11, 20])
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize")
     def test_diagnostic_scope_is_noop_when_debug_is_disabled(
         self,
         synchronize,
@@ -598,9 +594,9 @@ class TestMTPDraftDiagnostics(TestBase):
 
         synchronize.assert_not_called()
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_world_group")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_world_group")
     @patch(
-        "vllm_ascend.spec_decode.eagle_proposer.torch.npu.synchronize",
+        "vllm.v1.spec_decode.ascend.eagle_proposer.torch.npu.synchronize",
         side_effect=RuntimeError("target device error"),
     )
     def test_target_boundary_failure_never_enters_scope(
@@ -619,7 +615,7 @@ class TestMTPDraftDiagnostics(TestBase):
         with (
             TemporaryDirectory() as temp_dir,
             patch(
-                "vllm_ascend.spec_decode.eagle_proposer.MTP_DRAFT_DIAG_ROOT",
+                "vllm.v1.spec_decode.ascend.eagle_proposer.MTP_DRAFT_DIAG_ROOT",
                 Path(temp_dir),
             ),
             patch.dict(
@@ -685,9 +681,9 @@ class TestEagleProposerLoadModel(TestBase):
         # Clear the current vllm config
         set_current_vllm_config(None)
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_layers_from_vllm_config")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_model")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_pp_group")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_layers_from_vllm_config")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_model")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_pp_group")
     def test_load_model_pp1(self, mock_pp_group, mock_get_model, mock_get_layers):
         mock_pp_group.return_value.world_size = 1
         mock_target_layer1 = MagicMock()
@@ -720,9 +716,9 @@ class TestEagleProposerLoadModel(TestBase):
             self.assertEqual(self.proposer.attn_layer_names, ["layer3"])
             self.assertIs(self.proposer.model.model.embed_tokens, mock_model.model.embed_tokens)
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_layers_from_vllm_config")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_model")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_pp_group")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_layers_from_vllm_config")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_model")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_pp_group")
     def test_load_model_pp_gt1(self, mock_pp_group, mock_get_model, mock_get_layers):
         mock_pp_group.return_value.world_size = 2
         mock_target_layer1 = MagicMock()
@@ -742,10 +738,10 @@ class TestEagleProposerLoadModel(TestBase):
             self.assertIsNot(self.proposer.model.model.embed_tokens, mock_model.model.embed_tokens)
             self.assertEqual(self.proposer.attn_layer_names, ["layer2"])
 
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_layers_from_vllm_config")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_model")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_pp_group")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.supports_multimodal")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_layers_from_vllm_config")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_model")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_pp_group")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.supports_multimodal")
     def test_load_model_multimodal(self, mock_supports_multi, mock_pp_group, mock_get_model, mock_get_layers):
         mock_model = MagicMock()
         mock_model.get_language_model.return_value.lm_head = MagicMock()
@@ -812,13 +808,13 @@ class TestEagleProposerDummyRun(TestBase):
 
         # Mock parallel state functions
         self.mock_tp_world_size = patch(
-            "vllm_ascend.ascend_forward_context.get_tensor_model_parallel_world_size", return_value=1
+            "vllm.ascend_forward_context.get_tensor_model_parallel_world_size", return_value=1
         )
         self.mock_tp_world_size.start()
 
         mock_dp_group = MagicMock()
         mock_dp_group.world_size = 1
-        self.mock_dp_group = patch("vllm_ascend.ascend_forward_context.get_dp_group", return_value=mock_dp_group)
+        self.mock_dp_group = patch("vllm.ascend_forward_context.get_dp_group", return_value=mock_dp_group)
         self.mock_dp_group.start()
 
         # Set the current vllm config
@@ -837,11 +833,11 @@ class TestEagleProposerDummyRun(TestBase):
         set_current_vllm_config(None)
 
     # cpu does not support parallel-group, let alone `sp`
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     @patch(
-        "vllm_ascend.spec_decode.eagle_proposer.get_forward_context", **{"return_value.flash_comm_v1_enabled": False}
+        "vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context", **{"return_value.flash_comm_v1_enabled": False}
     )
-    @patch("vllm_ascend.spec_decode.eagle_proposer.set_ascend_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.set_ascend_forward_context")
     def test_dummy_run_basic(self, mock_context, mock_get_context, mock_get_context_2):
         num_tokens = 32
         with_prefill = False
@@ -854,11 +850,11 @@ class TestEagleProposerDummyRun(TestBase):
             self.assertTrue(self.proposer._runnable.call_count == 1)
 
     # cpu does not support parallel-group, let alone `sp`
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     @patch(
-        "vllm_ascend.spec_decode.eagle_proposer.get_forward_context", **{"return_value.flash_comm_v1_enabled": False}
+        "vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context", **{"return_value.flash_comm_v1_enabled": False}
     )
-    @patch("vllm_ascend.spec_decode.eagle_proposer.set_ascend_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.set_ascend_forward_context")
     def test_dummy_run_with_prefill(self, mock_context, mock_get_context, mock_get_context_2):
         mock_context.return_value.__enter__.return_value = None
         # cpu does not support `torch.ops.vllm.maybe_pad_and_reduce`
@@ -867,10 +863,10 @@ class TestEagleProposerDummyRun(TestBase):
             self.proposer.dummy_run(num_tokens=64, with_prefill=True, num_reqs=4)
             self.assertTrue(self.proposer._runnable.call_count == 1)
 
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.update_full_graph_params")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.set_ascend_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.update_full_graph_params")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.set_ascend_forward_context")
     def test_dummy_run_in_graph_capture(
         self, mock_context, mock_get_context, mock_update_full_graph_params, mock_get_context_2
     ):
@@ -891,10 +887,10 @@ class TestEagleProposerDummyRun(TestBase):
             mock_update_full_graph_params.assert_not_called()
             self.proposer.use_cuda_graph = last_use_cuda_graph
 
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.update_full_graph_params")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.get_forward_context")
-    @patch("vllm_ascend.spec_decode.eagle_proposer.set_ascend_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.update_full_graph_params")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.get_forward_context")
+    @patch("vllm.v1.spec_decode.ascend.eagle_proposer.set_ascend_forward_context")
     def test_dummy_run_in_graph_run(
         self, mock_context, mock_get_context, mock_update_full_graph_params, mock_get_context_2
     ):

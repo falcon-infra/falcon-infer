@@ -179,11 +179,6 @@ KVConnectorFactory.register_connector(
     "NixlConnector",
 )
 
-KVConnectorFactory.register_connector(
-    "MultiConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.multi_connector",
-    "MultiConnector",
-)
 
 KVConnectorFactory.register_connector(
     "MoRIIOConnector",
@@ -212,4 +207,54 @@ KVConnectorFactory.register_connector(
     "FlexKVConnectorV1",
     "vllm.distributed.kv_transfer.kv_connector.v1.flexkv_connector",
     "FlexKVConnectorV1",
+)
+
+
+# Built-in NPU connectors. No connector module is imported by registration.
+KVConnectorFactory.register_connector(
+    "MultiConnector",
+    "vllm.distributed.kv_transfer.ascend.ascend_multi_connector",
+    "AscendMultiConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "MooncakeConnectorV1",
+    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_connector",
+    "MooncakeConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "MooncakeDSAIndexConnectorV1",
+    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_dsa_index_connector",
+    "MooncakeDSAIndexConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "MooncakeConnectorStoreV1",
+    "vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.ascend_store_connector",
+    "AscendStoreConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "AscendStoreConnector",
+    "vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.ascend_store_connector",
+    "AscendStoreConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "MooncakeLayerwiseConnector",
+    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_layerwise_connector",
+    "MooncakeLayerwiseConnector",
+)
+
+KVConnectorFactory.register_connector(
+    "UCMConnector",
+    "vllm.distributed.kv_transfer.ascend.kv_pool.ucm_connector",
+    "UCMConnectorV1",
+)
+
+KVConnectorFactory.register_connector(
+    "LMCacheAscendConnector",
+    "vllm.distributed.kv_transfer.ascend.kv_pool.lmcache_ascend_connector",
+    "LMCacheConnectorV1",
 )

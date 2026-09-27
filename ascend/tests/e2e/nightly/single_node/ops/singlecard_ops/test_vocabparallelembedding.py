@@ -5,8 +5,8 @@ import pytest
 import torch
 import torch_npu  # noqa: F401
 
-import vllm_ascend.platform  # noqa: F401
-from vllm_ascend.utils import enable_custom_op
+import vllm.platforms.npu  # noqa: F401
+from vllm.utils.ascend import enable_custom_op
 
 enable_custom_op()
 

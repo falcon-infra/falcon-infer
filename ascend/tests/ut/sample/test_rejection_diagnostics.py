@@ -1,12 +1,10 @@
 from unittest.mock import ANY, patch
 
-import vllm_ascend.worker.model_runner_v1 as model_runner_module
-from vllm_ascend.sample.rejection_diagnostics import (
-    diagnostic_stage,
-    reset_stage_recorder,
-    set_stage_recorder,
-)
-from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+import vllm.v1.worker.npu_model_runner as model_runner_module
+from vllm.v1.sample.ascend.rejection_diagnostics import diagnostic_stage
+from vllm.v1.sample.ascend.rejection_diagnostics import reset_stage_recorder
+from vllm.v1.sample.ascend.rejection_diagnostics import set_stage_recorder
+from vllm.v1.worker.npu_model_runner import NPUModelRunner
 
 
 def test_ordinary_perf_does_not_create_device_events():

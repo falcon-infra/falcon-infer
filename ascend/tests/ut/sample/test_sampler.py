@@ -1,5 +1,6 @@
 from tests.ut.base import TestBase
-from vllm_ascend.sample.sampler import AscendSampler, AscendTopKTopPSampler
+from vllm.v1.sample.ascend.sampler import AscendSampler
+from vllm.v1.sample.ascend.sampler import AscendTopKTopPSampler
 
 
 class TestAscendSampler(TestBase):

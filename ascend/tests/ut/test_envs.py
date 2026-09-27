@@ -16,7 +16,7 @@ import inspect
 import os
 from unittest.mock import patch
 
-import vllm_ascend.envs as envs_ascend
+import vllm.envs_ascend as envs_ascend
 from tests.ut.base import TestBase
 
 

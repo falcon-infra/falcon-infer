@@ -1,8 +1,8 @@
 import torch
 
-from vllm_ascend._310p.ops.fla.fused_gdn_gating import fused_gdn_gating_pytorch
-from vllm_ascend.ops.triton.fused_gdn_gating import fused_gdn_gating_patch
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.platforms.ascend_310p.ops.fla.fused_gdn_gating import fused_gdn_gating_pytorch
+from vllm.model_executor.layers.ascend.triton.fused_gdn_gating import fused_gdn_gating_patch
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 
 def test_fused_gdn_gating_310p_parity_precision():

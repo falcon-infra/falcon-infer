@@ -333,10 +333,10 @@ static PyMethodDef module_methods[] = {
 };
 
 static struct PyModuleDef camem_allocator_module = {
-    PyModuleDef_HEAD_INIT, "camem_allocator",
+    PyModuleDef_HEAD_INIT, "_ascend_C",
     "CANN-mem-based allocator for NPUPluggableAllocator", -1, module_methods};
 
-PyMODINIT_FUNC PyInit_vllm_ascend_C(void) {
+PyMODINIT_FUNC PyInit__ascend_C(void) {
   // Initialize the module
   PyObject* module = PyModule_Create(&camem_allocator_module);
   if (!module) {

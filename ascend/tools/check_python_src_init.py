@@ -18,10 +18,9 @@
 #
 import os
 import sys
+from pathlib import Path
 
-VLLM_ASCEND_SRC = "vllm_ascend"
-# TODO: Re-enable this after upstream fixed
-# VLLM_SRC = "vllm-empty/vllm"
+VLLM_ASCEND_SRC = Path(__file__).resolve().parents[2] / "vllm"
 
 
 def check_init_file_in_package(directory):
@@ -62,7 +61,9 @@ def main():
         all_missing.update(missing)
 
     if all_missing:
-        print("❌ Missing '__init__.py' files in the following Python package directories:")
+        print(
+            "❌ Missing '__init__.py' files in the following Python package directories:"
+        )
         for pkg in sorted(all_missing):
             print(f" - {pkg}")
         sys.exit(1)

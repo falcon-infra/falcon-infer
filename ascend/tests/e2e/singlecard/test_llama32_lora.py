@@ -8,7 +8,7 @@ import vllm.config
 from vllm.lora.request import LoRARequest
 
 from tests.e2e.conftest import VllmRunner
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 enable_custom_op()
 

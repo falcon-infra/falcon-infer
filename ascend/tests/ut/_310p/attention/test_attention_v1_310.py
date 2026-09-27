@@ -18,18 +18,16 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.attention.attention_v1 import (
-    AscendAttentionBackend310,
-    AscendAttentionBackendImpl310,
-    AscendAttentionMetadataBuilder310,
-    AscendAttentionState,
-)
+from vllm.platforms.ascend_310p.attention.attention_v1 import AscendAttentionBackend310
+from vllm.platforms.ascend_310p.attention.attention_v1 import AscendAttentionBackendImpl310
+from vllm.platforms.ascend_310p.attention.attention_v1 import AscendAttentionMetadataBuilder310
+from vllm.platforms.ascend_310p.attention.attention_v1 import AscendAttentionState
 
 
 class TestAscendAttentionBackend310(TestBase):
     def setUp(self):
         self.mock_config = MagicMock()
-        self.utils_patcher = patch("vllm_ascend.attention.utils.get_current_vllm_config", return_value=self.mock_config)
+        self.utils_patcher = patch("vllm.v1.attention.backends.ascend.utils.get_current_vllm_config", return_value=self.mock_config)
         self.utils_patcher.start()
 
     def test_get_impl_cls(self):
@@ -56,7 +54,7 @@ class TestAscendAttentionBackendImpl310(TestBase):
         self.layer_no_quant._k_scale_float = 1.0
         self.layer_no_quant._v_scale_float = 1.0
         self.config_patcher = patch(
-            "vllm_ascend.attention.attention_v1.get_current_vllm_config", return_value=self.mock_vllm_config
+            "vllm.v1.attention.backends.ascend.attention_v1.get_current_vllm_config", return_value=self.mock_vllm_config
         )
         self.config_patcher.start()
         self.impl = AscendAttentionBackendImpl310(
@@ -74,7 +72,7 @@ class TestAscendAttentionBackendImpl310(TestBase):
 
     @patch("torch_npu._npu_reshape_and_cache")
     @patch("torch_npu._npu_flash_attention")
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     def test_forward_prefill_310(
         self, mock_get_forward_context, mock_npu_npu_flash_attention, mock_npu_reshape_and_cache
     ):
@@ -105,7 +103,7 @@ class TestAscendAttentionBackendImpl310(TestBase):
     @patch("torch_npu.npu_format_cast", return_value=torch.randn((1, 128, 16, 16), dtype=torch.float16))
     @patch("torch_npu._npu_reshape_and_cache")
     @patch("torch_npu._npu_paged_attention_splitfuse")
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     def test_forward_chunked_prefill_310(
         self,
         mock_get_forward_context,
@@ -140,7 +138,7 @@ class TestAscendAttentionBackendImpl310(TestBase):
     @patch("torch_npu.npu_format_cast", return_value=torch.randn((1, 128, 16, 16), dtype=torch.float16))
     @patch("torch_npu._npu_reshape_and_cache")
     @patch("torch_npu._npu_paged_attention_splitfuse")
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     def test_forward_prefill_cache_hit_310(
         self,
         mock_get_forward_context,
@@ -172,10 +170,10 @@ class TestAscendAttentionBackendImpl310(TestBase):
 
         mock_npu_paged_attention_splitfuse.assert_called_once()
 
-    @patch("vllm_ascend.attention.attention_v1.using_paged_attention")
+    @patch("vllm.v1.attention.backends.ascend.attention_v1.using_paged_attention")
     @patch("torch_npu._npu_paged_attention")
     @patch("torch_npu._npu_reshape_and_cache")
-    @patch("vllm_ascend.ascend_forward_context.get_forward_context")
+    @patch("vllm.ascend_forward_context.get_forward_context")
     def test_forward_paged_attention_310(
         self, mock_get_forward_context, mock_npu_reshape_and_cache, mock_paged_attention, mock_using_paged_attention
     ):

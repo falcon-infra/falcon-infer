@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.26.1)
 
 # Never enable languages, search dependencies or enter the native build here.
 function(project)
-  if(NOT "${ARGV}" STREQUAL "vllm_ascend_unified;LANGUAGES;C;CXX")
+  if(NOT "${ARGV}" STREQUAL "vllm_npu_unified;LANGUAGES;C;CXX")
     message(FATAL_ERROR "Unexpected root project: ${ARGV}")
   endif()
   set(P1_PROJECT_SEEN TRUE PARENT_SCOPE)

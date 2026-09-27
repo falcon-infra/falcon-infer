@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import hashlib
 import itertools
 import json
@@ -11,6 +12,8 @@ from dataclasses import replace
 from typing import Any
 
 import numpy as np
+import torch
+import torch.distributed as dist
 
 from vllm import envs
 from vllm.compilation.cuda_graph import CUDAGraphStat
@@ -35,7 +38,6 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 )
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
-from vllm.v1.serving_perf import SERVING_PERF_ENABLED
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -70,6 +72,7 @@ from vllm.v1.request import (
     StreamingUpdate,
     validate_final_hidden_payload,
 )
+from vllm.v1.serving_perf import SERVING_PERF_ENABLED
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
@@ -202,6 +205,14 @@ class Scheduler(SchedulerInterface):
         include_finished_set: bool = False,
         log_stats: bool = False,
     ) -> None:
+
+        from vllm import envs_ascend
+
+        if envs_ascend.VLLM_ASCEND_BALANCE_SCHEDULING:
+            self.balance_queue = [
+                torch.tensor([0], dtype=torch.int, device="cpu")
+                for _ in range(vllm_config.parallel_config.data_parallel_size)
+            ]
         self.vllm_config = vllm_config
         self.scheduler_config = vllm_config.scheduler_config
         self.cache_config = vllm_config.cache_config
@@ -1664,6 +1675,23 @@ class Scheduler(SchedulerInterface):
         scheduler_output: SchedulerOutput,
         model_runner_output: ModelRunnerOutput,
     ) -> dict[int, EngineCoreOutputs]:
+        connector_output = model_runner_output.kv_connector_output
+
+        if (
+            connector_output
+            and connector_output.kv_connector_worker_meta is not None
+            and self.connector
+        ):
+            update = getattr(self.connector, "update_connector_worker_metadata", None)
+            if callable(update):
+                update(
+                    connector_output.kv_connector_worker_meta,
+                    {
+                        req_id
+                        for req_id, request in self.requests.items()
+                        if not request.is_finished()
+                    },
+                )
         sampled_token_ids = model_runner_output.sampled_token_ids
         logprobs = model_runner_output.logprobs
         prompt_logprobs_dict = model_runner_output.prompt_logprobs_dict
@@ -3093,3 +3121,9 @@ class Scheduler(SchedulerInterface):
         self.failed_recving_kv_req_ids |= async_failed_req_ids
         # Return sync affected IDs to skip in update_from_output
         return sync_failed_req_ids
+
+    def balance_gather(self, dp_group):
+        running_tensor = torch.tensor(
+            [len(self.running)], dtype=torch.int, device="cpu"
+        )
+        dist.all_gather(self.balance_queue, running_tensor, group=dp_group)

@@ -2,7 +2,7 @@ import gc
 import torch
 
 from tests.ut.base import PytestBase
-from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule
+from vllm.model_executor.layers.ascend.triton.fla.chunk import chunk_gated_delta_rule
 
 
 class TestChunkGatedDeltaRule(PytestBase):

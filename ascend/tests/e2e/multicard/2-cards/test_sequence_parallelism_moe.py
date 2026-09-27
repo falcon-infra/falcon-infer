@@ -45,12 +45,10 @@ from vllm.distributed.parallel_state import (
 )
 from vllm.utils.system_utils import update_environment_variables
 
-import vllm_ascend.ops.register_custom_ops  # noqa
+import vllm.model_executor.layers.ascend.register_custom_ops  # noqa
 from tests.e2e.singlecard.compile.backend import TestBackend as CompileTestBackend
-from vllm_ascend.compilation.passes.sequence_parallelism_moe import (
-    SequenceParallelismMoePass,
-)
-from vllm_ascend.utils import enable_custom_op
+from vllm.compilation.ascend.passes.sequence_parallelism_moe import SequenceParallelismMoePass
+from vllm.utils.ascend import enable_custom_op
 
 MASTER_PORT = 29500
 WORLD_SIZE = 2
@@ -359,7 +357,7 @@ def _run_sequence_parallelism_moe_test(
             initialize_model_parallel(tensor_model_parallel_size=world_size)
 
             if not enable_custom_op():
-                raise RuntimeError("vllm_ascend custom ops are not available")
+                raise RuntimeError("vllm custom ops are not available")
 
             _ = get_tp_group().unique_name
             tp_size = get_tensor_model_parallel_world_size()

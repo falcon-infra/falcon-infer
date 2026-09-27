@@ -3,7 +3,7 @@ import statistics
 
 import torch
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 TOPK = 2048
 MTP = 2
@@ -226,7 +226,9 @@ def main(request_batch: int, warmups: int, iterations: int) -> None:
         iterations,
     )
 
-    print(f"request_batch={request_batch}, MTP={MTP}, topk={TOPK}, warmups={warmups}, iterations={iterations}")
+    print(
+        f"request_batch={request_batch}, MTP={MTP}, topk={TOPK}, warmups={warmups}, iterations={iterations}"
+    )
     no_union_mean = _print_summary("staged-no-union", no_union_samples)
     sort_union_mean = _print_summary("staged-sort-union", sort_union_samples)
     delta = sort_union_mean - no_union_mean

@@ -119,6 +119,22 @@ def register_model_loader(load_format: str):
 
 def get_model_loader(load_config: LoadConfig) -> BaseModelLoader:
     """Get a model loader based on the load format."""
+
+    native_loaders = {
+        "netloader": (
+            "vllm.model_executor.model_loader.ascend.netloader.netloader",
+            "ModelNetLoaderElastic",
+        ),
+        "rfork": (
+            "vllm.model_executor.model_loader.ascend.rfork.rfork_loader",
+            "RForkModelLoader",
+        ),
+    }
+    if load_config.load_format in native_loaders:
+        from importlib import import_module
+
+        module, name = native_loaders[load_config.load_format]
+        return getattr(import_module(module), name)(load_config)
     load_format = load_config.load_format
     if load_format not in _LOAD_FORMAT_TO_MODEL_LOADER:
         raise ValueError(f"Load format `{load_format}` is not supported")

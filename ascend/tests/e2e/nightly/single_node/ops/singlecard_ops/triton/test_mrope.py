@@ -5,7 +5,7 @@ import pytest
 import torch
 from vllm.model_executor.layers.rotary_embedding.mrope import triton_mrope
 
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 MROPE_SECTION = [[32, 32, 32]]
 DTYPES = [torch.bfloat16, torch.float16]

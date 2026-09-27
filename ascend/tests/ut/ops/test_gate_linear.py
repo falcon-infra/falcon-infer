@@ -24,8 +24,8 @@ from vllm.model_executor.custom_op import CustomOp, op_registry_oot
 from vllm.model_executor.layers.fused_moe.router.gate_linear import GateLinear
 from vllm.model_executor.layers.linear import ReplicatedLinear
 
-from vllm_ascend import utils
-from vllm_ascend.ops.fused_moe.gate_linear import AscendGateLinear
+from vllm.utils import ascend as utils
+from vllm.model_executor.layers.ascend.fused_moe.gate_linear import AscendGateLinear
 
 
 def test_forward_keeps_router_compute_and_logits_fp32() -> None:
@@ -60,7 +60,7 @@ def test_forward_has_no_logging_side_effects() -> None:
     gate = AscendGateLinear(input_size=16, output_size=4, bias=False)
     hidden_states = torch.randn(2, 16, dtype=torch.bfloat16)
 
-    with mock.patch("vllm_ascend.ops.fused_moe.gate_linear.logger") as logger:
+    with mock.patch("vllm.model_executor.layers.ascend.fused_moe.gate_linear.logger") as logger:
         gate(hidden_states)
 
     logger.info_once.assert_not_called()
@@ -81,15 +81,12 @@ def test_weight_loader_keeps_gate_weight_fp32() -> None:
     assert torch.equal(gate.weight, loaded_weight.float())
 
 
-def test_gate_linear_oot_registration_instantiates_ascend_gate() -> None:
-    with mock.patch.dict(op_registry_oot, {}, clear=True):
-        CustomOp.register_oot(
-            _decorated_op_cls=AscendGateLinear,
-            name="GateLinear",
-        )
 
+def test_gate_linear_native_binding_instantiates_ascend_gate() -> None:
+    config = SimpleNamespace(model_config=SimpleNamespace(hf_text_config=SimpleNamespace(model_type="glm_moe_dsa")))
+    with mock.patch("vllm.config.get_current_vllm_config", return_value=config), mock.patch.dict(op_registry_oot, {}, clear=True):
         gate = GateLinear(input_size=16, output_size=4, bias=False)
-
+        assert not op_registry_oot
     assert type(gate) is AscendGateLinear
 
 
@@ -113,21 +110,7 @@ def test_gate_linear_registration_is_model_specific(
         hf_text_config.moe_router_dtype = moe_router_dtype
     vllm_config = SimpleNamespace(model_config=SimpleNamespace(hf_text_config=hf_text_config))
 
-    previous_registered = utils._ASCEND_CUSTOMOP_IS_REIGISTERED
-    previous_ops = utils.REGISTERED_ASCEND_OPS
-    try:
-        utils._ASCEND_CUSTOMOP_IS_REIGISTERED = False
-        with (
-            mock.patch("vllm.model_executor.custom_op.CustomOp.register_oot"),
-            mock.patch("vllm_ascend.utils.is_310p", return_value=False),
-        ):
-            utils.register_ascend_customop(vllm_config)
-
-        registered_gate = utils.REGISTERED_ASCEND_OPS.get("GateLinear")
-        if expected_registered:
-            assert registered_gate is AscendGateLinear
-        else:
-            assert registered_gate is None
-    finally:
-        utils._ASCEND_CUSTOMOP_IS_REIGISTERED = previous_registered
-        utils.REGISTERED_ASCEND_OPS = previous_ops
+    from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+    with mock.patch("vllm.config.get_current_vllm_config", return_value=vllm_config), mock.patch("vllm.utils.ascend.is_310p", return_value=False):
+        selected = get_npu_layer_class("GateLinear")
+    assert selected is (AscendGateLinear if expected_registered else None)

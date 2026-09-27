@@ -38,6 +38,7 @@ class UnquantizedMoeBackend(Enum):
     CPU = "CPU"
     XPU = "XPU"
     TPU = "TPU"
+    NPU = "NPU"
     OOT = "OOT"
 
 
@@ -48,6 +49,7 @@ UNSUPPORTED_BACKEND = [
     UnquantizedMoeBackend.FLASHINFER_TRTLLM,
     UnquantizedMoeBackend.CPU,
     UnquantizedMoeBackend.TPU,
+    UnquantizedMoeBackend.NPU,
     UnquantizedMoeBackend.OOT,
 ]
 
@@ -180,8 +182,9 @@ def select_unquantized_moe_backend(
         backend = UnquantizedMoeBackend.CPU
     if current_platform.is_tpu():
         backend = UnquantizedMoeBackend.TPU
-    if current_platform.is_npu() or current_platform.is_out_of_tree():
-        # The Ascend MoE implementation is still migrated in a later P2 batch.
+    if current_platform.is_npu():
+        backend = UnquantizedMoeBackend.NPU
+    if current_platform.is_out_of_tree():
         backend = UnquantizedMoeBackend.OOT
 
     logger.info_once(_make_log_backend(backend), scope="local")

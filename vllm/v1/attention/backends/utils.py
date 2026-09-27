@@ -21,7 +21,7 @@ from vllm.v1.kv_cache_interface import KVCacheSpec, MambaSpec
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
-    from vllm.v1.worker.gpu_input_batch import InputBatch
+    from vllm.v1.worker.input_batch import InputBatch
 
 import vllm.envs as envs
 from vllm.distributed.kv_transfer.kv_connector.utils import (

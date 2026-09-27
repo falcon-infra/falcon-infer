@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_forward_context import MoECommType
-from vllm_ascend.quantization.methods.w8a8_dynamic import AscendW8A8DynamicFusedMoEMethod
+from vllm.ascend_forward_context import MoECommType
+from vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic import AscendW8A8DynamicFusedMoEMethod
 
 
 class TestAscendW8A8FusedMoEMethod(TestBase):
@@ -13,13 +13,13 @@ class TestAscendW8A8FusedMoEMethod(TestBase):
     intermediate_size = 128
 
     @patch("torch.distributed.get_rank")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.get_mc2_group")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.get_ascend_config")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.get_ep_group")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.get_mc2_group")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.get_ascend_config")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.get_ep_group")
     def setUp(self, mock_get_ep_group, mock_get_ascend_config,
               mock_get_mc2_group, mock_get_rank):
         with patch(
-                'vllm_ascend.quantization.methods.w8a8_dynamic.get_current_vllm_config'
+                'vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.get_current_vllm_config'
         ) as mock_get_current_vllm_config:
             mock_vllm_config = Mock()
             mock_vllm_config.quant_config = Mock(
@@ -106,8 +106,8 @@ class TestAscendW8A8FusedMoEMethod(TestBase):
         self.quant_method.process_weights_after_loading(new_layer)
         mock_npu_format_cast.assert_called()
 
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic._EXTRA_CTX")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.select_experts")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic._EXTRA_CTX")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.select_experts")
     def test_apply_uses_explicit_dispatch_and_mlp_args(self, mock_select_experts, mock_extra_ctx):
         tokens = 4
         hidden_size = self.hidden_size
@@ -163,9 +163,9 @@ class TestAscendW8A8FusedMoEMethod(TestBase):
         self.assertIs(fused_experts_input.topk_weights, topk_weights)
         self.assertIs(fused_experts_input.topk_ids, topk_ids)
 
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.get_flash_common3_context")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic._EXTRA_CTX")
-    @patch("vllm_ascend.quantization.methods.w8a8_dynamic.select_experts")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.get_flash_common3_context")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic._EXTRA_CTX")
+    @patch("vllm.model_executor.layers.quantization.ascend.methods.w8a8_dynamic.select_experts")
     def test_apply_overlap_gate_uses_fc3_context(
         self,
         mock_select_experts,

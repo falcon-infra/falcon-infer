@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import enum
 import time
 import weakref
@@ -13,6 +14,7 @@ from vllm.distributed import (
     sched_yield,
     stateless_destroy_torch_distributed_process_group,
 )
+from vllm.distributed.ascend.collectives import all_reduce as npu_all_reduce
 from vllm.logger import init_logger
 from vllm.v1.engine import (
     EEPNotificationType,
@@ -305,7 +307,7 @@ class ElasticEPScalingState:
 
         if state == ScaleUpNewEngineState.PREPARE:
             tensor = torch.tensor([0, 0, 0], dtype=torch.int32, device="cpu")
-            torch.distributed.all_reduce(
+            npu_all_reduce(
                 tensor,
                 op=torch.distributed.ReduceOp.MAX,
                 group=self.new_dp_group,
@@ -499,9 +501,7 @@ class ElasticEPScalingState:
             dtype=torch.int32,
             device="cpu",
         )
-        torch.distributed.all_reduce(
-            tensor, op=torch.distributed.ReduceOp.MAX, group=new_dp_group
-        )
+        npu_all_reduce(tensor, op=torch.distributed.ReduceOp.MAX, group=new_dp_group)
         data = tensor.tolist()
         self.engine_core.engines_running = bool(data[0])
         self.engine_core.current_wave = int(data[1])

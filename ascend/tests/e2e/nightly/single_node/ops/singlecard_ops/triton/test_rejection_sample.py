@@ -4,12 +4,11 @@ import torch
 from vllm.v1.sample.rejection_sampler import \
     rejection_random_sample_kernel as original_rejection_random_sample_kernel
 
-from vllm_ascend.ops.triton.reject_sample import (
-    cal_grid_and_block_size, rejection_random_sample_block_verify_kernel,
-    rejection_random_sample_kernel)
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
-from vllm_ascend.sample.rejection_sampler import \
-    rejection_random_sample_block_verify_pytorch
+from vllm.model_executor.layers.ascend.triton.reject_sample import cal_grid_and_block_size
+from vllm.model_executor.layers.ascend.triton.reject_sample import rejection_random_sample_block_verify_kernel
+from vllm.model_executor.layers.ascend.triton.reject_sample import rejection_random_sample_kernel
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
+from vllm.v1.sample.ascend.rejection_sampler import rejection_random_sample_block_verify_pytorch
 
 
 @pytest.fixture(scope="function", autouse=True)

@@ -21,8 +21,8 @@ from vllm.v1.kv_cache_interface import (
     KVCacheTensor,
 )
 
-from vllm_ascend.utils import sparse_kv_cache_has_indexer
-from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+from vllm.utils.ascend import sparse_kv_cache_has_indexer
+from vllm.v1.worker.npu_model_runner import NPUModelRunner
 
 KV_LORA_RANK = 512
 QK_ROPE_HEAD_DIM = 64
@@ -98,8 +98,8 @@ class TestSparseKVCacheHasIndexer(unittest.TestCase):
         self.assertFalse(sparse_kv_cache_has_indexer(SimpleNamespace()))
 
 
-@patch("vllm_ascend.worker.model_runner_v1.has_ec_transfer", return_value=False)
-@patch("vllm_ascend.worker.model_runner_v1.get_layers_from_vllm_config")
+@patch("vllm.v1.worker.npu_model_runner.has_ec_transfer", return_value=False)
+@patch("vllm.v1.worker.npu_model_runner.get_layers_from_vllm_config")
 class TestGetKVCacheSpecSharedIndexer(_RunnerMixin, unittest.TestCase):
     def _run(self, mock_get_layers, has_indexer: bool):
         runner = self._build_runner()
@@ -139,7 +139,7 @@ class TestAllocateReshapeSharedIndexer(_RunnerMixin, unittest.TestCase):
         else:
             sparse_head_dim = (KV_LORA_RANK, QK_ROPE_HEAD_DIM, 0)
         with patch(
-            "vllm_ascend.worker.model_runner_v1.get_layers_from_vllm_config",
+            "vllm.v1.worker.npu_model_runner.get_layers_from_vllm_config",
             return_value={layer_name: _attn_layer(has_indexer)},
         ):
             spec = runner.get_kv_cache_spec()[layer_name]

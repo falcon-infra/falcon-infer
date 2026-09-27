@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from vllm_ascend.ops.triton.muls_add import muls_add_triton
-from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
+from vllm.model_executor.layers.ascend.triton.muls_add import muls_add_triton
+from vllm.model_executor.layers.ascend.triton.triton_utils import init_device_properties_triton
 
 
 @pytest.mark.parametrize(

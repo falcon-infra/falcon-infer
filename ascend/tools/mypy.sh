@@ -39,6 +39,8 @@ run_mypy() {
     mypy --follow-imports skip --check-untyped-defs --python-version "${PYTHON_VERSION}" "$@"
 }
 
-run_mypy vllm_ascend
-run_mypy examples
-run_mypy tests
+NATIVE_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$NATIVE_REPO_ROOT"
+run_mypy vllm
+run_mypy ascend/examples
+run_mypy ascend/tests

@@ -21,7 +21,7 @@ import pytest
 import torch
 
 # Now import the module under test
-import vllm_ascend.batch_invariant as batch_invariant
+import vllm.model_executor.layers.ascend_batch_invariant as batch_invariant
 
 
 class TestBatchInvariant:
@@ -43,8 +43,8 @@ class TestBatchInvariant:
         assert os.environ["HCCL_DETERMINISTIC"] == "strict"
         assert os.environ["LCCL_DETERMINISTIC"] == "1"
 
-    @patch("vllm_ascend.batch_invariant.HAS_TRITON", False)
-    @patch("vllm_ascend.batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", True)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_TRITON", False)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", True)
     def test_enable_batch_invariant_mode_ascendc_path(self):
         """Test enable_batch_invariant_mode with AscendC ops available"""
         # Mock dependencies
@@ -76,8 +76,8 @@ class TestBatchInvariant:
             == batch_invariant.torch.ops.batch_invariant_ops.npu_fused_infer_attention_score_batch_invariant
         )
 
-    @patch("vllm_ascend.batch_invariant.HAS_TRITON", True)
-    @patch("vllm_ascend.batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", False)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_TRITON", True)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", False)
     def test_enable_batch_invariant_mode_triton_path(self):
         """Test enable_batch_invariant_mode with only Triton available"""
         # Mock dependencies
@@ -105,8 +105,8 @@ class TestBatchInvariant:
         mock_library.impl.assert_any_call("aten::softmax", batch_invariant.softmax_batch_invariant, "NPU")
         mock_library.impl.assert_any_call("aten::_softmax", batch_invariant.softmax_batch_invariant, "NPU")
 
-    @patch("vllm_ascend.batch_invariant.HAS_TRITON", False)
-    @patch("vllm_ascend.batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", False)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_TRITON", False)
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.HAS_ASCENDC_BATCH_INVARIANT", False)
     def test_enable_batch_invariant_mode_no_backend(self):
         """Test enable_batch_invariant_mode with no backends available"""
         # Mock library
@@ -146,7 +146,7 @@ class TestBatchInvariant:
             batch_invariant.override_envs_for_invariance.assert_not_called()
             batch_invariant.enable_batch_invariant_mode.assert_not_called()
 
-    @patch("vllm_ascend.batch_invariant.torch_npu")
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.torch_npu")
     def test_add_rms_norm(self, mock_torch_npu):
         """Test add_rms_norm function"""
         # Mock dependencies
@@ -182,7 +182,7 @@ class TestBatchInvariant:
         assert result_x is expected_output
         assert result_placeholder is None
 
-    @patch("vllm_ascend.batch_invariant.torch_npu")
+    @patch("vllm.model_executor.layers.ascend_batch_invariant.torch_npu")
     def test_add_rms_norm_consistency(self, mock_torch_npu):
         """Test that add_rms_norm produces the same output as torch_npu.npu_add_rms_norm"""
         # Create mock tensors

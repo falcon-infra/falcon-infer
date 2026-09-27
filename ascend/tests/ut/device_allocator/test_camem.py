@@ -19,11 +19,12 @@ import pytest
 import torch
 
 from tests.ut.base import PytestBase
-from vllm_ascend.device_allocator.camem import (AllocationData, CaMemAllocator,
-                                                create_and_map,
-                                                find_loaded_library,
-                                                get_pluggable_allocator,
-                                                unmap_and_release)
+from vllm.device_allocator.ascend.camem import AllocationData
+from vllm.device_allocator.ascend.camem import CaMemAllocator
+from vllm.device_allocator.ascend.camem import create_and_map
+from vllm.device_allocator.ascend.camem import find_loaded_library
+from vllm.device_allocator.ascend.camem import get_pluggable_allocator
+from vllm.device_allocator.ascend.camem import unmap_and_release
 
 
 def dummy_malloc(args):
@@ -51,7 +52,7 @@ class TestCaMem(PytestBase):
         (None, ),
     ])
     def test_create_and_map_calls_python_create_and_map(self, handle):
-        with patch("vllm_ascend.device_allocator.camem.python_create_and_map"
+        with patch("vllm.device_allocator.ascend.camem.python_create_and_map"
                    ) as mock_create:
             create_and_map(handle)
             mock_create.assert_called_once_with(*handle)
@@ -62,14 +63,14 @@ class TestCaMem(PytestBase):
     ])
     def test_unmap_and_release_calls_python_unmap_and_release(self, handle):
         with patch(
-                "vllm_ascend.device_allocator.camem.python_unmap_and_release"
+                "vllm.device_allocator.ascend.camem.python_unmap_and_release"
         ) as mock_release:
             unmap_and_release(handle)
             mock_release.assert_called_once_with(*handle)
 
-    @patch("vllm_ascend.device_allocator.camem.init_module")
+    @patch("vllm.device_allocator.ascend.camem.init_module")
     @patch(
-        "vllm_ascend.device_allocator.camem.torch.npu.memory.NPUPluggableAllocator"
+        "vllm.device_allocator.ascend.camem.torch.npu.memory.NPUPluggableAllocator"
     )
     def test_get_pluggable_allocator(self, mock_allocator_class,
                                      mock_init_module):
@@ -113,8 +114,8 @@ class TestCaMem(PytestBase):
         assert ptr not in allocator.pointer_to_data
         assert data.cpu_backup_tensor is None
 
-    @patch("vllm_ascend.device_allocator.camem.unmap_and_release")
-    @patch("vllm_ascend.device_allocator.camem.memcpy")
+    @patch("vllm.device_allocator.ascend.camem.unmap_and_release")
+    @patch("vllm.device_allocator.ascend.camem.memcpy")
     def test_sleep_offload_and_discard(self, mock_memcpy, mock_unmap):
         allocator = CaMemAllocator.get_instance()
 
@@ -137,7 +138,7 @@ class TestCaMem(PytestBase):
                 kwargs['pin_memory'] = False
             return original_torch_empty(*args, **kwargs)
 
-        with patch("vllm_ascend.device_allocator.camem.torch.empty",
+        with patch("vllm.device_allocator.ascend.camem.torch.empty",
                    side_effect=mock_torch_empty):
             allocator.sleep(offload_tags="tag1")
 
@@ -149,8 +150,8 @@ class TestCaMem(PytestBase):
         assert mock_unmap.call_count == 2
         assert mock_memcpy.called
 
-    @patch("vllm_ascend.device_allocator.camem.create_and_map")
-    @patch("vllm_ascend.device_allocator.camem.memcpy")
+    @patch("vllm.device_allocator.ascend.camem.create_and_map")
+    @patch("vllm.device_allocator.ascend.camem.memcpy")
     def test_wake_up_loads_and_clears_cpu_backup(self, mock_memcpy,
                                                  mock_create_and_map):
         allocator = CaMemAllocator.get_instance()
@@ -176,7 +177,7 @@ class TestCaMem(PytestBase):
         mock_ctx.__exit__.return_value = None
 
         with patch(
-                "vllm_ascend.device_allocator.camem.use_memory_pool_with_allocator",
+                "vllm.device_allocator.ascend.camem.use_memory_pool_with_allocator",
                 return_value=mock_ctx):
             with allocator.use_memory_pool(tag="my_tag"):
                 assert allocator.current_tag == "my_tag"

@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.sharded_state_loader_310p import ShardedStateLoader310
+from vllm.platforms.ascend_310p.sharded_state_loader_310p import ShardedStateLoader310
 
 
 class MockQuantConfig:

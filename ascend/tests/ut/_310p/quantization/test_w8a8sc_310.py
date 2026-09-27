@@ -20,7 +20,7 @@ import pytest
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend._310p.quantization.methods.w8a8sc import AscendW8A8SCLinearMethod310
+from vllm.platforms.ascend_310p.quantization.methods.w8a8sc import AscendW8A8SCLinearMethod310
 
 
 class TestAscendW8A8SCLinearMethod310(TestBase):

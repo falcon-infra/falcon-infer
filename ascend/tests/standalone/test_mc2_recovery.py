@@ -10,7 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE = ROOT.parents[1]
-API = runpy.run_path(str(ROOT / "vllm_ascend/core/mc2_recovery.py"))
+API = runpy.run_path(str(ROOT / "../vllm/v1/core/mc2_recovery.py"))
 
 
 def config(*, sizes=(8, 16, 24, 32), tp=4, seqs=16, drafts=1, consumer=True):
@@ -31,7 +31,7 @@ def config(*, sizes=(8, 16, 24, 32), tp=4, seqs=16, drafts=1, consumer=True):
             max_num_seqs=seqs,
             max_num_batched_tokens=4096,
             enable_chunked_prefill=True,
-            scheduler_cls="vllm_ascend.core.recompute_scheduler.AsyncRecomputeScheduler",
+            scheduler_cls="vllm.v1.core.sched.recompute_scheduler.AsyncRecomputeScheduler",
         ),
     )
 
@@ -69,7 +69,7 @@ def test_non_chunkable_recovery_is_rejected():
 
 
 def test_sync_gate_does_not_trust_recompute_flag_alone():
-    tree = ast.parse((ROOT / "vllm_ascend/worker/model_runner_v1.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "../vllm/v1/worker/npu_model_runner.py").read_text(encoding="utf-8"))
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_can_skip_dp_metadata")
     method.decorator_list = []
     calls = []
@@ -131,7 +131,7 @@ def test_unqualified_recovery_keeps_metadata_agreement(case):
 def test_production_draft_expansion_can_exceed_target_capacity():
     import torch
 
-    source = ast.parse((ROOT / "vllm_ascend/spec_decode/eagle_proposer.py").read_text(encoding="utf-8"))
+    source = ast.parse((ROOT / "../vllm/v1/spec_decode/ascend/eagle_proposer.py").read_text(encoding="utf-8"))
     function = next(n for n in ast.walk(source) if isinstance(n, ast.FunctionDef) and n.name == "set_inputs_first_pass")
     seen = []
 
@@ -169,7 +169,7 @@ def test_production_draft_expansion_can_exceed_target_capacity():
 
 
 def test_per_step_gate_only_reads_startup_decisions():
-    tree = ast.parse((ROOT / "vllm_ascend/worker/model_runner_v1.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "../vllm/v1/worker/npu_model_runner.py").read_text(encoding="utf-8"))
     fn = next(
         n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_skip_all_reduce_across_dp_group"
     )
@@ -183,7 +183,7 @@ def test_per_step_gate_only_reads_startup_decisions():
 def test_async_scheduler_inherits_the_bounded_ascend_schedule():
     sources = [
         (WORKSPACE / "vllm/vllm/v1/core/sched/async_scheduler.py", {"AsyncScheduler"}),
-        (ROOT / "vllm_ascend/core/recompute_scheduler.py", {"RecomputeScheduler", "AsyncRecomputeScheduler"}),
+        (ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", {"RecomputeScheduler", "AsyncRecomputeScheduler"}),
     ]
     nodes = []
     for path, names in sources:

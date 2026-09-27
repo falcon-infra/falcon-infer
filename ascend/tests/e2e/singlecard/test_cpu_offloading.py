@@ -140,7 +140,7 @@ def test_cpu_offloading() -> None:
             "num_cpu_blocks": 1000,
             "block_size": 128,
             "spec_name": "NPUOffloadingSpec",
-            "spec_module_path": "vllm_ascend.kv_offload.npu",
+            "spec_module_path": "vllm.v1.kv_offload.ascend.npu",
         },
     )
 

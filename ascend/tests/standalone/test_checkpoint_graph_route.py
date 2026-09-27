@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def route_api():
     ns = dict(Enum=Enum, dataclass=dataclass, Any=Any, np=np)
-    utils = ast.parse((ROOT / "vllm_ascend/utils.py").read_text(encoding="utf-8"))
+    utils = ast.parse((ROOT / "../vllm/utils/ascend.py").read_text(encoding="utf-8"))
     definitions = [
         n
         for n in utils.body
@@ -24,10 +24,10 @@ def route_api():
         and n.name in {"StagedSFARouteAction", "StagedSFARouteReason", "StagedSFARouteDecision"}
     ]
     exec(compile(ast.Module(body=definitions, type_ignores=[]), "route_types", "exec"), ns)
-    metadata = ast.parse((ROOT / "vllm_ascend/attention/utils.py").read_text(encoding="utf-8"))
+    metadata = ast.parse((ROOT / "../vllm/v1/attention/backends/ascend/utils.py").read_text(encoding="utf-8"))
     markers = next(n for n in metadata.body if isinstance(n, ast.ClassDef) and n.name == "ColdResumeMarkers")
     exec(compile(ast.Module(body=[markers], type_ignores=[]), "cold_markers", "exec"), ns)
-    source = ast.parse((ROOT / "vllm_ascend/worker/model_runner_v1.py").read_text(encoding="utf-8"))
+    source = ast.parse((ROOT / "../vllm/v1/worker/npu_model_runner.py").read_text(encoding="utf-8"))
     method = next(n for n in ast.walk(source) if isinstance(n, ast.FunctionDef) and n.name == "_staged_sfa_local_route")
     ns.update(
         cold_perf_enabled=lambda: False,

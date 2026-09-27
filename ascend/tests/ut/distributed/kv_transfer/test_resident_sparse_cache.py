@@ -1,14 +1,12 @@
 import pytest
 import torch
 
-from vllm_ascend.distributed.kv_transfer.sparse_offload.resident_sparse_cache import (
-    ResidentRequestStateRegistry,
-    _resident_sparse_cache_reference,
-    allocate_resident_workspace,
-    prepare_resident_sparse_cache_,
-    remap_union_positions_,
-    validate_resident_shapes,
-)
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import ResidentRequestStateRegistry
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import _resident_sparse_cache_reference
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import allocate_resident_workspace
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import prepare_resident_sparse_cache_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import remap_union_positions_
+from vllm.distributed.kv_transfer.ascend.sparse_offload.resident_sparse_cache import validate_resident_shapes
 
 
 def _state(

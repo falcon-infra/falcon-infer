@@ -3,8 +3,7 @@ import pytest
 from vllm.triton_utils import tl, triton
 from vllm.v1.worker.gpu.block_table import _compute_slot_mappings_kernel as \
     ref_compute_slot_mappings_kernel
-from vllm_ascend.worker.v2.block_table import _compute_slot_mappings_kernel as \
-    ascend_compute_slot_mappings_kernel
+from vllm.v1.worker.npu.v2.block_table import _compute_slot_mappings_kernel as ascend_compute_slot_mappings_kernel
 
 def test_compute_slot_mapping_npu_kernel():
 

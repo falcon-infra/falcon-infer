@@ -5,7 +5,7 @@ import numpy
 import pytest
 import torch
 
-from vllm_ascend.utils import enable_custom_op
+from vllm.utils.ascend import enable_custom_op
 
 enable_custom_op()
 

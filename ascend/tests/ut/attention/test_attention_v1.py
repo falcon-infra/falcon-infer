@@ -3,13 +3,11 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.attention.attention_v1 import (
-    AscendAttentionBackend,
-    AscendAttentionBackendImpl,
-    AscendAttentionMetadataBuilder,
-    AscendAttentionState,
-)
-from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionBackend
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionBackendImpl
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionMetadataBuilder
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendAttentionState
+from vllm.v1.attention.backends.ascend.utils import AscendCommonAttentionMetadata
 
 
 class TestAscendAttentionBackend(TestBase):
@@ -24,11 +22,11 @@ class TestAscendAttentionBackend(TestBase):
         self.mock_config.parallel_config = mock_parallel_config
 
         self.utils_patcher = patch(
-            'vllm_ascend.attention.utils.get_current_vllm_config',
+            'vllm.v1.attention.backends.ascend.utils.get_current_vllm_config',
             return_value=self.mock_config)
         self.utils_patcher.start()
 
-        from vllm_ascend.attention.utils import enable_cp
+        from vllm.v1.attention.backends.ascend.utils import enable_cp
         enable_cp.cache_clear()
 
     def test_get_name(self):
@@ -90,7 +88,7 @@ class TestAscendAttentionMetadataBuilder(TestBase):
 
         self.assertFalse(result)
 
-    @patch('vllm_ascend.attention.attention_v1.AscendMetadata')
+    @patch('vllm.v1.attention.backends.ascend.attention_v1.AscendMetadata')
     def test_build(self, mock_ascend_metadata):
         common_attn_metadata = AscendCommonAttentionMetadata(
             query_start_loc=torch.tensor([0, 2, 5, 9]),
@@ -181,7 +179,7 @@ class TestAscendAttentionBackendImpl(TestBase):
         self.layer_no_quant._v_scale_float = 1.0
         self.mock_vllm_config = MagicMock()
         self.config_patcher = patch(
-            'vllm_ascend.attention.attention_v1.get_current_vllm_config',
+            'vllm.v1.attention.backends.ascend.attention_v1.get_current_vllm_config',
             return_value=self.mock_vllm_config)
         self.config_patcher.start()
 
@@ -249,7 +247,7 @@ class TestAscendAttentionBackendImpl(TestBase):
 
     @patch('torch_npu._npu_reshape_and_cache')
     @patch('torch_npu.npu_fused_infer_attention_score')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     def test_forward_fused_infer_attention(
             self, mock_get_forward_context,
             mock_npu_fused_infer_attention_score, mock_npu_reshape_and_cache):
@@ -282,10 +280,10 @@ class TestAscendAttentionBackendImpl(TestBase):
         mock_npu_fused_infer_attention_score.assert_called_once()
         assert output.shape == (10, 8, 64)
 
-    @patch('vllm_ascend.attention.attention_v1.using_paged_attention')
+    @patch('vllm.v1.attention.backends.ascend.attention_v1.using_paged_attention')
     @patch('torch_npu._npu_paged_attention')
     @patch('torch_npu._npu_reshape_and_cache')
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     def test_forward_paged_attention(self, mock_get_forward_context,
                                      mock_npu_reshape_and_cache,
                                      mock_paged_attention,
@@ -316,7 +314,7 @@ class TestAscendAttentionBackendImpl(TestBase):
         mock_paged_attention.assert_called_once()
         assert output.shape == (4, 8 * 64)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch('torch_npu.npu_fused_infer_attention_score')
     @patch('torch_npu._npu_reshape_and_cache')
     def test_forward_decode_only_swa(self, mock_npu_reshape_and_cache,
@@ -348,7 +346,7 @@ class TestAscendAttentionBackendImpl(TestBase):
         mock_fused_infer_attention_score.assert_called_once()
         assert output.shape == (10, 8, 64)
 
-    @patch('vllm_ascend.ascend_forward_context.get_forward_context')
+    @patch('vllm.ascend_forward_context.get_forward_context')
     @patch('torch_npu._npu_paged_attention')
     @patch('torch_npu.npu_fused_infer_attention_score')
     @patch('torch_npu._npu_reshape_and_cache')

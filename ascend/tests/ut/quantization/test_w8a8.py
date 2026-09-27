@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from tests.ut.base import TestBase
-from vllm_ascend.quantization.methods.w8a8_static import AscendW8A8LinearMethod
-from vllm_ascend.utils import AscendDeviceType
+from vllm.model_executor.layers.quantization.ascend.methods.w8a8_static import AscendW8A8LinearMethod
+from vllm.utils.ascend import AscendDeviceType
 
 
 class TestAscendW8A8LinearMethod(TestBase):
@@ -38,7 +38,7 @@ class TestAscendW8A8LinearMethod(TestBase):
         self.assertEqual(params['weight_offset'].shape, (10, 1))
 
     @patch(
-        "vllm_ascend.quantization.methods.w8a8_static.get_weight_prefetch_method"
+        "vllm.model_executor.layers.quantization.ascend.methods.w8a8_static.get_weight_prefetch_method"
     )
     @patch("torch.ops.vllm.quantize")
     @patch("torch_npu.npu_quant_matmul")
@@ -85,7 +85,7 @@ class TestAscendW8A8LinearMethod(TestBase):
         expected_y_output += bias
         self.assertTrue(torch.equal(output, expected_y_output))
 
-    @patch('vllm_ascend.utils.get_ascend_device_type',
+    @patch('vllm.utils.ascend.get_ascend_device_type',
            return_value=AscendDeviceType._310P)
     @patch("torch_npu.npu_quant_matmul")
     def test_apply_with_x_is_310p(self, mock_npu_quant_matmul,

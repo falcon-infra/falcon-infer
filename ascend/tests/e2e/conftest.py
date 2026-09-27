@@ -57,15 +57,11 @@ from vllm.utils.network_utils import get_open_port
 
 from tests.e2e.model_utils import TokensTextLogprobs, TokensTextLogprobsPromptLogprobs
 from tests.e2e.nightly.multi_node.scripts.multi_node_config import DisaggregatedPrefillCfg, NodeInfo
-from vllm_ascend.ascend_config import clear_ascend_config
+from vllm.config.ascend import clear_ascend_config
 
 # TODO: remove this part after the patch merged into vllm, if
 # we not explicitly patch here, some of them might be effectiveless
 # in pytest scenario
-from vllm_ascend.utils import adapt_patch  # noqa E402
-
-adapt_patch(True)
-adapt_patch(False)
 
 from vllm.distributed.parallel_state import (  # noqa E402
     destroy_distributed_environment,

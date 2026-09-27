@@ -5,11 +5,10 @@ import torch
 
 from tests.ut.attention.utils import patch_distributed_groups
 from tests.ut.base import TestBase
-from vllm_ascend.attention.attention_v1 import AscendMetadata
-from vllm_ascend.attention.context_parallel.attention_cp import \
-    AscendAttentionCPImpl
-from vllm_ascend.attention.context_parallel.common_cp import (
-    AscendMetadataForPrefill, AscendPCPMetadata)
+from vllm.v1.attention.backends.ascend.attention_v1 import AscendMetadata
+from vllm.v1.attention.backends.ascend.context_parallel.attention_cp import AscendAttentionCPImpl
+from vllm.v1.attention.backends.ascend.context_parallel.common_cp import AscendMetadataForPrefill
+from vllm.v1.attention.backends.ascend.context_parallel.common_cp import AscendPCPMetadata
 
 
 class TestAscendAttentionCPImpl(TestBase):
@@ -35,7 +34,7 @@ class TestAscendAttentionCPImpl(TestBase):
         self.layer_no_quant._v_scale_float = 1.0
         self.mock_vllm_config = MagicMock()
         self.config_patcher = patch(
-            'vllm_ascend.attention.attention_v1.get_current_vllm_config',
+            'vllm.v1.attention.backends.ascend.attention_v1.get_current_vllm_config',
             return_value=self.mock_vllm_config)
         self.config_patcher.start()
 
@@ -95,7 +94,7 @@ class TestAscendAttentionCPImpl(TestBase):
     @patch('torch_npu.npu_attention_update')
     @patch("torch_npu.npu_fused_infer_attention_score")
     @patch(
-        'vllm_ascend.ascend_forward_context.get_forward_context'
+        'vllm.ascend_forward_context.get_forward_context'
     )
     @patch_distributed_groups(dcp_size=2, pcp_size=2)
     def test_forward_decode_pcp_dcp(self, mock_all2all, mock_dcp, mock_pcp,
@@ -427,7 +426,7 @@ class TestUpdateNpuAttnOutLse(TestBase):
 
     @patch('torch.ops.npu.npu_fused_infer_attention_score')
     @patch(
-        'vllm_ascend.attention.context_parallel.attention_cp.AscendAttentionCPImpl._update_out_and_lse'
+        'vllm.v1.attention.backends.ascend.context_parallel.attention_cp.AscendAttentionCPImpl._update_out_and_lse'
     )
     def test_attention_with_nomask_and_mask_chunk(
             self, mock_update_out_and_lse,
@@ -475,7 +474,7 @@ class TestUpdateNpuAttnOutLse(TestBase):
 
     @patch('torch.ops.npu.npu_fused_infer_attention_score')
     @patch(
-        'vllm_ascend.attention.context_parallel.attention_cp.AscendAttentionCPImpl._npu_attn_out_lse_update'
+        'vllm.v1.attention.backends.ascend.context_parallel.attention_cp.AscendAttentionCPImpl._npu_attn_out_lse_update'
     )
     def test_attention_with_nomask_and_mask_nochunk(
             self, mock_npu_attn_out_lse_update,
@@ -523,7 +522,7 @@ class TestUpdateNpuAttnOutLse(TestBase):
         self.assertEqual(attn_lse, None)
 
     @patch(
-        'vllm_ascend.attention.context_parallel.attention_cp.AscendAttentionCPImpl._npu_attn_out_lse_update'
+        'vllm.v1.attention.backends.ascend.context_parallel.attention_cp.AscendAttentionCPImpl._npu_attn_out_lse_update'
     )
     def test_update_chunk_attn_out_lse_with_current_attn_out_lse(
             self, mock_npu_attn_out_lse_update):
