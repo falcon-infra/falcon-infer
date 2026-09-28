@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""P2 native Ascend build commands; imported without torch or device probing.
+"""P3 native Ascend build commands; imported without torch or device probing.
 
 The two repositories carry independent copies of this build helper. Native
 builds are performed only by intranet operators. Metadata/sdist preparation
@@ -86,7 +86,7 @@ def runtime_requirements() -> list[str]:
 
 
 def resource_namespace(primary: str) -> str:
-    return "vllm" if primary == "vllm" else primary + "_ascend"
+    return primary
 
 
 def package_names(primary: str, addon: str) -> list[str]:
@@ -227,8 +227,7 @@ def required_artifacts(primary: str, info: dict) -> dict[str, list[str]]:
     if info.get("build_mooncake", False):
         host.append("lmcache_mooncake*.so")
     return {
-        "lmcache_ascend": ["c_ops*.so", "libcache_kernels.so", *channels],
-        "lmcache": host,
+        "lmcache": ["c_ops*.so", "libcache_kernels.so", *channels, *host],
     }
 
 

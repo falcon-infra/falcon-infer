@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Standalone P1 intranet materials, build and isolated-install entry point.
+"""Paired P3 intranet materials, build and isolated-install entry point.
 
 No automatic downloads or dependency installation. Use --dry-run to print pip
 commands without compiling, installing or creating directories.
@@ -177,7 +177,7 @@ def check_install_target(isolated: bool) -> None:
     """Require dedicated-environment confirmation; reject old four-pack installs."""
     if not isolated:
         raise ValueError(
-            "Pass --isolated-env only in a dedicated P1 container/interpreter"
+            "Pass --isolated-env only in a dedicated P3 container/interpreter"
         )
     for name in ("vllm-ascend", "lmcache-ascend", "vllm", "lmcache"):
         try:
@@ -202,14 +202,20 @@ def wheel_info(path: Path) -> dict:
             raise ValueError("Invalid wheel metadata or duplicate/corrupt entries")
         if any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
             raise ValueError("Unsafe wheel member")
-        if primary == "vllm" and any(
+        if any(
             name.startswith(
-                ("vllm_ascend/", "ascend/legacy_patches/", "ascend/legacy_plugin/")
+                (
+                    "vllm_ascend/",
+                    "lmcache_ascend/",
+                    "ascend/legacy_patches/",
+                    "ascend/legacy_plugin/",
+                    "ascend/legacy-p3/",
+                )
             )
             for name in names
         ):
             raise ValueError(
-                "P2 wheel contains a retired plugin namespace or patch archive"
+                "P3 wheel contains a retired plugin namespace or patch archive"
             )
         meta = BytesParser().parsebytes(wheel.read(metas[0]))
         if meta["Name"].lower() != primary or meta["Version"] != version:
@@ -394,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--isolated-env",
                 action="store_true",
-                help="confirm dedicated P1 environment, not a serving baseline",
+                help="confirm dedicated P3 environment, not a serving baseline",
             )
         if action == "install":
             command.add_argument("--wheel", required=True, type=Path)

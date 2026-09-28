@@ -53,8 +53,8 @@ def probe(*, device_smoke=False, torchair_abi=False):
         from vllm.platforms import current_platform
         from vllm.plugins import load_general_plugins
 
-        if importlib.metadata.version("vllm") != "0.18.0+ascend.p2":
-            raise RuntimeError("Expected vllm 0.18.0+ascend.p2")
+        if importlib.metadata.version("vllm") != "0.18.0+ascend.p3":
+            raise RuntimeError("Expected vllm 0.18.0+ascend.p3")
         if not current_platform.is_npu() or current_platform.is_out_of_tree():
             raise RuntimeError("Native NPU platform was not selected")
         load_general_plugins()

@@ -255,6 +255,6 @@ KVConnectorFactory.register_connector(
 
 KVConnectorFactory.register_connector(
     "LMCacheAscendConnector",
-    "vllm.distributed.kv_transfer.ascend.kv_pool.lmcache_ascend_connector",
+    "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector",
     "LMCacheConnectorV1",
 )
