@@ -44,6 +44,7 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Non-secret setting; files contain request/model data. Requires eager,
     # compilation mode 0 and synchronous scheduling; introduces host readback.
     "VLLM_ASCEND_PD_TENSOR_DUMP_DIR": lambda: os.getenv("VLLM_ASCEND_PD_TENSOR_DUMP_DIR", "").strip(),
+    "VLLM_ASCEND_PD_TENSOR_DUMP_MAX_TOKENS": lambda: int(os.getenv("VLLM_ASCEND_PD_TENSOR_DUMP_MAX_TOKENS", "64")),
     # Shared PD serving performance diagnostics across vLLM and LMCache.
     # Non-sensitive; configure before worker startup. Default 0/off. Values:
     # 1 = host timing, detail = extra host detail, device = opt-in device timing.
