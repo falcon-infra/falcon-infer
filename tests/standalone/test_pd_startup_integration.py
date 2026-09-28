@@ -203,7 +203,7 @@ def test_kv_registration_boundary_surrounds_real_connector_call(trace, fail):
         MambaSpec=type("MambaSpec", (), {}),
         has_kv_transfer_group=lambda: True,
         get_kv_transfer_group=lambda: NS(register_kv_caches=register),
-        envs_ascend=NS(VLLM_ASCEND_DSA_DISABLE_INDEX_LMCACHE=False),
+        envs_ascend=NS(VLLM_ASCEND_DSA_DISABLE_INDEX_LMCACHE=False, VLLM_ASCEND_PD_TENSOR_DUMP_DIR=""),
     )
     if fail:
         with pytest.raises(RuntimeError) as caught:
