@@ -1645,7 +1645,14 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
                 for r in range(n_real):
                     s, e = int(qsl[r]), int(qsl[r + 1])
                     plen = int(plens_cpu[r])
-                    first_decode = max(s, s + plen - int(computed[r]))
+                    # Dense PD prefix loads can leave a real final prompt
+                    # query in DecodeOnly/SpecDecoding without a cold-resume
+                    # marker. Do not classify that scheduled row as padding.
+                    first_decode = (
+                        s
+                        if fixed_decode_width
+                        else max(s, s + plen - int(computed[r]))
+                    )
                     if cold_resumes and cold_resumes[r]:
                         cold_ends = getattr(
                             common_attn_metadata.cold_compact_resumes,

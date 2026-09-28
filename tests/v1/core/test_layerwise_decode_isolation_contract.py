@@ -45,3 +45,11 @@ def test_npu_runner_and_sfa_gate_layerwise_paths_to_p_nodes():
     assert "self._sfa_preprocess_with_mlapo" in sfa
     assert "self._sfa_preprocess_with_mlapo_after_layerwise_wait" in sfa
     assert "and layerwise_prefill_transfer_window_supported()" in sfa
+
+
+def test_dense_pd_decode_rows_are_not_reclassified_as_padding():
+    sfa = (ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py").read_text(
+        encoding="utf-8"
+    )
+    assert "if fixed_decode_width" in sfa
+    assert "Dense PD prefix loads can leave a real final prompt" in sfa
