@@ -1,9 +1,16 @@
 # Agent Instructions for vLLM
 
-## Current fork: P2 native Ascend integration
+## Current fork: P3 paired LMCache integration
 
-The user authorized preserving P1 and starting P2 on 2026-09-27. Use the `p2`
-branch for implementation; retain `p1` for later baseline comparisons and repairs.
+On 2026-09-28 the user authorized starting P3 from the complete P2 code and
+validating P2/P3 together in the intranet. Work on `p3`; retain `p2` at
+`f1be323571e3ca2aab53992234045dd064d1967f`, and keep `p1`/`main` unchanged.
+P3-01 establishes paired package identity and native LMCache configuration;
+remaining LMCache engine/connector/extension migration is not yet complete.
+P4 pruning is not part of this batch. The source-only/NPU boundary below remains.
+
+The user authorized preserving P1 and starting P2 on 2026-09-27. Retain `p1`
+for later baseline comparisons and repairs.
 Existing `main` and the original four repositories are not the P2 work area.
 Preserve behavior when moving platform, registration, Runner, graph, and kernel
 code, and document each migration batch. P1 acceptance remains incomplete.

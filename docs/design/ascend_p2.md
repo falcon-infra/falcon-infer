@@ -1,5 +1,8 @@
 # Native Ascend P2
 
+For the P3 branch and paired LMCache work, see [P3 status](ascend_p3.md).
+The following records the preserved P2 delivery, not the current P3 package pair.
+
 P2 source integration is complete on `p2`; native build, ABI, model and performance
 acceptance remain pending in the intranet environment. The preserved `p1` and
 `main` input is `230fbc0218e656cb90f8a8c2261150345a1d8ee5`. P1 baseline retests and

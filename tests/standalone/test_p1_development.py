@@ -207,8 +207,8 @@ class DevelopmentContracts(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Old/conflicting"):
                     DEV.check_install_target(True)
 
-    def test_install_accepts_p2_pair_and_rejects_retained_p1_vllm(self) -> None:
-        versions = {"vllm": "0.18.0+ascend.p2", "lmcache": "0.4.3+ascend.p1"}
+    def test_install_accepts_p3_pair_and_rejects_p1_p2_mixtures(self) -> None:
+        versions = {"vllm": "0.18.0+ascend.p3", "lmcache": "0.4.3+ascend.p3"}
 
         def installed(name: str) -> str:
             if name in versions:
@@ -217,9 +217,19 @@ class DevelopmentContracts(unittest.TestCase):
 
         with patch.object(DEV.metadata, "version", side_effect=installed):
             DEV.check_install_target(True)
-            versions["vllm"] = "0.18.0+ascend.p1"
-            with self.assertRaisesRegex(RuntimeError, "Old/conflicting.*vllm"):
-                DEV.check_install_target(True)
+            for name, old_version in (
+                ("vllm", "0.18.0+ascend.p1"),
+                ("vllm", "0.18.0+ascend.p2"),
+                ("lmcache", "0.4.3+ascend.p1"),
+            ):
+                with self.subTest(name=name, version=old_version):
+                    current = versions[name]
+                    versions[name] = old_version
+                    with self.assertRaisesRegex(
+                        RuntimeError, f"Old/conflicting.*{name}"
+                    ):
+                        DEV.check_install_target(True)
+                    versions[name] = current
 
     def test_command_failure_preserves_log_and_exit_status(self) -> None:
         output = self.root / "logs"
