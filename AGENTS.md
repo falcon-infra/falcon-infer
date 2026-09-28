@@ -5,8 +5,10 @@
 On 2026-09-28 the user authorized starting P3 from the complete P2 code and
 validating P2/P3 together in the intranet. Work on `p3`; retain `p2` at
 `f1be323571e3ca2aab53992234045dd064d1967f`, and keep `p1`/`main` unchanged.
-P3-01 establishes paired package identity and native LMCache configuration;
-remaining LMCache engine/connector/extension migration is not yet complete.
+P3 establishes paired package identity and native LMCache owners. The formal
+LMCacheConnectorV1 now owns DSA/checkpoint/event-handoff/RemoteFill lifecycle
+delegation without an imported LMCache plugin mutating its class. Keep LMCache
+an optional lazy dependency when KV transfer is not configured.
 P4 pruning is not part of this batch. The source-only/NPU boundary below remains.
 
 The user authorized preserving P1 and starting P2 on 2026-09-27. Retain `p1`

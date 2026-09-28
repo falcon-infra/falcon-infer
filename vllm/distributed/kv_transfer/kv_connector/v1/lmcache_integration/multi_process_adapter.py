@@ -10,7 +10,7 @@ import torch
 import zmq
 from lmcache.utils import _lmcache_nvtx_annotate, init_logger
 from lmcache.v1.multiprocess.custom_types import (
-    CudaIPCWrapper,
+    NPUIPCWrapper,
     IPCCacheEngineKey,
     KVCache,
 )
@@ -22,7 +22,7 @@ logger = init_logger(__name__)
 
 def wrap_kv_caches(kv_caches: dict[str, torch.Tensor]) -> KVCache:
     logger.info("KV caches keys are %s", list(kv_caches.keys()))
-    return [CudaIPCWrapper(tensor) for tensor in kv_caches.values()]
+    return [NPUIPCWrapper(tensor) for tensor in kv_caches.values()]
 
 
 def striding_block_hashes(

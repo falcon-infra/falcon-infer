@@ -123,11 +123,15 @@ class DevelopmentContracts(unittest.TestCase):
         self.command.publish_outputs(self.staging)
         mapping = self.command.get_output_mapping()
         self.assertEqual(set(self.command.get_outputs()), set(mapping))
-        expected = set(resources) | {
-            f"{namespace}/{name}"
-            for namespace in {self.primary, self.addon}
-            for name in ("__init__.py", "_version.py")
-        } | {f"{self.addon}/_build_info.py", f"{self.addon}/p1_build_info.json"}
+        expected = (
+            set(resources)
+            | {
+                f"{namespace}/{name}"
+                for namespace in {self.primary, self.addon}
+                for name in ("__init__.py", "_version.py")
+            }
+            | {f"{self.addon}/_build_info.py", f"{self.addon}/p1_build_info.json"}
+        )
         self.assertEqual(
             {str(Path(path).relative_to(self.command.build_lib)) for path in mapping},
             expected,
@@ -287,6 +291,8 @@ class DevelopmentContracts(unittest.TestCase):
     def test_native_wheel_rejects_old_namespace_and_patch_archives(self) -> None:
         for member in (
             "vllm_ascend/__init__.py",
+            "lmcache_ascend/__init__.py",
+            "ascend/legacy-p3/lmcache_ascend/__init__.py",
             "ascend/legacy_patches/worker/patch_eagle.py",
             "ascend/legacy_plugin/platform.py",
         ):
