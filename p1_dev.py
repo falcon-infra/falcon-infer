@@ -33,7 +33,7 @@ from packaging.requirements import Requirement
 import p1_build as builder
 
 ROOT = Path(__file__).resolve().parent
-VERSIONS = {"vllm": "0.18.0+ascend.p2", "lmcache": "0.4.3+ascend.p1"}
+VERSIONS = {"vllm": "0.18.0+ascend.p3", "lmcache": "0.4.3+ascend.p3"}
 
 
 def project() -> tuple[str, str]:
