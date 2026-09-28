@@ -937,6 +937,8 @@ class WorkerProc:
     def enqueue_output(self, output):
         if not cold_perf_enabled():
             return self._enqueue_output_response(output)
+        if not isinstance(output, AsyncModelRunnerOutput):
+            return self._enqueue_output_response(output)
         queued_ns = getattr(output, _COLD_PERF_QUEUED_NS, None)
         if queued_ns is None:
             return self._enqueue_output_response(output)
@@ -985,7 +987,9 @@ class WorkerProc:
         if not cold_perf_enabled():
             return self._handle_output_response(output)
         global _worker_hook_reported
-        if getattr(output, _COLD_PERF_REQUEST_IDS, ()):
+        if isinstance(output, AsyncModelRunnerOutput) and getattr(
+            output, _COLD_PERF_REQUEST_IDS, ()
+        ):
             setattr(output, _COLD_PERF_QUEUED_NS, time.perf_counter_ns())
             if not _worker_hook_reported:
                 _worker_hook_reported = True
