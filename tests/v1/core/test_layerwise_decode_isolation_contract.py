@@ -53,3 +53,11 @@ def test_dense_pd_decode_rows_are_not_reclassified_as_padding():
     )
     assert "if fixed_decode_width" in sfa
     assert "Dense PD prefix loads can leave a real final prompt" in sfa
+
+
+def test_mtp_prefill_saves_flush_without_an_next_layer_callback():
+    sfa = (ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py").read_text(
+        encoding="utf-8"
+    )
+    assert "self._layerwise_prefill_mtp" in sfa
+    assert 'getattr(get_forward_context(), "is_draft_model", False)' in sfa
