@@ -229,6 +229,7 @@ from vllm.v1.core.dsa_shared_pool import (
     PrefillLayerRef,
     build_prefill_layer_refs,
     dsa_shared_block_layout,
+    layerwise_prefill_bundle_multiplier,
 )
 from vllm.v1.worker.cp_utils import (
     get_total_cp_world_size,
@@ -6566,15 +6567,14 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 and any("indexer" in ln for ln in kv_cache_tensor.shared_by)
                 and any("indexer" not in ln for ln in kv_cache_tensor.shared_by)
             ):
-                if layerwise_prefill_p_node_enabled():
-                    # P-node child allocation aliases every logical latent and
-                    # indexer layer into one global slab. Child block IDs carry
-                    # the layer slot, so do not split the slab per sibling.
-                    if self.use_sparse_c8_indexer:
-                        raise ValueError(
-                            "layerwise prefill P-node does not support C8 "
-                            "indexer sidecars in the native NPU runner"
-                        )
+                if (
+                    self.vllm_config.kv_transfer_config is None
+                    and not self.layerwise_prefill_p_node
+                ):
+                    raw_tensor = torch.zeros(
+                        kv_cache_tensor.size, dtype=torch.int8, device=self.device
+                    )
+                else:
                     cache_size_aligned = kv_cache_tensor.size + alignment
                     raw_backing = torch.zeros(
                         cache_size_aligned,
@@ -6584,27 +6584,13 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     raw_tensor = self._align_memory(raw_backing, alignment)[
                         : kv_cache_tensor.size
                     ]
-                    if self._layerwise_prefill_global_raw_backing is not None:
-                        raise RuntimeError(
-                            "Layerwise-prefill P node received more than one "
-                            "global DSA shared tensor"
-                        )
-                    self._layerwise_prefill_global_raw_backing = raw_backing
-                    for layer_name_inner in kv_cache_tensor.shared_by:
-                        kv_cache_raw_tensors[layer_name_inner] = (raw_tensor,)
-                    continue
-                if self.vllm_config.kv_transfer_config is None:
-                    raw_tensor = torch.zeros(
-                        kv_cache_tensor.size, dtype=torch.int8, device=self.device
-                    )
-                else:
-                    cache_size_aligned = kv_cache_tensor.size + alignment
-                    raw_tensor = torch.zeros(
-                        cache_size_aligned, dtype=torch.int8, device=self.device
-                    )
-                    raw_tensor = self._align_memory(raw_tensor, alignment)[
-                        : kv_cache_tensor.size
-                    ]
+                    if self.layerwise_prefill_p_node:
+                        if self._layerwise_prefill_global_raw_backing is not None:
+                            raise RuntimeError(
+                                "Layerwise-prefill P node received more than one "
+                                "global DSA shared tensor"
+                            )
+                        self._layerwise_prefill_global_raw_backing = raw_backing
                 shared_bytes = kv_cache_tensor.size
                 paired_c8 = self.use_sparse_c8_indexer and (
                     self._mixed_indexer_c8_names is None
@@ -6625,19 +6611,31 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         if "indexer" in name
                     )
                     layout = dsa_shared_block_layout(
-                        latent_spec, indexer_spec, kv_cache_config.num_blocks
+                        latent_spec,
+                        indexer_spec,
+                        kv_cache_config.num_blocks,
+                        prefill_child=self.layerwise_prefill_p_node,
                     )
-                    shared_bytes = (
-                        layout.slot_count
-                        * layout.bundle_page_size_bytes
-                        * (
-                            layout.indexer_bank_count
-                            if layout.paired_indexer_banks and not paired_c8
-                            else 1
+                    slot_count = layout.slot_count
+                    if self.layerwise_prefill_p_node:
+                        payload_per_slot = (
+                            layout.bundle_page_size_bytes
+                            + layout.scale_bytes_per_bundle
                         )
+                        slot_count, remainder = divmod(
+                            kv_cache_tensor.size, payload_per_slot
+                        )
+                        if remainder:
+                            raise RuntimeError(
+                                "P global allocation is not whole raw/scale bundles"
+                            )
+                    shared_bytes = slot_count * layout.bundle_page_size_bytes * (
+                        layout.indexer_bank_count
+                        if layout.paired_indexer_banks and not paired_c8
+                        else 1
                     )
                     scale_bytes = (
-                        layout.slot_count * layout.scale_bytes_per_bundle
+                        slot_count * layout.scale_bytes_per_bundle
                         if paired_c8
                         else 0
                     )
@@ -6646,11 +6644,19 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             "C8 shared slab and scale sidecar disagree with "
                             "the allocated HBM budget"
                         )
+                shared_raw = raw_tensor[:shared_bytes]
+                shared_scale = raw_tensor[shared_bytes:]
                 for layer_name_inner in kv_cache_tensor.shared_by:
+                    layer_c8 = (
+                        paired_c8
+                        and "indexer" in layer_name_inner
+                        and self._indexer_c8_layer_is_quantized(
+                            layer_name_inner,
+                            layer_kv_cache_spec[layer_name_inner],
+                        )
+                    )
                     kv_cache_raw_tensors[layer_name_inner] = (
-                        (raw_tensor[:shared_bytes], raw_tensor[shared_bytes:])
-                        if paired_c8 and "indexer" in layer_name_inner
-                        else (raw_tensor[:shared_bytes],)
+                        (shared_raw, shared_scale) if layer_c8 else (shared_raw,)
                     )
                 continue
             for idx in range(len(kv_cache_tensor.shared_by)):
@@ -6937,6 +6943,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         """
         kv_caches: dict[str, torch.Tensor] = {}
         layer_kv_cache_spec = self._get_layer_kv_cache_specs(kv_cache_config)
+        dsa_shared_views: dict[
+            tuple[int, bool, bool], tuple[torch.Tensor, ...]
+        ] = {}
         for group in self._kv_cache_spec_attn_group_iterator():
             attn_backend = group.backend
             for layer_name in group.layer_names:
@@ -6966,28 +6975,45 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         len(raws) == 1
                         or (self.use_sparse_c8_indexer and "indexer" in layer_name)
                     ):
-                        kv_caches[layer_name] = reshape_dsa_shared_pool_raw(
-                            raws[0],
-                            spec.dtype,
-                            bs,
-                            nh,
-                            kv_lora_rank,
-                            qk_rope_head_dim,
-                            index_head_dim,
-                            is_indexer="indexer" in layer_name,
-                            indexer_dtype=(self.c8_k_cache_dtype if layer_c8 else None),
-                            indexer_scale=(
-                                raws[1]
-                                if layer_c8
-                                and "indexer" in layer_name
-                                else None
-                            ),
-                            shared_indexer_dtype=(
-                                self.kv_cache_dtype
-                                if self._mixed_indexer_c8_names is not None
-                                else None
-                            ),
+                        view_key = (
+                            id(raws[0]),
+                            "indexer" in layer_name,
+                            layer_c8,
                         )
+                        views = (
+                            dsa_shared_views.get(view_key)
+                            if self.layerwise_prefill_p_node
+                            else None
+                        )
+                        if views is None:
+                            views = reshape_dsa_shared_pool_raw(
+                                raws[0],
+                                spec.dtype,
+                                bs,
+                                nh,
+                                kv_lora_rank,
+                                qk_rope_head_dim,
+                                index_head_dim,
+                                is_indexer="indexer" in layer_name,
+                                indexer_dtype=(self.c8_k_cache_dtype if layer_c8 else None),
+                                indexer_scale=(
+                                    raws[1]
+                                    if layer_c8
+                                    and "indexer" in layer_name
+                                    else None
+                                ),
+                                shared_indexer_dtype=(
+                                    self.kv_cache_dtype
+                                    if self._has_mixed_indexer_c8_policy(
+                                        current_kv_cache_spec
+                                    )
+                                    else None
+                                ),
+                            )
+                            if self.layerwise_prefill_p_node:
+                                dsa_shared_views[view_key] = views
+                        kv_caches[layer_name] = views
+
                         if (
                             "indexer" not in layer_name
                             and getattr(self.kv_cache_config, "dsa_paired_bank_slots", 0)

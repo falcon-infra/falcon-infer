@@ -1156,12 +1156,17 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             vllm_config.model_config.max_model_len + self.block_size - 1
         ) // self.block_size
         self._mixed_indexer_metadata = None
+        self._layerwise_prefill_p_node = bool(
+            vllm_config.kv_transfer_config is not None
+            and vllm_config.kv_transfer_config.is_kv_producer
+            and envs.VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE
+        )
         ascend_config = get_ascend_config()
         block_map = getattr(ascend_config, "indexer_hbm_block_map", None)
         if getattr(ascend_config, "indexer_c8_shared_block_factor", 1) == 2 and (
             block_map is None or any(ascend_config.indexer_c8_layer_mask(layer_names))
         ):
-            blocks_per_bundle = 18 if block_map is not None else 9
+            blocks_per_bundle = 18 if block_map is not None or self._layerwise_prefill_p_node else 9
             self._mixed_indexer_metadata = MixedIndexerMetadata(
                 vllm_config.scheduler_config.max_num_seqs + 1,
                 (self.max_blocks + blocks_per_bundle - 1)
@@ -1833,6 +1838,9 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
                     indexer_block_table, indexer_slot_mapping
                 )
             )
+            if self._layerwise_prefill_p_node:
+                indexer_c8_block_table = indexer_c8_block_table.clone()
+                indexer_c8_slot_mapping = indexer_c8_slot_mapping.clone()
 
         cos, sin = get_cos_and_sin_mla(input_positions, True)
 
@@ -2019,6 +2027,8 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
         metadata.slot_mapping = common_attn_metadata.slot_mapping[:num_tokens]
         metadata.indexer_block_table = None
         metadata.indexer_slot_mapping = None
+        metadata.indexer_c8_block_table = None
+        metadata.indexer_c8_slot_mapping = None
         if common_attn_metadata.indexer_block_table_tensor is not None:
             metadata.indexer_block_table = (
                 common_attn_metadata.indexer_block_table_tensor[:num_reqs]
@@ -2026,6 +2036,15 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
             metadata.indexer_slot_mapping = common_attn_metadata.indexer_slot_mapping[
                 :num_tokens
             ]
+            if self._mixed_indexer_metadata is not None:
+                table, slots = self._mixed_indexer_metadata.update(
+                    metadata.indexer_block_table,
+                    metadata.indexer_slot_mapping,
+                )
+                # A following layer reuses the workspace; retain this bank's
+                # views.
+                metadata.indexer_c8_block_table = table.clone()
+                metadata.indexer_c8_slot_mapping = slots.clone()
         return metadata
 
     def build_for_graph_capture(
