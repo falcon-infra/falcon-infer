@@ -490,6 +490,12 @@ class RecomputeScheduler(Scheduler):
                     num_new_local_computed_tokens = 0
                     num_computed_tokens = request.num_computed_tokens
 
+                if self._reject_impossible_initial_dsa_request(
+                    request,
+                    compact_external_load=dsa_compact_external_load,
+                ):
+                    continue
+
                 encoder_inputs_to_schedule = None
                 external_load_encoder_input = []
                 new_encoder_compute_budget = encoder_compute_budget
@@ -566,6 +572,19 @@ class RecomputeScheduler(Scheduler):
                 effective_lookahead_tokens = (
                     0 if request.num_computed_tokens == 0 else self.num_lookahead_tokens
                 )
+                if (
+                    dsa_compact_external_load
+                    and load_kv_async
+                    and request.num_preemptions == 0
+                    and request.num_computed_tokens == 0
+                    and num_new_local_computed_tokens == 0
+                    and request.num_tokens == request.num_prompt_tokens
+                    and num_external_computed_tokens == request.num_tokens - 1
+                    and request.num_tokens % self.block_size == 1
+                ):
+                    # Match base Scheduler: reserve the final restore
+                    # destination without scheduling extra computation.
+                    effective_lookahead_tokens = max(effective_lookahead_tokens, 1)
 
                 # Determine if we need to allocate cross-attention blocks.
                 num_encoder_tokens = 0
