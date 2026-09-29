@@ -38,6 +38,15 @@ from packaging.version import InvalidVersion, Version
 import vllm.envs_ascend as envs_ascend
 from vllm.config.ascend import WeightPrefetchConfig, get_ascend_config
 from vllm.logger import logger
+from vllm.platforms.ascend_constants import (
+    ASCEND_QUANTIZATION_METHOD as ASCEND_QUANTIZATION_METHOD,
+)
+from vllm.platforms.ascend_constants import (
+    COMPILATION_PASS_KEY as COMPILATION_PASS_KEY,
+)
+from vllm.platforms.ascend_constants import (
+    COMPRESSED_TENSORS_METHOD as COMPRESSED_TENSORS_METHOD,
+)
 from vllm.sequence import IntermediateTensors
 
 if TYPE_CHECKING:
@@ -45,9 +54,6 @@ if TYPE_CHECKING:
 else:
     VllmConfig = None
 
-COMPILATION_PASS_KEY = "graph_fusion_manager"
-ASCEND_QUANTIZATION_METHOD = "ascend"
-COMPRESSED_TENSORS_METHOD = "compressed-tensors"
 SOC_VERSION_INFERENCE_SERIES = ["Ascend310P3"]
 
 ACL_FORMAT_FRACTAL_ND = 2

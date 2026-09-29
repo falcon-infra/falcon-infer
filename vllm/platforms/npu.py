@@ -24,32 +24,25 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import torch
+import torch_npu  # noqa: F401 -- register the NPU device type, without init()
 
 import vllm.envs as envs_vllm
 from vllm.logger import logger
+from vllm.platforms.ascend_constants import (
+    ASCEND_QUANTIZATION_METHOD,
+    COMPILATION_PASS_KEY,
+    COMPRESSED_TENSORS_METHOD,
+)
 from vllm.platforms.interface import Platform, PlatformEnum
 
 # todo: please remove it when solve cuda hard code in vllm
 os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
 import vllm.envs_ascend as envs_ascend
-from vllm.config.ascend import init_ascend_config
 
-# isort: off
-from vllm.utils.ascend import ASCEND_QUANTIZATION_METHOD
-from vllm.utils.ascend import COMPILATION_PASS_KEY
-from vllm.utils.ascend import COMPRESSED_TENSORS_METHOD
-from vllm.utils.ascend import AscendDeviceType
-from vllm.utils.ascend import check_kv_extra_config
-from vllm.utils.ascend import flashcomm2_enable
-from vllm.utils.ascend import get_ascend_device_type
-from vllm.utils.ascend import is_moe_model
-from vllm.utils.ascend import refresh_block_size
-from vllm.utils.ascend import staged_sfa_graph_configured
-from vllm.utils.ascend import update_aclgraph_sizes
-from vllm.utils.ascend import update_cudagraph_capture_sizes
-from vllm.utils.ascend import is_310p
-from vllm.utils.ascend import enable_sp
+# Do not import vllm.config or vllm.utils.ascend here: both can request
+# current_platform while this module is still defining NPUPlatform. Import
+# them only from runtime methods, after the platform singleton is available.
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
@@ -255,8 +248,21 @@ class NPUPlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
+        from vllm.config.ascend import init_ascend_config
         from vllm.model_executor.layers.quantization.ascend.utils import (
             maybe_auto_detect_quantization,
+        )
+        from vllm.utils.ascend import (
+            AscendDeviceType,
+            check_kv_extra_config,
+            enable_sp,
+            get_ascend_device_type,
+            is_310p,
+            is_moe_model,
+            refresh_block_size,
+            staged_sfa_graph_configured,
+            update_aclgraph_sizes,
+            update_cudagraph_capture_sizes,
         )
 
         if vllm_config.model_config is not None:
@@ -645,6 +651,8 @@ class NPUPlatform(Platform):
     def get_attn_backend_cls(
         cls, selected_backend, attn_selector_config, num_heads: int | None = None
     ):
+        from vllm.utils.ascend import is_310p
+
         key = (attn_selector_config.use_mla, attn_selector_config.use_sparse)
 
         backend_map = {
@@ -743,18 +751,18 @@ class NPUPlatform(Platform):
             dict[str, Any]: _description_
         """
         # NOTE(Ronald1995): avoid circular import.
-        from vllm.ascend_forward_context import get_mc2_mask
-        from vllm.ascend_forward_context import select_moe_comm_method
-        from vllm.model_executor.layers.ascend.fused_moe.moe_comm_method import (
-            get_moe_comm_method,
-        )
-        from vllm.distributed import get_dp_group, get_tensor_model_parallel_world_size
+        from vllm.ascend_forward_context import get_mc2_mask, select_moe_comm_method
 
         # NOTE(Ronald1995): avoid circular import, cudagraph_runtime_mode is
         # CUDAGraphMode.NONE in vllm, but we can't set CUDAGraphMode.NONE in
         # argument default value, so we set it to None first, then set it to
         # CUDAGraphMode.NONE here.
         from vllm.config import CUDAGraphMode
+        from vllm.distributed import get_dp_group, get_tensor_model_parallel_world_size
+        from vllm.model_executor.layers.ascend.fused_moe.moe_comm_method import (
+            get_moe_comm_method,
+        )
+        from vllm.utils.ascend import enable_sp, flashcomm2_enable, is_moe_model
 
         if cudagraph_runtime_mode is None:
             cudagraph_runtime_mode = CUDAGraphMode.NONE
