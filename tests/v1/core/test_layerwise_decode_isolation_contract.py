@@ -61,3 +61,18 @@ def test_mtp_prefill_saves_flush_without_an_next_layer_callback():
     )
     assert "self._layerwise_prefill_mtp" in sfa
     assert 'getattr(get_forward_context(), "is_draft_model", False)' in sfa
+
+
+def test_p_node_bank_events_are_required_before_dma_handoff():
+    base = (ROOT / "vllm/distributed/kv_transfer/kv_connector/v1/base.py").read_text(
+        encoding="utf-8"
+    )
+    runner = (ROOT / "vllm/v1/worker/npu_model_runner.py").read_text(
+        encoding="utf-8"
+    )
+    sfa = (ROOT / "vllm/v1/attention/backends/ascend/sfa_v1.py").read_text(
+        encoding="utf-8"
+    )
+    assert "supports_layerwise_prefill_bank_events" in base
+    assert "bank_events_supported" in runner
+    assert "_record_layerwise_prefill_bank_use" in sfa

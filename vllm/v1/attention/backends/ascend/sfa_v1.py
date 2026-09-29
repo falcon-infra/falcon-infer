@@ -966,6 +966,22 @@ def _dsa_index_lmcache_enabled() -> bool:
     return bool(getattr(connector, "supports_dsa_index_lmcache", False))
 
 
+def _record_layerwise_prefill_bank_use(layer_name: str) -> None:
+    """Fence the final P-node bank read before the next DMA window."""
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        raise RuntimeError("P-node bank events require a v1 KV connector")
+    connector = get_kv_transfer_group()
+    record = getattr(connector, "record_layerwise_prefill_bank_use", None)
+    if not callable(record):
+        raise RuntimeError(
+            "Layerwise prefill requires the bank-use event API; update the "
+            "connector and LMCache together with the P-node runtime"
+        )
+    event = torch.npu.Event()
+    event.record(torch.npu.current_stream())
+    record(layer_name, event)
+
+
 class AscendSFABackend(AttentionBackend):
     accept_output_buffer: bool = True
 
@@ -5919,6 +5935,8 @@ class AscendSFAImpl(MLAAttentionImpl):
                 # GLM-5.2 shared consumers (no local Indexer) and runtime
                 # IndexCache skip layers (GLM-5.1, indexer still present).
                 topk_indices = self._get_indexcache_topk_indices(hidden_states.shape[0])
+                if self._layerwise_prefill_p_node and index_lmcache_enabled:
+                    _record_layerwise_prefill_bank_use(index_layer_name)
             else:
                 if not self.has_indexer:
                     raise RuntimeError(
@@ -5935,6 +5953,8 @@ class AscendSFAImpl(MLAAttentionImpl):
                     actual_seq_lengths_query=actual_seq_lengths_query,
                     actual_seq_lengths_key=actual_seq_lengths_key,
                 )
+                if self._layerwise_prefill_p_node and index_lmcache_enabled:
+                    _record_layerwise_prefill_bank_use(index_layer_name)
                 if self.index_cache_enabled:
                     # Publish this batch's top-k so downstream skip layers
                     # read it from the stable shared buffer.
@@ -6872,6 +6892,9 @@ class AscendSFAImpl(MLAAttentionImpl):
             # one step per layer-call on the native (user) path so the profiler
             # logs mean ms/layer-call periodically (mirrors the manager path).
             _dsa_prof.step()
+
+        if self._layerwise_prefill_p_node:
+            _record_layerwise_prefill_bank_use(layer_name)
 
         attn_output = self._v_up_proj(attn_output)
         weight_prefetch_method = get_weight_prefetch_method()

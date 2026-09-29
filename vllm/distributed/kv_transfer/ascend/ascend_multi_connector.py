@@ -196,6 +196,13 @@ class AscendMultiConnector(MultiConnector, SupportsHMA):
             and self.supports_dsa_index_lmcache
         )
 
+    @property
+    def supports_layerwise_prefill_bank_events(self) -> bool:
+        return any(
+            bool(getattr(child, "supports_layerwise_prefill_bank_events", False))
+            for child in self._connectors
+        )
+
     def submit_layerwise_prefill_load(self, layer_name: str | int) -> None:
         for child in self._connectors:
             if getattr(child, "supports_layerwise_prefill_transfer_window", False):
@@ -205,6 +212,17 @@ class AscendMultiConnector(MultiConnector, SupportsHMA):
         for child in self._connectors:
             if getattr(child, "supports_layerwise_prefill_transfer_window", False):
                 child.finish_layerwise_prefill_save(layer_name)
+
+    def record_layerwise_prefill_bank_use(self, layer_name: str, event) -> None:
+        recorded = False
+        for child in self._connectors:
+            if getattr(child, "supports_layerwise_prefill_bank_events", False):
+                child.record_layerwise_prefill_bank_use(layer_name, event)
+                recorded = True
+        if not recorded:
+            raise RuntimeError(
+                "No child connector satisfies the P-node bank-event protocol"
+            )
 
     def save_kv_layer_in_layerwise_prefill_transfer_window(
         self, layer_name: str, kv_layer, attn_metadata, **kwargs

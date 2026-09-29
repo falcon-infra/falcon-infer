@@ -198,6 +198,11 @@ class KVConnectorBase_V1(ABC):
             and self.supports_dsa_index_lmcache
         )
 
+    @property
+    def supports_layerwise_prefill_bank_events(self) -> bool:
+        """Whether P-node DMA can wait for the final bank read event."""
+        return False
+
     def __init__(
         self,
         vllm_config: "VllmConfig",
@@ -386,6 +391,12 @@ class KVConnectorBase_V1(ABC):
         """Finish the host-side portion of a pre-HCOM layer save."""
         if self.supports_layerwise_prefill_transfer_window:
             raise NotImplementedError
+
+    def record_layerwise_prefill_bank_use(
+        self, layer_name: str, event: torch.npu.Event
+    ) -> None:
+        """Record the final device event before the next P-node bank transfer."""
+        raise NotImplementedError
 
     def save_kv_layer_outside_layerwise_prefill_transfer_window(
         self,

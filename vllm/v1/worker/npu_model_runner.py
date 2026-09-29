@@ -6126,6 +6126,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             )
             if callable(complete_protocol):
                 complete_protocol = complete_protocol()
+            bank_events_supported = getattr(
+                connector, "supports_layerwise_prefill_bank_events", False
+            )
+            if callable(bank_events_supported):
+                bank_events_supported = bank_events_supported()
             if complete_protocol is None:
                 complete_protocol = bool(
                     transfer_window_supported and index_lmcache_supported
@@ -6134,11 +6139,13 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 transfer_window_supported is not True
                 or index_lmcache_supported is not True
                 or complete_protocol is not True
+                or bank_events_supported is not True
                 or envs_ascend.VLLM_ASCEND_DSA_DISABLE_INDEX_LMCACHE
             ):
                 raise ValueError(
                     "Layerwise-prefill P nodes require one connector with "
-                    "two-group transfer-window and DSA-index LMCache support"
+                    "two-group transfer-window, DSA-index LMCache, and "
+                    "bank-event support"
                 )
         staged_graph_configured = staged_sfa_graph_configured(self.vllm_config)
         if envs_ascend.VLLM_ASCEND_SFA_FULL_GRAPH:
