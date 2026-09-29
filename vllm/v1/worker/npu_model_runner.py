@@ -187,6 +187,7 @@ from vllm.compilation.ascend.sfa_full_graph import SFAFullGraph
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.selector import get_attn_backend  # type: ignore
 from vllm.v1.core.dsa_shared_pool import paired_bank_indexer_block_map
+from vllm.v1.worker.dsa_shared_pool import diagnose_indexer_metadata
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import (
     AttentionSpec,
@@ -8283,7 +8284,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         if staged_graph_configured:
             self._staged_sfa_startup_capture_attempted = True
             self._reset_staged_sfa_startup_capture()
-        graph_memory_bytes = NPUModelRunnerState.capture_model(self)
+        with diagnose_indexer_metadata("capture"):
+            graph_memory_bytes = NPUModelRunnerState.capture_model(self)
         if staged_graph_configured:
             self._staged_sfa_impls = self._collect_staged_sfa_impls()
             if not self._staged_sfa_impls:
@@ -8406,7 +8408,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             original_full_graph_pool = self._sfa_full_graph.graph_pool
             self._sfa_full_graph.graph_pool = current_platform.graph_pool_handle()
         try:
-            result = NPUModelRunnerState.profile_cudagraph_memory(self)
+            with diagnose_indexer_metadata("profiling"):
+                result = NPUModelRunnerState.profile_cudagraph_memory(self)
             completed = True
             return result
         finally:
