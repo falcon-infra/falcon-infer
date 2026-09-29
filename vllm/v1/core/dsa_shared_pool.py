@@ -332,6 +332,8 @@ def dsa_shared_block_layout(
     indexer_spec: Any,
     capacity_bundles: int = 1,
     bundle_multiplier: int = 1,
+    *,
+    prefill_child: bool = False,
 ) -> DSASharedBlockLayout:
     """Resolve shared key geometry separately from indexer scale storage."""
     scale_bytes_value = getattr(indexer_spec, "indexer_scale_page_size_bytes", None)
@@ -352,6 +354,35 @@ def dsa_shared_block_layout(
     scale_bytes = int(scale_bytes_value)
     latent_dims = getattr(latent_spec, "sparse_head_dim", None) or (512, 64)
     indexer_dims = getattr(indexer_spec, "sparse_head_dim", None) or (128,)
+    if prefill_child:
+        # Temporal P banks keep canonical floating-point block IDs. C8 keys
+        # occupy every other physical block, with scales for the full extent.
+        key_size = indexer_spec.c8_k_cache_dtype.itemsize if scale_bytes else 1
+        logical_size = indexer_spec.dtype.itemsize
+        if scale_bytes and (logical_size != 2 or key_size != 1):
+            raise ValueError("Prefill C8 requires BF16/FP16 logical and INT8 keys")
+        logical_page = indexer_spec.block_size * indexer_dims[-1] * logical_size
+        return DSASharedBlockLayout(
+            latent_page_size_bytes=latent_spec.page_size_bytes,
+            indexer_page_size_bytes=logical_page,
+            capacity_bundles=capacity_bundles,
+            bundle_multiplier=LAYERWISE_PREFILL_BUNDLE_MULTIPLIER,
+            k_nope_dim=latent_dims[0],
+            k_pe_dim=latent_dims[1],
+            indexer_dim=indexer_dims[-1],
+            latent_element_size=latent_spec.dtype.itemsize,
+            indexer_element_size=logical_size,
+            indexer_scale_page_size_bytes=(
+                indexer_spec.block_size * 2 * (logical_size // key_size)
+                if scale_bytes
+                else 0
+            ),
+            indexer_scale_layer_count=1 if scale_bytes else 0,
+            backing_alignment_bytes=int(
+                getattr(indexer_spec, "shared_pool_alignment_bytes", 0)
+            ),
+        )
+
     layout_type = (
         DSAPairedIndexerBlockLayout
         if getattr(indexer_spec, "indexer_paired_banks", False)

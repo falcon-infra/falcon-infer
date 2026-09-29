@@ -17,7 +17,6 @@ from vllm.v1.core.dsa_shared_pool import (
     dsa_block_pool_index,
     dsa_scratch_blocks_for_topk,
     dsa_shared_block_layout,
-    layerwise_prefill_bundle_multiplier,
 )
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
 from vllm.v1.core.kv_cache_utils import (
@@ -132,11 +131,7 @@ class KVCacheCoordinator(ABC):
                 latent_group.kv_cache_spec,
                 indexer_group.kv_cache_spec,
                 capacity_bundles=kv_cache_config.num_blocks,
-                bundle_multiplier=(
-                    layerwise_prefill_bundle_multiplier()
-                    if self.layerwise_prefill_p_node
-                    else 1
-                ),
+                prefill_child=self.layerwise_prefill_p_node,
             )
             self.dsa_shared_num_layer_pairs = len(latent_group.layer_names)
             parent_allocator = DSASharedBundleAllocator(parent_layout)
@@ -474,10 +469,10 @@ class KVCacheCoordinator(ABC):
                         )
                     )
 
-        bundle_bytes = (
-            layout.bundle_page_size_bytes
-            if self.layerwise_prefill_p_node
-            else layout.allocation_bytes_per_bundle(
+        if self.layerwise_prefill_p_node:
+            bundle_bytes = layout.bundle_page_size_bytes + layout.scale_bytes_per_bundle
+        else:
+            bundle_bytes = layout.allocation_bytes_per_bundle(
                 getattr(self, "dsa_shared_num_layer_pairs", 1),
                 getattr(
                     self,
@@ -485,7 +480,6 @@ class KVCacheCoordinator(ABC):
                     getattr(self, "dsa_shared_num_layer_pairs", 1),
                 ),
             )
-        )
         used_gib = used * bundle_bytes / 2**30
         total_gib = capacity * bundle_bytes / 2**30
 
