@@ -6221,6 +6221,77 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             "Python per-layer retrieval callbacks. Use PIECEWISE graph mode."
         )
 
+    def _get_dsa_compact_startup_policy(self) -> tuple[int, int] | None:
+        """Query connector policy without constructing a worker connector."""
+        transfer = self.vllm_config.kv_transfer_config
+        if (
+            not self.use_sparse
+            or not self.dsa_unbundle
+            or not self.dsa_shared_pool
+            or self.dsa_shrink_latent != 2
+            or self.layerwise_prefill_p_node
+            or transfer is None
+            or not transfer.is_kv_consumer
+            or getattr(self.cache_config, "enable_prefix_caching", False)
+            or any(
+                getattr(self.parallel_config, name, 1) != 1
+                for name in (
+                    "pipeline_parallel_size",
+                    "prefill_context_parallel_size",
+                    "decode_context_parallel_size",
+                )
+            )
+        ):
+            return None
+        from vllm.distributed.kv_transfer.kv_connector.factory import (
+            KVConnectorFactory,
+        )
+
+        connector_cls = KVConnectorFactory.get_connector_class(transfer)
+        probe = getattr(connector_cls, "get_dsa_compact_startup_policy", None)
+        policy = probe(self.vllm_config) if callable(probe) else None
+        if policy is not None and (
+            not isinstance(policy, tuple)
+            or len(policy) != 2
+            or any(type(value) is not int for value in policy)
+            or policy[0] <= 0
+            or policy[1] < 0
+        ):
+            raise ValueError("Connector returned an invalid compact-D startup policy")
+        return policy
+
+    def _validate_dsa_compact_startup_policy(
+        self, kv_cache_config: KVCacheConfig
+    ) -> None:
+        if self._profiling_cudagraph_memory:
+            return
+        policies = {
+            (
+                getattr(group.kv_cache_spec, "dsa_compact_startup_scratch_tokens", 0),
+                getattr(group.kv_cache_spec, "dsa_compact_startup_dense_tokens", 0),
+            )
+            for group in kv_cache_config.kv_cache_groups
+            if getattr(group.kv_cache_spec, "dsa_compact_startup_scratch_tokens", 0)
+        }
+        if not policies:
+            return
+        if len(policies) != 1 or not has_kv_transfer_group():
+            raise RuntimeError(
+                "Compact-D sizing requires one verified active connector policy"
+            )
+        connector = get_kv_transfer_group()
+        probe = getattr(connector, "get_dsa_compact_runtime_policy", None)
+        if (
+            not getattr(connector, "supports_dsa_compact_external_load", False)
+            or not getattr(connector, "uses_layerwise_model_callbacks", False)
+            or not callable(probe)
+            or probe(self.vllm_config) != next(iter(policies))
+        ):
+            raise RuntimeError(
+                "Active connector disagrees with compact-D startup sizing; "
+                "refusing KV allocation"
+            )
+
     def initialize_kv_cache(self, kv_cache_config: KVCacheConfig) -> None:
         """
         Initialize KV cache based on `kv_cache_config`.
@@ -6238,6 +6309,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 "after graph capture has started; restart the worker to rebuild "
                 "captured addresses."
             )
+        self._validate_dsa_compact_startup_policy(kv_cache_config)
         self._validate_sfa_layerwise_connector_cudagraph_mode()
         kv_cache_config = deepcopy(kv_cache_config)
         self.kv_cache_config = kv_cache_config
@@ -7801,6 +7873,23 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                         f"{len(latent_names)} latent layers vs "
                         f"{len(model_layers)} model layers with a registered "
                         "cache. Shared consumers must still register LATENT."
+                    )
+
+        compact_policy = self._get_dsa_compact_startup_policy()
+        if compact_policy is not None:
+            for name, spec in kv_cache_spec.items():
+                if "indexer" not in name and getattr(
+                    spec, "sparse_head_dim", None
+                ) == tuple(self.sparse_head_dim[:2]):
+                    object.__setattr__(
+                        spec,
+                        "dsa_compact_startup_scratch_tokens",
+                        compact_policy[0],
+                    )
+                    object.__setattr__(
+                        spec,
+                        "dsa_compact_startup_dense_tokens",
+                        compact_policy[1],
                     )
 
         return kv_cache_spec

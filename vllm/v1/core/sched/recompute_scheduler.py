@@ -490,6 +490,12 @@ class RecomputeScheduler(Scheduler):
                     num_new_local_computed_tokens = 0
                     num_computed_tokens = request.num_computed_tokens
 
+                if self._reject_impossible_initial_dsa_request(
+                    request,
+                    compact_external_load=dsa_compact_external_load,
+                ):
+                    continue
+
                 encoder_inputs_to_schedule = None
                 external_load_encoder_input = []
                 new_encoder_compute_budget = encoder_compute_budget
