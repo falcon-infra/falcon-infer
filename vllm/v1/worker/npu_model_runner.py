@@ -7688,6 +7688,15 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 if isinstance(spec, MLAAttentionSpec) and "indexer" in name
             ]
             if indexer_names:
+                if self.layerwise_prefill_p_node and self.dsa_shared_pool:
+                    # Every P-node slab retains an aligned backing, including
+                    # BF16 consumer/owner layers, before parent sizing.
+                    for name in indexer_names:
+                        object.__setattr__(
+                            kv_cache_spec[name],
+                            "shared_pool_alignment_bytes",
+                            2 * 1024 * 1024,
+                        )
                 if self.use_sparse_c8_indexer:
                     mask = self.ascend_config.indexer_c8_layer_mask(indexer_names)
                     if not any(mask):
@@ -7712,7 +7721,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                             object.__setattr__(
                                 kv_cache_spec[name],
                                 "indexer_paired_banks",
-                                self.dsa_shared_pool,
+                                self.dsa_shared_pool
+                                and not self.layerwise_prefill_p_node,
                             )
                             object.__setattr__(
                                 kv_cache_spec[name],
@@ -7720,7 +7730,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                                 (
                                     2 * 1024 * 1024
                                     if self.dsa_shared_pool
-                                    and self.vllm_config.kv_transfer_config is not None
+                                    and (
+                                        self.layerwise_prefill_p_node
+                                        or self.vllm_config.kv_transfer_config
+                                        is not None
+                                    )
                                     else 0
                                 ),
                             )
