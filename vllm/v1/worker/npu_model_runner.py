@@ -3735,7 +3735,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         sampled_token_ids = sampler_output.sampled_token_ids
         logprobs_tensors = sampler_output.logprobs_tensors
         invalid_req_indices = []
-        cu_num_tokens: list[int] | None = None
+        logprobs_lists = None
         if not self.use_async_scheduling:
             # Get the valid generated tokens.
             max_gen_len = sampled_token_ids.shape[-1]
@@ -3745,9 +3745,11 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 # Mask out the sampled tokens that should not be sampled.
                 for i in discard_sampled_tokens_req_indices:
                     valid_sampled_token_ids[int(i)].clear()
+                if logprobs_tensors is not None:
+                    logprobs_lists = logprobs_tensors.tolists()
             else:
                 # Includes spec decode tokens.
-                valid_sampled_token_ids, cu_num_tokens = (
+                valid_sampled_token_ids, logprobs_lists = (
                     AscendRejectionSampler.parse_output(
                         sampled_token_ids,
                         self.input_batch.vocab_size,
@@ -3806,12 +3808,6 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             req_id = req_ids[req_idx]
             req_state = self.requests[req_id]
             req_state.output_token_ids.extend(sampled_ids)
-
-        logprobs_lists = (
-            logprobs_tensors.tolists(cu_num_tokens)
-            if not self.use_async_scheduling and logprobs_tensors is not None
-            else None
-        )
 
         # Compute prompt logprobs if needed.
         prompt_logprobs_dict = self._get_prompt_logprobs_dict(
