@@ -34,6 +34,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 )
 from vllm.v1.core.dsa_shared_pool import DSABlockAllocationMode
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager
+from vllm.v1.core.kv_cache_utils import dsa_dense_request_token_capacity
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
 from vllm.v1.core.sched.interface import PauseState, SchedulerInterface
 from vllm.v1.core.sched.output import (
@@ -207,6 +208,9 @@ class Scheduler(SchedulerInterface):
         self.cache_config = vllm_config.cache_config
         self.lora_config = vllm_config.lora_config
         self.kv_cache_config = kv_cache_config
+        self._dsa_dense_request_capacity = dsa_dense_request_token_capacity(
+            kv_cache_config
+        )
         self.kv_events_config = vllm_config.kv_events_config
         self.parallel_config = vllm_config.parallel_config
         self.log_stats = log_stats
@@ -894,6 +898,11 @@ class Scheduler(SchedulerInterface):
                         )
                     )
                 )
+                if self._reject_impossible_initial_dsa_request(
+                    request,
+                    compact_external_load=compact_external_load,
+                ):
+                    continue
                 if (
                     compact_external_load
                     and load_kv_async
@@ -1237,7 +1246,63 @@ class Scheduler(SchedulerInterface):
         # Put the request back to the waiting queue.
         self.waiting.prepend_request(request)
 
+    def _reject_impossible_initial_dsa_request(
+        self, request: Request, *, compact_external_load: bool
+    ) -> bool:
+        """Reject proven initial dense misses that exceed compact capacity."""
+        capacity = getattr(self, "_dsa_dense_request_capacity", None)
+        if (
+            capacity is None
+            or compact_external_load
+            or request.num_tokens <= capacity
+            or request.num_computed_tokens != 0
+            or request.num_preemptions != 0
+            or request.num_tokens != request.num_prompt_tokens
+            or request.dsa_compact_allocated
+        ):
+            return False
+        request.stop_reason = (
+            "Initial request exceeds dense KV capacity and has no full "
+            "cold-compact cache hit"
+        )
+        logger.warning(
+            "Rejecting initial DSA request %s: tokens=%d dense_capacity=%d",
+            request.request_id,
+            request.num_tokens,
+            capacity,
+        )
+        self.finish_requests(request.request_id, RequestStatus.FINISHED_ERROR)
+        pending = getattr(self, "_dsa_admission_errors", None)
+        if pending is None:
+            pending = self._dsa_admission_errors = []
+        pending.append(
+            (
+                request.client_index,
+                EngineCoreOutput(
+                    request_id=request.request_id,
+                    new_token_ids=[],
+                    finish_reason=request.get_finished_reason(),
+                    stop_reason=request.stop_reason,
+                ),
+            )
+        )
+        return True
+
+    @staticmethod
+    def _drain_dsa_admission_errors(
+        scheduler_output: SchedulerOutput,
+        outputs: dict[int, list[EngineCoreOutput]],
+    ) -> None:
+        errors = getattr(scheduler_output, "_dsa_admission_errors", None)
+        if errors:
+            delattr(scheduler_output, "_dsa_admission_errors")
+            for client_index, output in errors:
+                outputs[client_index].append(output)
+
     def _update_after_schedule(self, scheduler_output: SchedulerOutput) -> None:
+        errors = self.__dict__.pop("_dsa_admission_errors", None)
+        if errors:
+            setattr(scheduler_output, "_dsa_admission_errors", errors)
         # Advance the number of computed tokens for the request AFTER
         # the request is scheduled.
         # 1. The scheduler_output of the current step has to include the
@@ -1515,6 +1580,7 @@ class Scheduler(SchedulerInterface):
             perf_stats = self.perf_metrics.get_step_perf_stats_per_gpu(scheduler_output)
 
         outputs: dict[int, list[EngineCoreOutput]] = defaultdict(list)
+        self._drain_dsa_admission_errors(scheduler_output, outputs)
         spec_decoding_stats: SpecDecodingStats | None = None
         kv_connector_stats: KVConnectorStats | None = (
             kv_connector_output.kv_connector_stats if kv_connector_output else None
@@ -2250,7 +2316,9 @@ class Scheduler(SchedulerInterface):
         return num_waiting + len(self.running)
 
     def has_finished_requests(self) -> bool:
-        return len(self.finished_req_ids) > 0
+        return bool(
+            self.finished_req_ids or getattr(self, "_dsa_admission_errors", None)
+        )
 
     def reset_prefix_cache(
         self, reset_running_requests: bool = False, reset_connector: bool = False
