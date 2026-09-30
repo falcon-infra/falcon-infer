@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Intranet P2/P3 cold-import and uncached registry inspection gate.
+"""Intranet P2/P3 cold-import, KV-binding and uncached registry inspection gate.
 
 Run outside source checkouts after installation. No weights are loaded and no
 inference, installation or network service is started. Imports can load native
@@ -23,9 +23,18 @@ import tomllib
 import traceback
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
-ORDERS = ("platform", "config", "registry", "ascend_utils", "registry_subprocess")
+ORDERS = (
+    "platform",
+    "config",
+    "registry",
+    "ascend_utils",
+    "registry_subprocess",
+    "kv_cache_bind",
+)
 IDENTITY_FILES = (
     "platforms/__init__.py",
     "platforms/npu.py",
@@ -33,8 +42,56 @@ IDENTITY_FILES = (
     "utils/ascend.py",
     "config/__init__.py",
     "config/compilation.py",
+    "v1/worker/utils.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="
+
+
+def check_kv_cache_binding(
+    bind_kv_cache: Callable[..., None],
+    latent_cache: object,
+    indexer_cache: object,
+    consumer_cache: object,
+) -> dict:
+    """Check binding order/identity with caller-provided caches, not kernels.
+
+    The installed check passes CPU tensors to the actual native NPU binding
+    function. Host tests pass object fixtures and deliberately broken binders.
+    """
+    cases = []
+    for prefix in ("model.layers.7", "model.layers.78.mtp_block"):
+        latent_name = f"{prefix}.self_attn.attn"
+        indexer_name = f"{prefix}.self_attn.indexer.k_cache"
+        for indexer_first in (False, True):
+            pair = [(latent_name, latent_cache), (indexer_name, indexer_cache)]
+            if indexer_first:
+                pair.reverse()
+            # The consumer sorts before the producer but is inserted last.
+            caches = dict(pair + [("model.layers.5.self_attn.attn", consumer_cache)])
+            cases.append((caches, [consumer_cache, latent_cache, indexer_cache]))
+    cases.extend(
+        [
+            ({"model.layers.7.self_attn.attn": latent_cache}, [latent_cache]),
+            ({}, []),
+        ]
+    )
+    for case_index, (caches, expected) in enumerate(cases):
+        context = {name: SimpleNamespace() for name in caches}
+        runner = []
+        bind_kv_cache(caches, context, runner)
+        if len(runner) != len(expected) or any(
+            actual is not wanted for actual, wanted in zip(runner, expected)
+        ):
+            raise RuntimeError(
+                f"KV binding case {case_index}: wrong runner order/identity"
+            )
+        for name, value in caches.items():
+            bound = getattr(context[name], "kv_cache", None)
+            if not isinstance(bound, list) or len(bound) != 1 or bound[0] is not value:
+                raise RuntimeError(
+                    f"KV binding case {case_index}: wrong context for {name}"
+                )
+    return {"cases_passed": len(cases), "contract": "order_and_reference_identity"}
 
 
 def check_order(order: str) -> dict:
@@ -58,6 +115,7 @@ def check_order(order: str) -> dict:
         "registry": "vllm.model_executor.models.registry",
         "ascend_utils": "vllm.utils.ascend",
         "registry_subprocess": "vllm.model_executor.models.registry",
+        "kv_cache_bind": "vllm.v1.worker.utils",
         "glm_inspect": "vllm.model_executor.models.registry",
     }[order]
     importlib.import_module(first)
@@ -99,6 +157,16 @@ def check_order(order: str) -> dict:
         "vllm_path": str(package),
         "source_sha256": fingerprints,
     }
+    if order == "kv_cache_bind":
+        from vllm.v1.worker.utils import bind_kv_cache
+
+        # Explicit CPU allocation: no NPU memory, streams or kernels are used.
+        # Views share one storage and must be bound by reference, not copied.
+        storage = torch.empty(4, dtype=torch.float32, device="cpu")
+        result["kv_binding"] = check_kv_cache_binding(
+            bind_kv_cache, (storage[:1], storage[1:2]), storage[2:3], storage[3:]
+        )
+        result["tensor_device"] = str(storage.device)
     if order in ("registry_subprocess", "glm_inspect"):
         from vllm.model_executor.models import registry
 
@@ -205,7 +273,7 @@ def main() -> int:
         checks.append(result)
         print(f"{order}: {'PASS' if result['passed'] else 'FAIL'}", flush=True)
     report = {
-        "scope": "installed_cold_import_and_optional_class_inspection_not_inference",
+        "scope": "installed_cold_import_KV_binding_and_optional_class_inspection_not_inference",
         "python": sys.executable,
         "optional_plugins_disabled": True,
         "checks": checks,
