@@ -470,6 +470,10 @@ def bind_kv_cache(
       2) Associates each attention layer in the `forward_context` with its
          corresponding KV cache in kv_caches.
 
+    On NPU, the runner list keeps exact DSA latent/indexer sibling pairs in
+    that order and the first entry for other duplicate indices. Forward
+    context still binds every cache by reference; no tensor is copied.
+
     Args:
         kv_caches: The allocated kv_caches with layer names as keys.
         forward_context: The global forward context containing all Attention
@@ -486,7 +490,24 @@ def bind_kv_cache(
 
     for layer_index in sorted(index2name.keys()):
         layer_names = index2name[layer_index]
-        if len(layer_names) > 1:
+        if current_platform.is_npu():
+            # Preserve Ascend's binding contract, formerly provided by the
+            # misleadingly named patch_qwen3_next_mtp. A DSA producer (including
+            # MTP) owns an exact latent/indexer sibling pair at the same index.
+            # Keep both in canonical order, independent of dict/group order.
+            # Other duplicate indices retain the donor's first-entry behavior.
+            selected_names = layer_names[:1]
+            if len(layer_names) == 2:
+                primary_names = [
+                    name for name in layer_names if name.endswith(".self_attn.attn")
+                ]
+                if len(primary_names) == 1:
+                    primary_name = primary_names[0]
+                    indexer_name = primary_name.rsplit(".", 1)[0] + ".indexer.k_cache"
+                    if indexer_name in layer_names:
+                        selected_names = [primary_name, indexer_name]
+            layer_names = selected_names
+        elif len(layer_names) > 1:
             # One typical case is encoder-decoder model, e.g., bart.
             # The cross attention and self attention in the same decoder layer
             # has different layer_name but the same layer_index.
