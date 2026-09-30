@@ -1,9 +1,12 @@
-# Native NPU bootstrap and registry cold imports
+# Native NPU bootstrap and KV cache binding
 
 The 2026-09-29 fix applies to the P2 repair branch `fix/p2-npu-bootstrap` and
 is carried into P3. The original P2/P1/main inputs remain unchanged. Use the
 workspace delivery manifest for exact paired commits; a version suffix alone
 does not identify the installed Python sources.
+
+The 2026-09-30 follow-up also restores DSA KV cache binding in the native worker
+utility. Use the latest paired manifest, not the first bootstrap-fix commit.
 
 ## Cause and fix
 
@@ -23,6 +26,26 @@ global transfer shim, model-inspection bypass or registry-cache workaround is
 used. Compute, quantization and communication method bodies are unchanged apart
 from import placement.
 
+## DSA KV cache binding
+
+The former `patch_qwen3_next_mtp.py` was incorrectly classified as non-target
+model code during P2 migration. Despite its name, it supplied the common Ascend
+KV-binding contract used by GLM DSA. Without it, the native worker utility rejects
+an NPU layer with multiple caches. Its archived tests had also been excluded.
+
+The native `vllm.v1.worker.utils.bind_kv_cache` now preserves that contract for
+NPU: sort numeric layer indices; retain an exact `.self_attn.attn` and sibling
+`.self_attn.indexer.k_cache` pair in latent/indexer order regardless of input
+order; retain the first entry for other duplicate indices. All forward-context
+entries still receive their original objects, including shared references and
+tuples. MTP prefixes use the same rule. Non-NPU behavior is unchanged; this is not
+additional model/device certification. The old import-time patch remains retired.
+
+`tests/standalone/test_npu_kv_cache_binding.py` runs the production function bodies
+with host fixtures, includes donor comparisons, and covers producer/consumer/MTP
+ordering, reference identity, and existing validation behavior. It does not prove
+NPU tensor operations or real model startup.
+
 ## Validation
 
 `tests/standalone/test_npu_platform_bootstrap.py` executes the complete platform
@@ -38,20 +61,26 @@ python -B /path/to/vllm/tools/check_npu_bootstrap.py \
   --inspect-glm --output /path/to/new-bootstrap-report
 ```
 
-The installed check uses fresh interpreters for four import orders and the real
-registry subprocess protocol. `--inspect-glm` additionally inspects
+The installed check uses fresh interpreters for four import orders, the real
+registry subprocess protocol, and native KV binding with small explicit CPU
+tensor views. Binding checks both pair input orders, normal/MTP producer names,
+a shared-indexer consumer, a single cache and empty input. No NPU tensor or kernel
+is used by the binding check. `--inspect-glm` additionally inspects
 `GlmMoeDsaForCausalLM` without using an existing model-info cache. It does not load
 weights or run inference. Normal module initialization can load native libraries
 and generate the existing service-profiling configuration. Optional plugins are
 disabled only in the tool's children; serving processes are not modified.
 
 The report checks the installed version against the tool's checkout and compares
-six bootstrap source files. It does not certify every installed file, native ABI,
+seven bootstrap/binding source files. Expect seven passing checks when using
+`--inspect-glm`. It does not certify every installed file, native ABI,
 model numerics or 2P2D. Timeouts and failed subprocesses remain failures; the tool
 terminates only its own newly created process groups. Existing report directories
 are not overwritten.
 
-The fix adds a Python module. Strict editable users must reinstall with the
-branch's `p1_dev.py`; do not just switch source commits beneath a running process
+The September 29 fix adds a Python module. Strict editable users must reinstall
+that version with the branch's `p1_dev.py`. The September 30 production change is
+in existing Python files; rebuilding/reinstalling with the existing workflow also
+refreshes source provenance and verifies the cumulative fix. Do not switch commits beneath a running process
 or reuse a stale link tree. Ordinary wheel users rebuild and reinstall. Preserve
 separate P2/P3 source checkouts, environments, caches and acceptance reports.
