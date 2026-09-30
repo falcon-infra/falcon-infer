@@ -21,3 +21,11 @@ def test_compact_startup_capacity_is_explicit_and_shared_pool_only():
     assert "_reject_impossible_initial_dsa_request" in scheduler
     assert "_get_dsa_compact_startup_policy" in runner
     assert "dsa_compact_startup_scratch_tokens" in spec
+
+
+def test_short_resident_prefix_does_not_reserve_unused_scratch_rows():
+    manager = (ROOT / "vllm/v1/core/single_type_kv_cache_manager.py").read_text(
+        encoding="utf-8"
+    )
+    assert "resident short prefix needs no unused sparse scratch rows" in manager
+    assert "scratch_blocks = min(" in manager
