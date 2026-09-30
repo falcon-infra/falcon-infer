@@ -18,6 +18,8 @@ def test_sparse_bitmap_kernel_uses_bounded_windows_and_native_guard():
     assert "DSA_BITMAP_WINDOW_WORDS" in kernel
     assert "ProcessWindow<true>" in kernel
     assert "wordBase" in kernel
+    assert "activeWords" in kernel
+    assert "clearWords" in kernel
     assert "DSA_BITMAP_WINDOW_TOKENS" in binding
     assert "windowed sparse preparation scratch exceeds token-window capacity" in binding
     assert "16384" in limits
