@@ -14,7 +14,6 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.attention import Attention
 from vllm.model_executor.models.interfaces import MultiModalEmbeddings
 from vllm.model_executor.models.utils import extract_layer_index
-from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.utils.math_utils import largest_power_of_2_divisor
 from vllm.utils.mem_utils import MemorySnapshot, format_gib
@@ -490,42 +489,17 @@ def bind_kv_cache(
 
     for layer_index in sorted(index2name.keys()):
         layer_names = index2name[layer_index]
-        if current_platform.is_npu():
-            # Preserve Ascend's binding contract, formerly provided by the
-            # misleadingly named patch_qwen3_next_mtp. A DSA producer (including
-            # MTP) owns an exact latent/indexer sibling pair at the same index.
-            # Keep both in canonical order, independent of dict/group order.
-            # Other duplicate indices retain the donor's first-entry behavior.
-            selected_names = layer_names[:1]
-            if len(layer_names) == 2:
-                primary_names = [
-                    name for name in layer_names if name.endswith(".self_attn.attn")
-                ]
-                if len(primary_names) == 1:
-                    primary_name = primary_names[0]
-                    indexer_name = primary_name.rsplit(".", 1)[0] + ".indexer.k_cache"
-                    if indexer_name in layer_names:
-                        selected_names = [primary_name, indexer_name]
-            layer_names = selected_names
-        elif len(layer_names) > 1:
-            # One typical case is encoder-decoder model, e.g., bart.
-            # The cross attention and self attention in the same decoder layer
-            # has different layer_name but the same layer_index.
-
-            # TODO - analyze where runner_kv_caches is used and the right
-            # way to ensure it properly reflects multiple attention layers
-            # in the same decoder block.
-            if (
-                current_platform.is_cuda_alike()
-                or current_platform.is_xpu()
-                or current_platform.is_cpu()
-            ):
-                # We know that the GPU / CPU runner is not impacted by this
-                # case. Some test code depends on runner_kv_caches, but
-                # not in a way that's impacted by ignoring this.
-                pass
-            else:
-                raise NotImplementedError
+        selected_names = layer_names[:1]
+        if len(layer_names) == 2:
+            primary_names = [
+                name for name in layer_names if name.endswith(".self_attn.attn")
+            ]
+            if len(primary_names) == 1:
+                primary_name = primary_names[0]
+                indexer_name = primary_name.rsplit(".", 1)[0] + ".indexer.k_cache"
+                if indexer_name in layer_names:
+                    selected_names = [primary_name, indexer_name]
+        layer_names = selected_names
         for layer_name in layer_names:
             runner_kv_caches.append(kv_caches[layer_name])
 

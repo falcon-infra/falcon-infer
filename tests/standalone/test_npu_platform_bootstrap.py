@@ -37,11 +37,16 @@ def edge(relative: str, target: str) -> str:
     """Read an actual eager import edge without executing unrelated dependencies."""
     tree = ast.parse((ROOT / relative).read_text())
     node = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom) and node.module == target
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and node.module == target
+        ),
+        None,
     )
-    return ast.unparse(node)
+    # P4 may remove the dependency edge entirely. Exercise the actual graph,
+    # not an obsolete synthetic cycle from P2's broader device dispatch.
+    return ast.unparse(node) if node is not None else "pass"
 
 
 def run_child(order: str) -> dict:

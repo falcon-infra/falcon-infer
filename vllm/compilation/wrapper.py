@@ -15,7 +15,6 @@ import vllm.envs as envs
 from vllm.config import CompilationMode, CUDAGraphMode, get_current_vllm_config
 from vllm.config.compilation import DynamicShapesType
 from vllm.logger import init_logger
-from vllm.utils.nvtx_pytorch_hooks import layerwise_nvtx_marker_context
 
 logger = init_logger(__name__)
 
@@ -63,16 +62,7 @@ class TorchCompileWithNoGuardsWrapper:
         self, callable_fn: Callable[P, R], *args: P.args, **kwargs: P.kwargs
     ) -> Any:
         if self.layerwise_nvtx_tracing_enabled:
-            args_list = list(args)
-            kwargs_dict = dict(kwargs)
-            with layerwise_nvtx_marker_context(
-                "Torch Compiled Module (input):{}".format(self.__class__.__name__),
-                self,
-                in_tensor=args_list,
-                kwargs=kwargs_dict,
-            ) as ctx:
-                ctx.result = callable_fn(*args, **kwargs)
-            return ctx.result
+            raise ValueError("NVTX is not supported on Ascend; use the NPU profiler")
         return callable_fn(*args, **kwargs)
 
     def __init__(self) -> None:

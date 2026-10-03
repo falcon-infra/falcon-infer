@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from vllm.logger import init_logger
-from vllm.multimodal.inputs import MultiModalFeatureSpec
+from vllm.inputs.legacy_wire import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 from vllm.utils import length_from_prompt_token_ids_or_embeds
@@ -149,6 +149,15 @@ class Request:
         resumable: bool = False,
         reasoning_ended: bool | None = None,
     ) -> None:
+        if (
+            mm_features
+            or prompt_embeds is not None
+            or pooling_params is not None
+            or lora_request is not None
+        ):
+            raise ValueError(
+                "Ascend P4 requests must be native text generation without media/pooling/LoRA"
+            )
         self.request_id = request_id
         self.client_index = client_index
         self.priority = priority

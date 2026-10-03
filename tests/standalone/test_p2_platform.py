@@ -99,10 +99,12 @@ class NativePlatformTests(unittest.TestCase):
         )
         self.registry = load_file("vllm.platforms", "vllm/platforms/__init__.py")
 
-
     def component_stubs(self) -> None:
         name = "vllm.utils.ascend_profiling_config"
-        sys.modules[name] = module(name, generate_service_profiling_config=lambda: self.calls.append("profiling"))
+        sys.modules[name] = module(
+            name,
+            generate_service_profiling_config=lambda: self.calls.append("profiling"),
+        )
 
     def plugin_loader(self, entries: list) -> ModuleType:
         self.component_stubs()
@@ -137,14 +139,10 @@ class NativePlatformTests(unittest.TestCase):
             self.assertEqual(self.registry.current_platform.device_type, "npu")
 
     def test_missing_runtime_fails_without_cpu_or_cuda_fallback(self) -> None:
+        self.assertFalse(hasattr(self.registry, "cuda_platform_plugin"))
+        self.assertFalse(hasattr(self.registry, "cpu_platform_plugin"))
         with (
             patch.object(self.registry, "find_spec", return_value=None),
-            patch.object(
-                self.registry, "cuda_platform_plugin", side_effect=AssertionError
-            ),
-            patch.object(
-                self.registry, "cpu_platform_plugin", side_effect=AssertionError
-            ),
             self.assertRaisesRegex(RuntimeError, "requires torch_npu"),
         ):
             self.registry.resolve_current_platform_cls_qualname()
@@ -185,9 +183,7 @@ class NativePlatformTests(unittest.TestCase):
             load=lambda: lambda: self.calls.append("optional"),
         )
         self.plugin_loader([entry]).load_general_plugins()
-        self.assertEqual(
-            self.calls, ["profiling", "optional"]
-        )
+        self.assertEqual(self.calls, ["profiling", "optional"])
 
     def test_required_component_failure_stops_loading(self) -> None:
         loader = self.plugin_loader([])
@@ -200,7 +196,6 @@ class NativePlatformTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "registration failed"),
         ):
             loader.load_general_plugins()
-
 
     def test_native_package_has_no_legacy_platform_shim(self) -> None:
         self.assertFalse((ROOT / "ascend/vllm_ascend/platform.py").exists())
@@ -236,18 +231,12 @@ class NativePlatformTests(unittest.TestCase):
             constructor = next(
                 node for node in cls.body if getattr(node, "name", None) == "__init__"
             )
-            if classname == "GroupCoordinator":
-                branch = next(
-                    node for node in constructor.body
-                    if isinstance(node, ast.Assign)
-                    and ast.unparse(node.targets[0]) == "self.device"
-                )
-            else:
-                branch = next(
-                    node for node in constructor.body
-                    if isinstance(node, ast.If)
-                    and ast.unparse(node.test) == "current_platform.is_cuda_alike()"
-                )
+            branch = next(
+                node
+                for node in constructor.body
+                if isinstance(node, ast.Assign)
+                and ast.unparse(node.targets[0]) == "self.device"
+            )
             for rank in (0, 3, 7):
                 with self.subTest(file=relative, rank=rank):
                     coordinator = SimpleNamespace()
@@ -294,11 +283,14 @@ class NativePlatformTests(unittest.TestCase):
 
     def test_metadata_no_longer_requires_ascend_entry_points(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-        self.assertEqual(project["version"], "0.18.0+ascend.p3")
-        entries = project["entry-points"]
+        self.assertEqual(project["version"], "0.18.0+ascend.p4")
+        entries = project.get("entry-points", {})
         self.assertNotIn("vllm.platform_plugins", entries)
         self.assertFalse(
-            any(name.startswith("ascend") for name in entries["vllm.general_plugins"])
+            any(
+                name.startswith("ascend")
+                for name in entries.get("vllm.general_plugins", {})
+            )
         )
 
 

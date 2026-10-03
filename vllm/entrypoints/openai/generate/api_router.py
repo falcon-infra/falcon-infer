@@ -23,12 +23,6 @@ def register_generate_api_routers(app: FastAPI):
 
     register_chat_api_router(app)
 
-    from vllm.entrypoints.openai.responses.api_router import (
-        attach_router as register_responses_api_router,
-    )
-
-    register_responses_api_router(app)
-
     from vllm.entrypoints.openai.completion.api_router import (
         attach_router as register_completion_api_router,
     )
@@ -51,25 +45,14 @@ async def init_generate_state(
 ):
     from vllm.entrypoints.anthropic.serving import AnthropicServingMessages
     from vllm.entrypoints.chat_utils import load_chat_template
-    from vllm.entrypoints.mcp.tool_server import (
-        DemoToolServer,
-        MCPToolServer,
-        ToolServer,
-    )
     from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
     from vllm.entrypoints.openai.completion.serving import OpenAIServingCompletion
-    from vllm.entrypoints.openai.responses.serving import OpenAIServingResponses
     from vllm.entrypoints.serve.disagg.serving import ServingTokens
 
-    if args.tool_server == "demo":
-        tool_server: ToolServer | None = DemoToolServer()
-        assert isinstance(tool_server, DemoToolServer)
-        await tool_server.init_and_validate()
-    elif args.tool_server:
-        tool_server = MCPToolServer()
-        await tool_server.add_tool_server(args.tool_server)
-    else:
-        tool_server = None
+    if getattr(args, "tool_server", None):
+        raise ValueError(
+            "P4 supports client-executed GLM tool calls, not embedded MCP/agent servers"
+        )
     resolved_chat_template = load_chat_template(args.chat_template)
 
     # Render endpoints are always backed by OpenAIServingRender so that
@@ -95,25 +78,6 @@ async def init_generate_state(
         log_error_stack=args.log_error_stack,
     )
 
-    state.openai_serving_responses = (
-        OpenAIServingResponses(
-            engine_client,
-            state.openai_serving_models,
-            request_logger=request_logger,
-            chat_template=resolved_chat_template,
-            chat_template_content_format=args.chat_template_content_format,
-            return_tokens_as_token_ids=args.return_tokens_as_token_ids,
-            enable_auto_tools=args.enable_auto_tool_choice,
-            tool_parser=args.tool_call_parser,
-            tool_server=tool_server,
-            reasoning_parser=args.structured_outputs_config.reasoning_parser,
-            enable_prompt_tokens_details=args.enable_prompt_tokens_details,
-            enable_force_include_usage=args.enable_force_include_usage,
-            enable_log_outputs=args.enable_log_outputs,
-        )
-        if "generate" in supported_tasks
-        else None
-    )
     state.openai_serving_chat = (
         OpenAIServingChat(
             engine_client,

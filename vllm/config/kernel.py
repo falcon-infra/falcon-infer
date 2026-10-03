@@ -9,17 +9,7 @@ from pydantic import Field, field_validator
 from vllm.config.utils import config
 from vllm.utils.hashing import safe_hash
 
-MoEBackend = Literal[
-    "auto",
-    "triton",
-    "deep_gemm",
-    "cutlass",
-    "flashinfer_trtllm",
-    "flashinfer_cutlass",
-    "flashinfer_cutedsl",
-    "marlin",
-    "aiter",
-]
+MoEBackend = Literal["auto"]
 
 
 @config
@@ -66,6 +56,10 @@ class KernelConfig:
         factors: list[Any] = []
         hash_str = safe_hash(str(factors).encode(), usedforsecurity=False).hexdigest()
         return hash_str
+
+    def __post_init__(self) -> None:
+        if self.enable_flashinfer_autotune:
+            raise ValueError("P4 has no FlashInfer backend")
 
     @field_validator("enable_flashinfer_autotune", mode="wrap")
     @classmethod

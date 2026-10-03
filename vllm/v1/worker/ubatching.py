@@ -25,8 +25,8 @@ class UBatchContext:
     def __init__(
         self,
         id: int,
-        comm_stream: torch.cuda.Stream,
-        compute_stream: torch.cuda.Stream,
+        comm_stream: torch.npu.Stream,
+        compute_stream: torch.npu.Stream,
         forward_context: ForwardContext,
         ready_barrier: threading.Barrier,
         cpu_wait_event: threading.Event,
@@ -77,7 +77,7 @@ class UBatchContext:
     def update_stream(self, stream):
         self.current_stream = stream
         if current_stream() != self.current_stream:
-            torch.cuda.set_stream(self.current_stream)
+            torch.npu.set_stream(self.current_stream)
 
     def _signal_comm_done(self):
         self.gpu_comm_done_event.record(self.comm_stream)
@@ -195,14 +195,14 @@ def dbo_get_previous_event(func, *args, **kwargs):
         ctx_idx = _THREAD_ID_TO_CONTEXT[threading.get_ident()]
         ctx = _CURRENT_CONTEXTS[ctx_idx]
         # execute callable on the ubatch compute stream to record/wait events there
-        with torch.cuda.stream(ctx.compute_stream):
+        with torch.npu.stream(ctx.compute_stream):
             return func(*args, **kwargs)
 
 
 def make_ubatch_contexts(
     num_micro_batches: int,
-    compute_stream: torch.cuda.Stream,
-    comm_stream: torch.cuda.Stream,
+    compute_stream: torch.npu.Stream,
+    comm_stream: torch.npu.Stream,
     forward_contexts: list[ForwardContext],
     ready_barrier: threading.Barrier,
     schedule: str = "default",
@@ -219,8 +219,8 @@ def make_ubatch_contexts(
     Create a context manager for micro-batching synchronization.
     """
     cpu_events = [threading.Event() for _ in range(num_micro_batches)]
-    gpu_comm_done_events = [torch.Event() for _ in range(num_micro_batches)]
-    gpu_compute_done_events = [torch.Event() for _ in range(num_micro_batches)]
+    gpu_comm_done_events = [torch.npu.Event() for _ in range(num_micro_batches)]
+    gpu_compute_done_events = [torch.npu.Event() for _ in range(num_micro_batches)]
 
     ctxs = []
     for i in range(num_micro_batches):

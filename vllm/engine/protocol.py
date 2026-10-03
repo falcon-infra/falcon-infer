@@ -7,10 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from vllm.config import ModelConfig, VllmConfig
-from vllm.distributed.weight_transfer.base import (
-    WeightTransferInitRequest,
-    WeightTransferUpdateRequest,
-)
 from vllm.inputs.data import ProcessorInputs, PromptType
 from vllm.lora.request import LoRARequest
 from vllm.outputs import PoolingRequestOutput, RequestOutput
@@ -82,21 +78,6 @@ class EngineClient(ABC):
         reasoning_ended: bool | None = None,
     ) -> AsyncGenerator[RequestOutput, None]:
         """Generate outputs for a request."""
-        ...
-
-    @abstractmethod
-    def encode(
-        self,
-        prompt: PromptType | ProcessorInputs,
-        pooling_params: PoolingParams,
-        request_id: str,
-        lora_request: LoRARequest | None = None,
-        trace_headers: Mapping[str, str] | None = None,
-        priority: int = 0,
-        tokenization_kwargs: dict[str, Any] | None = None,
-        reasoning_ended: bool | None = None,
-    ) -> AsyncGenerator[PoolingRequestOutput, None]:
-        """Generate outputs for a request from a pooling model."""
         ...
 
     @abstractmethod
@@ -223,14 +204,4 @@ class EngineClient(ABC):
 
     async def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
         """Get supported tasks"""
-        raise NotImplementedError
-
-    async def init_weight_transfer_engine(
-        self, init_request: WeightTransferInitRequest
-    ) -> None:
-        """Initialize weight transfer for RL training."""
-        raise NotImplementedError
-
-    async def update_weights(self, request: WeightTransferUpdateRequest) -> None:
-        """Batched weight update for RL training."""
         raise NotImplementedError

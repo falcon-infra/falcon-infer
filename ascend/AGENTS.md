@@ -2,6 +2,15 @@
 
 This document provides instructions for contributors to the vLLM Ascend project. Please read and follow these guidelines to ensure code quality, maintainability, and consistency.
 
+## P4 profile pruning (2026-10-03)
+
+Work on `p4`, derived from the immutable paired `p3-frozen-20261003` tags.
+The user explicitly approved only Ascend910B3 and GLM-5.2 native text generation,
+with DSA/MTP, CPU KV storage, P/D, RemoteFill, checkpoint and recovery retained.
+Remove other hardware/model providers, multimodal, training, LoRA and pooling.
+Common CANN/NPU materials remain pinned. This supersedes the old branch,
+plugin/patch and multi-device patterns below, not the source-only/NPU boundary.
+
 ## P2 native integration (2026-09-27)
 
 The user authorized P2 after preserving the paired P1 branches. For this fork,

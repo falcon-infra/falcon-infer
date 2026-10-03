@@ -35,7 +35,7 @@ class RayPPCommunicator(Communicator):
         comm_id: Any,
         rank: int | None,
         actor_handles: list["ray.actor.ActorHandle"],
-        cuda_stream: torch.cuda.Stream | None,
+        cuda_stream: torch.npu.Stream | None,
         use_communication_streams: bool = False,
     ):
         """
@@ -240,11 +240,11 @@ class RayPPCommunicator(Communicator):
 
     @property
     def recv_stream(self):
-        return torch.cuda.StreamContext(current_stream())
+        return torch.npu.StreamContext(current_stream())
 
     @property
     def send_stream(self):
-        return torch.cuda.StreamContext(current_stream())
+        return torch.npu.StreamContext(current_stream())
 
     def destroy(self) -> None:
         # Just sets a flag, vLLM manages the lifecycle of the underlying

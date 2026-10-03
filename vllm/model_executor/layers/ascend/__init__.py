@@ -16,7 +16,6 @@ def initialize_native_ops() -> None:
         modules.extend(
             [
                 "triton.linearnorm.split_qkv_rmsnorm_rope",
-                "triton.linearnorm.split_qkv_rmsnorm_mrope",
                 "triton.linearnorm.split_qkv_tp_rmsnorm_rope",
             ]
         )

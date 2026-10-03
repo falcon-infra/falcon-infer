@@ -4,6 +4,7 @@
 import ast
 import dataclasses
 import importlib
+import importlib.util
 import logging
 import uuid
 from collections import Counter
@@ -215,7 +216,12 @@ def test_migrated_config_resolves_native_factory_without_old_module_import(
     native = type("LMCacheConnectorV1", (), {})
     imports = Mock(spec=importlib)
     imports.import_module.return_value = NS(LMCacheConnectorV1=native)
-    namespace = {"importlib": imports}
+    spec = importlib.util.spec_from_file_location(
+        "p4_profile", ROOT / "vllm/inference_profile.py"
+    )
+    policy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    namespace = {**vars(policy), "importlib": imports}
     prefix = ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0
     )
@@ -424,7 +430,7 @@ def test_optional_lmcache_is_not_imported_at_module_scope():
         ROOT / "vllm/distributed/kv_transfer/kv_connector/factory.py"
     ).read_text()
     assert (
-        '"LMCacheAscendConnector",\n    '
-        '"vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector"' in factory
+        "KVConnectorFactory.register_connector(CONNECTOR, CONNECTOR_MODULE, CONNECTOR)"
+        in factory
     )
     assert "lmcache_ascend_connector" not in factory

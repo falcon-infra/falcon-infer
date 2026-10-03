@@ -29,9 +29,6 @@ from compressed_tensors.quantization import (
 from vllm.logger import logger
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
-from vllm.model_executor.layers.quantization import (
-    QUANTIZATION_METHODS,
-)
 from vllm.model_executor.layers.quantization.ascend.methods import (
     AscendLinearScheme,
     AscendMoEScheme,
@@ -48,14 +45,6 @@ from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
 from vllm.model_executor.models.utils import WeightsMapper
 from vllm.utils.ascend import COMPRESSED_TENSORS_METHOD
 
-
-# Remove the original compressed_tensors method to replace with our implementation
-def _remove_quantization_method():
-    if COMPRESSED_TENSORS_METHOD in QUANTIZATION_METHODS:
-        QUANTIZATION_METHODS.remove(COMPRESSED_TENSORS_METHOD)
-
-
-_remove_quantization_method()
 
 QUANTIZATION_SCHEME_MAP_TYPE = dict[str, dict[str, "QuantizationArgs"] | None]
 

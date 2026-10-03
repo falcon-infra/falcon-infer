@@ -38,7 +38,7 @@ class OffloadingSpecFactory:
         kv_transfer_config = config.kv_transfer_config
         assert kv_transfer_config is not None
         extra_config = kv_transfer_config.kv_connector_extra_config
-        spec_name = extra_config.get("spec_name", "CPUOffloadingSpec")
+        spec_name = extra_config.get("spec_name", "NPUOffloadingSpec")
         if spec_name in cls._registry:
             spec_cls = cls._registry[spec_name]()
         else:
@@ -54,5 +54,5 @@ class OffloadingSpecFactory:
 
 # Register various specs here.
 OffloadingSpecFactory.register_spec(
-    "CPUOffloadingSpec", "vllm.v1.kv_offload.cpu", "CPUOffloadingSpec"
+    "NPUOffloadingSpec", "vllm.v1.kv_offload.ascend.npu", "NPUOffloadingSpec"
 )

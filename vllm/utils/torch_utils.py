@@ -138,27 +138,9 @@ def set_default_torch_num_threads(num_threads: int | None = None):
 @contextlib.contextmanager
 def guard_cuda_initialization():
     """Avoid unexpected CUDA initialization."""
-    from vllm.platforms import current_platform
 
-    if not current_platform.is_cuda():
-        yield
-        return
-
-    old_value = os.environ.get("CUDA_VISIBLE_DEVICES")
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    try:
-        yield
-    except Exception as e:
-        if "No CUDA GPUs are available" in str(e):
-            err_msg = "CUDA initialization is blocked."
-        else:
-            err_msg = str(e)
-        raise RuntimeError(err_msg) from e
-    finally:
-        if old_value is None:
-            del os.environ["CUDA_VISIBLE_DEVICES"]
-        else:
-            os.environ["CUDA_VISIBLE_DEVICES"] = old_value
+    yield
+    return
 
 
 def get_dtype_size(dtype: torch.dtype) -> int:
@@ -213,27 +195,6 @@ def common_broadcastable_dtype(dtypes: Collection[torch.dtype]):
         dtypes,
         key=lambda dtype: sum(is_lossless_cast(dt, dtype) for dt in dtypes),
     )
-
-
-def _generate_random_fp8(
-    tensor: torch.Tensor,
-    low: float,
-    high: float,
-) -> None:
-    # NOTE(zhaoyang): Due to NaN and Inf representation for fp8 data type,
-    # it may occur Inf or NaN if we directly use torch.randint
-    # to generate random data for fp8 data.
-    # For example, s.11111.00 in fp8e5m2 format represents Inf.
-    #     | E4M3        | E5M2
-    # -----|-------------|-------------------
-    # Inf | N/A         | s.11111.00
-    # NaN | s.1111.111  | s.11111.{01,10,11}
-    from vllm import _custom_ops as ops
-
-    tensor_tmp = torch.empty_like(tensor, dtype=torch.float16)
-    tensor_tmp.uniform_(low, high)
-    ops.convert_fp8(tensor, tensor_tmp)
-    del tensor_tmp
 
 
 def get_kv_cache_torch_dtype(
@@ -356,96 +317,8 @@ def set_random_seed(seed: int | None) -> None:
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-
-
-def create_kv_caches_with_random_flash(
-    num_blocks: int,
-    block_size: int,
-    num_layers: int,
-    num_heads: int,
-    head_size: int,
-    cache_dtype: str | torch.dtype | None,
-    model_dtype: str | torch.dtype | None = None,
-    seed: int | None = None,
-    device: str | None = "cuda",
-    cache_layout: str | None = "NHD",
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    set_random_seed(seed)
-
-    dtype = get_kv_cache_torch_dtype(cache_dtype, model_dtype)
-    generic_kv_cache_shape = (num_blocks, 2, block_size, num_heads, head_size)
-    assert cache_layout in ("NHD", "HND")
-    stride_order = (0, 1, 2, 3, 4) if cache_layout == "NHD" else (0, 1, 3, 2, 4)
-
-    kv_cache_allocation_shape = tuple(generic_kv_cache_shape[i] for i in stride_order)
-    scale = head_size**-0.5
-
-    key_caches: list[torch.Tensor] = []
-    value_caches: list[torch.Tensor] = []
-
-    for _ in range(num_layers):
-        key_value_cache = torch.empty(
-            size=kv_cache_allocation_shape, dtype=dtype, device=device
-        ).permute(*stride_order)
-        if cache_dtype in ["auto", "half", "bfloat16", "float"]:
-            key_value_cache.uniform_(-scale, scale)
-        elif cache_dtype == "fp8":
-            _generate_random_fp8(key_value_cache, -scale, scale)
-        else:
-            raise ValueError(f"Does not support key cache of type {cache_dtype}")
-        key_caches.append(key_value_cache[:, 0])
-        value_caches.append(key_value_cache[:, 1])
-    return key_caches, value_caches
-
-
-def create_kv_caches_with_random(
-    num_blocks: int,
-    block_size: int,
-    num_layers: int,
-    num_heads: int,
-    head_size: int,
-    cache_dtype: str | torch.dtype | None,
-    model_dtype: str | torch.dtype | None = None,
-    seed: int | None = None,
-    device: str | None = "cuda",
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    if cache_dtype == "fp8" and head_size % 16:
-        raise ValueError(
-            f"Does not support key cache of type fp8 with head_size {head_size}"
-        )
-
-    set_random_seed(seed)
-
-    dtype = get_kv_cache_torch_dtype(cache_dtype, model_dtype)
-
-    scale = head_size**-0.5
-    x = 16 // torch.tensor([], dtype=dtype).element_size()
-    key_cache_shape = (num_blocks, num_heads, head_size // x, block_size, x)
-    key_caches: list[torch.Tensor] = []
-    for _ in range(num_layers):
-        key_cache = torch.empty(size=key_cache_shape, dtype=dtype, device=device)
-        if cache_dtype in ["auto", "half", "bfloat16", "float"]:
-            key_cache.uniform_(-scale, scale)
-        elif cache_dtype == "fp8":
-            _generate_random_fp8(key_cache, -scale, scale)
-        else:
-            raise ValueError(f"Does not support key cache of type {cache_dtype}")
-        key_caches.append(key_cache)
-
-    value_cache_shape = (num_blocks, num_heads, head_size, block_size)
-    value_caches: list[torch.Tensor] = []
-    for _ in range(num_layers):
-        value_cache = torch.empty(size=value_cache_shape, dtype=dtype, device=device)
-        if cache_dtype in ["auto", "half", "bfloat16", "float"]:
-            value_cache.uniform_(-scale, scale)
-        elif cache_dtype == "fp8":
-            _generate_random_fp8(value_cache, -scale, scale)
-        else:
-            raise ValueError(f"Does not support value cache of type {cache_dtype}")
-        value_caches.append(value_cache)
-    return key_caches, value_caches
+        if hasattr(torch, "npu") and torch.npu.is_available():
+            torch.npu.manual_seed_all(seed)
 
 
 def async_tensor_h2d(
@@ -519,21 +392,8 @@ class _StreamPlaceholder:
 
 def current_stream():
     """Return the active platform stream without replacing framework functions."""
-    from vllm.platforms import current_platform
 
-    if current_platform.is_npu():
-        return torch.npu.current_stream()
-    if current_platform.is_cuda_alike():
-        if not getattr(_current_stream_tls, "initialized", False):
-            torch.cuda.set_stream(torch.cuda.Stream())
-            _current_stream_tls.initialized = True
-        return torch.cuda.current_stream()
-    if current_platform.is_cpu():
-        return _StreamPlaceholder()
-    stream = current_platform.current_stream
-    if stream is None:
-        raise ValueError("The selected platform does not provide a current stream")
-    return stream()
+    return torch.npu.current_stream()
 
 
 # Global auxiliary stream for running operations in background streams.
@@ -542,77 +402,32 @@ def current_stream():
 #
 # aux_stream() is currently used for:
 #   - MoE shared_expert overlap with router
-_aux_stream: torch.cuda.Stream | None = None
+_aux_stream: Any = None
 
 
-def aux_stream() -> torch.cuda.Stream | None:
+def aux_stream() -> Any:
     """
     Ensures aux_stream is initialized only once
     """
     global _aux_stream
 
-    from vllm.platforms import current_platform
-
-    if _aux_stream is None and current_platform.is_cuda_alike():
-        _aux_stream = torch.cuda.Stream()
+    pass  # Unsupported P4 branch removed.
 
     return _aux_stream
 
 
-@lru_cache(maxsize=8)
-def _cuda_device_count_stateless(cuda_visible_devices: str | None = None) -> int:
-    # Note: cuda_visible_devices is not used, but we keep it as an argument for
-    # LRU Cache purposes.
-
-    # Code below is based on
-    # https://github.com/pytorch/pytorch/blob/
-    # c1cd946818442aca8c7f812b16d187ce1586c3bc/
-    # torch/cuda/__init__.py#L831C1-L831C17
-    import torch.cuda
-    import torch.version
-
-    from vllm.platforms import current_platform
-
-    if not torch.cuda._is_compiled():
-        return 0
-    if current_platform.is_rocm():
-        # ROCm uses amdsmi instead of nvml for stateless device count
-        # This requires a sufficiently modern version of Torch 2.4.0
-        raw_count = (
-            torch.cuda._device_count_amdsmi()
-            if (hasattr(torch.cuda, "_device_count_amdsmi"))
-            else -1
-        )
-    else:
-        raw_count = torch.cuda._device_count_nvml()
-    r = torch._C._cuda_getDeviceCount() if raw_count < 0 else raw_count
-    return r
-
-
 def cuda_device_count_stateless() -> int:
-    """Get number of CUDA devices, caching based on the value of
-    CUDA_VISIBLE_DEVICES at the time of call.
-
-    This should be used instead of torch.accelerator.device_count()
-    unless CUDA_VISIBLE_DEVICES has already been set to the desired
-    value."""
-
-    # This can be removed and simply replaced with torch.cuda.get_device_count
-    # after https://github.com/pytorch/pytorch/pull/122815 is released.
-    return _cuda_device_count_stateless(envs.CUDA_VISIBLE_DEVICES)
+    """Retired device probe retained only as a negative compatibility query."""
+    return 0
 
 
 def weak_ref_tensor(tensor: Any) -> Any:
-    """
-    Create a weak reference to a tensor.
-    The new tensor will share the same data as the original tensor,
-    but will not keep the original tensor alive.
-    This ignores 0-size tensors as those don't allocate any memory.
-    """
+    """Use the native NPU weak reference operation (no CUDA extension)."""
     if isinstance(tensor, torch.Tensor) and tensor.numel() > 0:
-        return torch.ops._C.weak_ref_tensor(tensor)
-    else:
-        return tensor
+        import torch_npu
+
+        return torch_npu._C._weak_ref_tensor(tensor)
+    return tensor
 
 
 def weak_ref_tensors(
@@ -649,16 +464,10 @@ def get_accelerator_view_from_cpu_tensor(cpu_tensor: torch.Tensor) -> torch.Tens
     """
     from vllm.platforms import current_platform
 
-    if current_platform.is_xpu():
-        assert cpu_tensor.is_pinned(), "CPU tensor must be pinned"
-        return torch.ops._C.get_xpu_view_from_cpu_tensor(cpu_tensor)
-    elif current_platform.is_cuda() or current_platform.is_rocm():
-        return torch.ops._C.get_cuda_view_from_cpu_tensor(cpu_tensor)
-    else:
-        raise ValueError(
-            f"`get_accelerator_view_from_cpu_tensor` is currently "
-            f"not supported in: {current_platform.device_name}"
-        )
+    raise ValueError(
+        f"`get_accelerator_view_from_cpu_tensor` is currently "
+        f"not supported in: {current_platform.device_name}"
+    )
 
 
 # Helper function used in testing.

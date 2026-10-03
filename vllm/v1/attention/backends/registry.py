@@ -41,47 +41,29 @@ class AttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
         backend.get_class()
     """
 
-    FLASH_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-    FLASH_ATTN_DIFFKV = (
-        "vllm.v1.attention.backends.flash_attn_diffkv.FlashAttentionDiffKVBackend"
-    )
-    TRITON_ATTN = "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend"
-    ROCM_ATTN = "vllm.v1.attention.backends.rocm_attn.RocmAttentionBackend"
-    ROCM_AITER_MLA = "vllm.v1.attention.backends.mla.rocm_aiter_mla.AiterMLABackend"
-    ROCM_AITER_TRITON_MLA = (
-        "vllm.v1.attention.backends.mla.aiter_triton_mla.AiterTritonMLABackend"
-    )
-    ROCM_AITER_FA = (
-        "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionBackend"
-    )
-    ROCM_AITER_MLA_SPARSE = (
-        "vllm.v1.attention.backends.mla.rocm_aiter_mla_sparse.ROCMAiterMLASparseBackend"
-    )
-    XPU_MLA_SPARSE = "vllm.v1.attention.backends.mla.xpu_mla_sparse.XPUMLASparseBackend"
-    TORCH_SDPA = ""  # this tag is only used for ViT
-    FLASHINFER = "vllm.v1.attention.backends.flashinfer.FlashInferBackend"
-    FLASHINFER_MLA = (
-        "vllm.v1.attention.backends.mla.flashinfer_mla.FlashInferMLABackend"
-    )
-    FLASHINFER_MLA_SPARSE = (
-        "vllm.v1.attention.backends.mla.flashinfer_mla_sparse."
-        "FlashInferMLASparseBackend"
-    )
-    TRITON_MLA = "vllm.v1.attention.backends.mla.triton_mla.TritonMLABackend"
-    CUTLASS_MLA = "vllm.v1.attention.backends.mla.cutlass_mla.CutlassMLABackend"
-    FLASHMLA = "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
-    FLASHMLA_SPARSE = (
-        "vllm.v1.attention.backends.mla.flashmla_sparse.FlashMLASparseBackend"
-    )
-    FLASH_ATTN_MLA = "vllm.v1.attention.backends.mla.flashattn_mla.FlashAttnMLABackend"
-    NO_ATTENTION = "vllm.v1.attention.backends.no_attention.NoAttentionBackend"
-    FLEX_ATTENTION = "vllm.v1.attention.backends.flex_attention.FlexAttentionBackend"
-    TREE_ATTN = "vllm.v1.attention.backends.tree_attn.TreeAttentionBackend"
-    ROCM_AITER_UNIFIED_ATTN = (
-        "vllm.v1.attention.backends.rocm_aiter_unified_attn."
-        "RocmAiterUnifiedAttentionBackend"
-    )
-    CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
+    FLASH_ATTN = "removed:FLASH_ATTN"
+    FLASH_ATTN_DIFFKV = "removed:FLASH_ATTN_DIFFKV"
+    TRITON_ATTN = "removed:TRITON_ATTN"
+    ROCM_ATTN = "removed:ROCM_ATTN"
+    ROCM_AITER_MLA = "removed:ROCM_AITER_MLA"
+    ROCM_AITER_TRITON_MLA = "removed:ROCM_AITER_TRITON_MLA"
+    ROCM_AITER_FA = "removed:ROCM_AITER_FA"
+    ROCM_AITER_MLA_SPARSE = "removed:ROCM_AITER_MLA_SPARSE"
+    XPU_MLA_SPARSE = "removed:XPU_MLA_SPARSE"
+    TORCH_SDPA = "removed:TORCH_SDPA"
+    FLASHINFER = "removed:FLASHINFER"
+    FLASHINFER_MLA = "removed:FLASHINFER_MLA"
+    FLASHINFER_MLA_SPARSE = "removed:FLASHINFER_MLA_SPARSE"
+    TRITON_MLA = "removed:TRITON_MLA"
+    CUTLASS_MLA = "removed:CUTLASS_MLA"
+    FLASHMLA = "removed:FLASHMLA"
+    FLASHMLA_SPARSE = "removed:FLASHMLA_SPARSE"
+    FLASH_ATTN_MLA = "removed:FLASH_ATTN_MLA"
+    NO_ATTENTION = "removed:NO_ATTENTION"
+    FLEX_ATTENTION = "removed:FLEX_ATTENTION"
+    TREE_ATTN = "removed:TREE_ATTN"
+    ROCM_AITER_UNIFIED_ATTN = "removed:ROCM_AITER_UNIFIED_ATTN"
+    CPU_ATTN = "removed:CPU_ATTN"
     # Placeholder for third-party/custom backends - must be registered before use
     # set to None to avoid alias with other backend, whose value is an empty string
     CUSTOM = None
@@ -96,6 +78,10 @@ class AttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
             ValueError: If Backend.CUSTOM is used without being registered
         """
         path = _ATTN_OVERRIDES.get(self, self.value)
+        if path and path.startswith("removed:"):
+            raise ValueError(
+                f"P4 removed attention backend {self.name}; use native Ascend selection"
+            )
         if not path:
             raise ValueError(
                 f"Backend {self.name} must be registered before use. "
@@ -140,11 +126,11 @@ class MambaAttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
         backend.get_class()
     """
 
-    MAMBA1 = "vllm.v1.attention.backends.mamba1_attn.Mamba1AttentionBackend"
-    MAMBA2 = "vllm.v1.attention.backends.mamba2_attn.Mamba2AttentionBackend"
-    SHORT_CONV = "vllm.v1.attention.backends.short_conv_attn.ShortConvAttentionBackend"
-    LINEAR = "vllm.v1.attention.backends.linear_attn.LinearAttentionBackend"
-    GDN_ATTN = "vllm.v1.attention.backends.gdn_attn.GDNAttentionBackend"
+    MAMBA1 = "removed:MAMBA1"
+    MAMBA2 = "removed:MAMBA2"
+    SHORT_CONV = "removed:SHORT_CONV"
+    LINEAR = "removed:LINEAR"
+    GDN_ATTN = "removed:GDN_ATTN"
     # Placeholder for third-party/custom backends - must be registered before use
     # set to None to avoid alias with other backend, whose value is an empty string
     CUSTOM = None
@@ -159,6 +145,10 @@ class MambaAttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
             ValueError: If Backend.CUSTOM is used without being registered
         """
         path = _MAMBA_ATTN_OVERRIDES.get(self, self.value)
+        if path and path.startswith("removed:"):
+            raise ValueError(
+                f"P4 removed attention backend {self.name}; use native Ascend selection"
+            )
         if not path:
             raise ValueError(
                 f"Backend {self.name} must be registered before use. "

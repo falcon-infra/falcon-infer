@@ -40,7 +40,6 @@ from vllm.distributed import (
     init_distributed_environment,
 )
 from vllm.distributed.ascend.parallel_state import init_ascend_model_parallel
-from vllm.distributed.ec_transfer import ensure_ec_transfer_initialized
 from vllm.distributed.kv_transfer import (
     ensure_kv_transfer_initialized,
     get_kv_transfer_group,
@@ -53,7 +52,6 @@ from vllm.distributed.parallel_state import (
     get_tp_group,
 )
 from vllm.logger import logger
-from vllm.lora.request import LoRARequest
 from vllm.model_executor.layers.ascend.triton.triton_utils import (
     init_device_properties_triton,
 )
@@ -61,10 +59,8 @@ from vllm.model_executor.layers.ascend_batch_invariant import init_batch_invaria
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.ascend import (
-    AscendDeviceType,
     check_ascend_device_type,
     enable_sp,
-    get_ascend_device_type,
     staged_sfa_graph_configured,
 )
 from vllm.utils.mem_constants import GiB_bytes
@@ -323,8 +319,7 @@ class NPUWorker(WorkerBase):
         from vllm.model_executor.layers import ascend as ops
 
         ops.initialize_native_ops()
-        if get_ascend_device_type() != AscendDeviceType.A5:
-            _register_atb_extensions()
+        _register_atb_extensions()
         # init ascend config and soc version
         init_ascend_config(vllm_config)
         check_ascend_device_type()
@@ -994,8 +989,7 @@ class NPUWorker(WorkerBase):
                 )
         # Call ATB matmul to warm up; otherwise, the first operation (ReshapeAndCache)
         # may cause performance degradation at runtime.
-        if get_ascend_device_type() != AscendDeviceType.A5:
-            self._warm_up_atb()
+        self._warm_up_atb()
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.model_config.seed)
@@ -1137,18 +1131,6 @@ class NPUWorker(WorkerBase):
                 return
             self.profiler.stop()
 
-    def add_lora(self, lora_request: LoRARequest) -> bool:
-        return self.model_runner.add_lora(lora_request)
-
-    def remove_lora(self, lora_id: int) -> bool:
-        return self.model_runner.remove_lora(lora_id)
-
-    def list_loras(self) -> set[int]:
-        return self.model_runner.list_loras()
-
-    def pin_lora(self, lora_id: int) -> bool:
-        return self.model_runner.pin_lora(lora_id)
-
     def reset_encoder_cache(self) -> None:
         self.model_runner.reset_encoder_cache()
 
@@ -1174,7 +1156,6 @@ class NPUWorker(WorkerBase):
             self.parallel_config.decode_context_parallel_size,
         )
         init_ascend_model_parallel(self.parallel_config)
-        ensure_ec_transfer_initialized(self.vllm_config)
 
     def _create_profiler(self, trace_name: str):
         """Create torch_npu profiler with trace naming for unique files per worker (RFC #6954)."""

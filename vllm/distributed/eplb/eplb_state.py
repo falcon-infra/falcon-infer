@@ -176,17 +176,17 @@ class EplbModelState:
     """
     The lock to protect the expert buffer.
     """
-    buffer_ready_event: torch.cuda.Event | None
+    buffer_ready_event: torch.npu.Event | None
     """
     CUDA event recorded when the async worker finishes filling the buffer.
     The main thread waits on this before consuming the buffer.
     """
-    buffer_consumed_event: torch.cuda.Event | None
+    buffer_consumed_event: torch.npu.Event | None
     """
     CUDA event recorded after the main thread finishes consuming the buffer.
     The async worker waits on this before writing to the buffer again.
     """
-    window_ready_event: torch.cuda.Event | None
+    window_ready_event: torch.npu.Event | None
     """
     CUDA event recorded after all-reduce and clone on the main thread.
     The async worker waits on this before accessing global_expert_load_window.
@@ -311,9 +311,9 @@ class EplbState:
         newly started EP ranks may not have physical experts
         mapped yet.
         """
-        if self.device.type == "cuda":
+        if self.device.type == "npu":
             self.cuda_device_index = self.device.index
-            if self.cuda_device_index is None and torch.cuda.is_available():
+            if self.cuda_device_index is None and torch.npu.is_available():
                 self.cuda_device_index = torch.accelerator.current_device_index()
 
     @staticmethod
@@ -664,8 +664,8 @@ class EplbState:
         is_main_rank = ep_rank == 0
         if is_main_rank:
             if not self.is_async or is_profile:
-                start_event = torch.cuda.Event(enable_timing=True)
-                end_event = torch.cuda.Event(enable_timing=True)
+                start_event = torch.npu.Event(enable_timing=True)
+                end_event = torch.npu.Event(enable_timing=True)
                 start_event.record()
             logger.info(
                 "Rearranging experts %s %s...",
@@ -819,7 +819,7 @@ class EplbState:
                 )
                 # Record event after clone to signal async worker
                 # that load stats data is ready
-                sync_event = torch.cuda.Event()
+                sync_event = torch.npu.Event()
                 sync_event.record()
                 eplb_model_state.window_ready_event = sync_event
 
@@ -930,7 +930,7 @@ class EplbState:
             assert model_state.new_physical_to_logical_map is not None
             device_index = model_state.cuda_device_index or self.cuda_device_index
             if model_state.buffer_ready_event is not None and device_index is not None:
-                stream = torch.cuda.current_stream(device=device_index)
+                stream = torch.npu.current_stream(device=device_index)
                 stream.wait_event(model_state.buffer_ready_event)
                 model_state.buffer_ready_event = None
             expert_weights = model_state.model.expert_weights[
@@ -951,7 +951,7 @@ class EplbState:
             )
             # Record event after consuming buffer to signal async thread
             # that it's safe to overwrite the intermediate buffer
-            consumed_event = torch.cuda.Event()
+            consumed_event = torch.npu.Event()
             consumed_event.record()
             model_state.buffer_consumed_event = consumed_event
 

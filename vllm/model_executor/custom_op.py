@@ -45,29 +45,9 @@ class PluggableLayer(nn.Module):
 
     def __new__(cls, *args, **kwargs):
 
-        if current_platform.is_npu():
-            from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+        from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
 
-            return super().__new__(get_npu_layer_class(cls.__name__) or cls)
-        try:
-            layer_class_name = cls.__name__
-        except AttributeError:
-            raise TypeError(
-                f"Cannot instantiate '{cls.__name__}': its 'name' attribute "
-                f"was not set, possibly because it was not decorated with "
-                f"@PluggableLayer.register, or it's the PluggableLayer itself."
-            ) from None
-
-        if layer_class_name not in op_registry_oot:
-            layer_cls_to_instantiate = cls
-        else:
-            layer_cls_to_instantiate = op_registry_oot[layer_class_name]
-            logger.debug(
-                "Instantiating pluggable layer: %s using %s",
-                layer_class_name,
-                str(layer_cls_to_instantiate),
-            )
-        return super().__new__(layer_cls_to_instantiate)
+        return super().__new__(get_npu_layer_class(cls.__name__) or cls)
 
     # Decorator to register pluggable layers.
     @classmethod
@@ -112,29 +92,9 @@ class CustomOp(nn.Module):
 
     def __new__(cls, *args, **kwargs):
 
-        if current_platform.is_npu():
-            from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+        from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
 
-            return super().__new__(get_npu_layer_class(cls.__name__) or cls)
-        try:
-            op_name = cls.__name__
-        except AttributeError:
-            raise TypeError(
-                f"Cannot instantiate '{cls.__name__}': its 'name' attribute "
-                f"was not set, possibly because it was not decorated with "
-                f"@CustomOp.register, or it's the CustomOp base class itself."
-            ) from None
-
-        if op_name not in op_registry_oot:
-            op_cls_to_instantiate = cls
-        else:
-            op_cls_to_instantiate = op_registry_oot[op_name]
-            logger.debug(
-                "Instantiating custom op: %s using %s",
-                op_name,
-                str(op_cls_to_instantiate),
-            )
-        return super().__new__(op_cls_to_instantiate)
+        return super().__new__(get_npu_layer_class(cls.__name__) or cls)
 
     def __init__(self, *, enforce_enable: bool = False, compile_native: bool = False):
         super().__init__()
@@ -151,34 +111,6 @@ class CustomOp(nn.Module):
         purposes.
         """
         raise NotImplementedError
-
-    def forward_cuda(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def forward_hip(self, *args, **kwargs):
-        # By default, we assume that HIP ops are compatible with CUDA ops.
-        return self.forward_cuda(*args, **kwargs)
-
-    def forward_xpu(self, *args, **kwargs):
-        # By default, we assume that XPU ops are compatible with the
-        # PyTorch-native implementation.
-        return self.forward_native(*args, **kwargs)
-
-    def forward_cpu(self, *args, **kwargs):
-        # By default, we assume that CPU ops are compatible with the
-        # PyTorch-native implementation.
-        return self.forward_native(*args, **kwargs)
-
-    def forward_tpu(self, *args, **kwargs):
-        # By default, we assume that TPU ops are compatible with the
-        # PyTorch-native implementation.
-        # NOTE(woosuk): This is a placeholder for future extensions.
-        return self.forward_native(*args, **kwargs)
-
-    def forward_oot(self, *args, **kwargs):
-        # By default, we assume that OOT ops are compatible with the
-        # PyTorch-native implementation.
-        return self.forward_native(*args, **kwargs)
 
     def dispatch_forward(self, compile_native: bool):
         # NOTE(woosuk): Here we assume that vLLM was built for only one
@@ -202,20 +134,7 @@ class CustomOp(nn.Module):
             # opaque torch custom op (e.g. fused_moe, unified_attention, etc.)
             return self.maybe_compile(self.forward_native, enable=compile_native)
 
-        if current_platform.is_rocm():
-            return self.forward_hip
-        elif current_platform.is_cpu():
-            return self.forward_cpu
-        elif current_platform.is_tpu():
-            return self.forward_tpu
-        elif current_platform.is_xpu():
-            return self.forward_xpu
-        elif current_platform.is_npu():
-            return self.forward_npu
-        elif current_platform.is_out_of_tree():
-            return self.forward_oot
-        else:
-            return self.forward_cuda
+        return self.forward_npu
 
     def maybe_compile(self, fn, *, enable: bool = True):
         """
@@ -368,8 +287,6 @@ class CustomOp(nn.Module):
 
 
 def get_platform_class_by_name(class_name: str) -> type | None:
-    if current_platform.is_npu():
-        from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
+    from vllm.model_executor.layers.ascend.registry import get_npu_layer_class
 
-        return get_npu_layer_class(class_name)
-    return get_oot_class_by_name(class_name)
+    return get_npu_layer_class(class_name)

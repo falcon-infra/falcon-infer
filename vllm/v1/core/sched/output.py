@@ -10,10 +10,10 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     import torch
 
-    from vllm.distributed.ec_transfer.ec_connector.base import ECConnectorMetadata
+    ECConnectorMetadata = object  # Retired wire slot, always None.
     from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata
     from vllm.lora.request import LoRARequest
-    from vllm.multimodal.inputs import MultiModalFeatureSpec
+    from vllm.inputs.legacy_wire import MultiModalFeatureSpec
     from vllm.pooling_params import PoolingParams
     from vllm.sampling_params import SamplingParams
     from vllm.v1.request import Request

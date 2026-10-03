@@ -136,10 +136,7 @@ class CoreEngineProcManager:
                 # Adjust device control in DP for non-CUDA platforms
                 # as well as external and ray launchers
                 # For CUDA platforms, we use torch.accelerator.set_device_index()()
-                if is_dp and (
-                    not current_platform.is_cuda_alike()
-                    or vllm_config.parallel_config.use_ray
-                ):
+                if is_dp and (not False or vllm_config.parallel_config.use_ray):
                     with set_device_control_env_var(vllm_config, local_dp_rank):
                         proc.start()
                 else:
@@ -342,14 +339,7 @@ class CoreEngineActorManager:
             # setting device env vars in Ray actor's initialization method
             # will not affect device selection. See:
             # https://github.com/ray-project/ray/blob/master/python/ray/_private/accelerators/intel_gpu.py#L56 # noqa: E501
-            if current_platform.is_xpu():
-                device_evar = current_platform.device_control_env_var
-                device_indices = get_device_indices(
-                    device_evar, local_index, world_size
-                )
-                actor_env_vars = self.env_vars_dict.copy()
-                actor_env_vars[device_evar] = device_indices
-                runtime_env = RuntimeEnv(env_vars=actor_env_vars)
+            pass  # Unsupported P4 branch removed.
 
             actor = (
                 ray.remote(actor_class)

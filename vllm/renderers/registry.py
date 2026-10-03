@@ -15,15 +15,7 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-_VLLM_RENDERERS = {
-    "deepseek_v32": ("deepseek_v32", "DeepseekV32Renderer"),
-    "hf": ("hf", "HfRenderer"),
-    "grok2": ("grok2", "Grok2Renderer"),
-    "kimi_audio": ("kimi_audio", "KimiAudioRenderer"),
-    "mistral": ("mistral", "MistralRenderer"),
-    "qwen_vl": ("qwen_vl", "QwenVLRenderer"),
-    "terratorch": ("terratorch", "TerratorchRenderer"),
-}
+_VLLM_RENDERERS = {"hf": ("hf", "HfRenderer")}
 
 
 @dataclass
@@ -31,19 +23,10 @@ class RendererRegistry:
     # Renderer mode ->  (renderer module, renderer class)
     renderers: dict[str, tuple[str, str]] = field(default_factory=dict)
 
-    def register(self, renderer_mode: str, module: str, class_name: str) -> None:
-        if renderer_mode in self.renderers:
-            logger.warning(
-                "%s.%s is already registered for renderer_mode=%r. "
-                "It is overwritten by the new one.",
-                module,
-                class_name,
-                renderer_mode,
-            )
-
-        self.renderers[renderer_mode] = (module, class_name)
-
-        return None
+    def register(self, *args, **kwargs) -> None:
+        raise ValueError(
+            "Ascend P4 does not support external tokenizer/renderer registration"
+        )
 
     def load_renderer_cls(self, renderer_mode: str) -> type[BaseRenderer]:
         if renderer_mode not in self.renderers:
@@ -80,16 +63,8 @@ def renderer_from_config(config: "VllmConfig", **kwargs):
         model_config, **kwargs
     )
 
-    if (
-        model_config.tokenizer_mode == "auto"
-        and model_config.model_impl == "terratorch"
-    ):
-        renderer_mode = "terratorch"
-    else:
-        renderer_mode = tokenizer_mode
-
     return RENDERER_REGISTRY.load_renderer(
-        renderer_mode,
+        tokenizer_mode,
         config,
         tokenizer_kwargs={**kwargs, "tokenizer_name": tokenizer_name},
     )

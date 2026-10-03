@@ -4,8 +4,6 @@ from vllm.config.ascend import get_ascend_config
 from vllm.model_executor.layers.batch_invariant import vllm_is_batch_invariant
 from vllm.triton_utils import HAS_TRITON
 from vllm.utils.ascend import (
-    AscendDeviceType,
-    get_ascend_device_type,
     global_stream,
     npu_stream_switch,
 )
@@ -169,8 +167,4 @@ def _apply_top_k_top_p_ascendc(
     return torch.ops._C_ascend.npu_apply_top_k_top_p(logits, k=k, p=p)
 
 
-apply_top_k_top_p = (
-    _apply_top_k_top_p_ascendc
-    if get_ascend_device_type() in [AscendDeviceType.A2, AscendDeviceType.A3]
-    else _apply_top_k_top_p_pytorch
-)
+apply_top_k_top_p = _apply_top_k_top_p_ascendc

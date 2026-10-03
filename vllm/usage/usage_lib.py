@@ -16,13 +16,10 @@ from uuid import uuid4
 import cpuinfo
 import psutil
 import requests
-import torch
 
 import vllm.envs as envs
 from vllm.connections import global_http_connection
 from vllm.logger import init_logger
-from vllm.utils.platform_utils import cuda_get_device_properties
-from vllm.utils.torch_utils import cuda_device_count_stateless
 from vllm.version import __version__ as VLLM_VERSION
 
 logger = init_logger(__name__)
@@ -49,25 +46,9 @@ def set_runtime_usage_data(key: str, value: str | int | bool) -> None:
     _GLOBAL_RUNTIME_DATA[key] = value
 
 
-def is_usage_stats_enabled():
-    """Determine whether or not we can send usage stats to the server.
-    The logic is as follows:
-    - By default, it should be enabled.
-    - Three environment variables can disable it:
-        - VLLM_DO_NOT_TRACK=1
-        - DO_NOT_TRACK=1
-        - VLLM_NO_USAGE_STATS=1
-    - A file in the home directory can disable it if it exists:
-        - $HOME/.config/vllm/do_not_track
-    """
-    global _USAGE_STATS_ENABLED
-    if _USAGE_STATS_ENABLED is None:
-        do_not_track = envs.VLLM_DO_NOT_TRACK
-        no_usage_stats = envs.VLLM_NO_USAGE_STATS
-        do_not_track_file = os.path.exists(_USAGE_STATS_DO_NOT_TRACK_PATH)
-
-        _USAGE_STATS_ENABLED = not (do_not_track or no_usage_stats or do_not_track_file)
-    return _USAGE_STATS_ENABLED
+def is_usage_stats_enabled() -> bool:
+    """This intranet fork never sends upstream usage telemetry."""
+    return False
 
 
 def _get_current_timestamp_ns() -> int:
@@ -192,18 +173,10 @@ class UsageMessage:
         extra_kvs: dict[str, Any],
     ) -> None:
         # Platform information
-        from vllm.platforms import current_platform
 
-        if current_platform.is_cuda_alike():
-            self.gpu_count = cuda_device_count_stateless()
-            self.gpu_type, self.gpu_memory_per_device = cuda_get_device_properties(
-                0, ("name", "total_memory")
-            )
-        if current_platform.is_cuda():
-            self.cuda_runtime = torch.version.cuda
-        if current_platform.is_tpu():  # noqa: SIM102
-            if not self._report_tpu_inference_usage():
-                logger.exception("Failed to collect TPU information")
+        pass  # Unsupported P4 branch removed.
+        pass  # Unsupported P4 branch removed.
+        pass  # Unsupported P4 branch removed.
         self.provider = _detect_cloud_provider()
         self.architecture = platform.machine()
         self.platform = platform.platform()

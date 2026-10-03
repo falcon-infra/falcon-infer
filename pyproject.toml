@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 requires-python = ">=3.11,<3.12"
-version = "0.18.0+ascend.p3"
+version = "0.18.0+ascend.p4"
 dynamic = ["dependencies"]
 
 [project.urls]
@@ -39,11 +39,6 @@ Slack="https://slack.vllm.ai/"
 
 [project.scripts]
 vllm = "vllm.entrypoints.cli.main:main"
-
-[project.entry-points."vllm.general_plugins"]
-lora_filesystem_resolver = "vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver"
-lora_hf_hub_resolver = "vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver"
-
 
 
 [tool.ruff.lint.per-file-ignores]

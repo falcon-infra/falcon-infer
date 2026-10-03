@@ -37,7 +37,6 @@ const static int64_t OUTOUT_EXPERT_TOKENS_BEFORE_CAPACITY = 3;
 const static int64_t KV_FACTOR = 2;
 const static int64_t ONE_CORE_SORT_BUFFER = 6;
 const static int64_t EXPERT_TOKENS_COUNT = 2;
-const static int64_t ONE_CORE_SORT_BUFFER_310P = 24;
 
 
 inline static int64_t CeilLog4(int64_t x) {

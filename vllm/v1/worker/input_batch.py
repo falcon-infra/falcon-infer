@@ -9,13 +9,13 @@ import numpy as np
 import torch
 
 from vllm.lora.request import LoRARequest
-from vllm.multimodal.inputs import MultiModalFeatureSpec
+from vllm.inputs.legacy_wire import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.utils import length_from_prompt_token_ids_or_embeds
 from vllm.utils.collection_utils import swap_dict_values
 from vllm.v1.outputs import LogprobsTensors
-from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
+from vllm.v1.pool.metadata import PoolingStates
 from vllm.v1.sample.logits_processor import (
     BatchUpdateBuilder,
     LogitsProcessors,
@@ -58,8 +58,10 @@ class CachedRequestState:
             self.prompt_token_ids, self.prompt_embeds
         )
 
+        if self.lora_request is not None:
+            raise ValueError("LoRA was removed from the P4 text profile")
         if self.pooling_params is not None:
-            self.pooling_states = PoolingStates()
+            raise ValueError("Pooling was removed from the P4 text profile")
 
     @property
     def num_tokens(self) -> int:
@@ -416,33 +418,16 @@ class InputBatch:
                 self.bad_words_token_ids[req_index] = (
                     sampling_params.bad_words_token_ids
                 )
-        elif pooling_params := request.pooling_params:
-            pooling_states = request.pooling_states
-            assert pooling_states is not None
-
-            self.pooling_params[req_id] = pooling_params
-            self.pooling_states[req_id] = pooling_states
-            self.logits_processing_needs_token_ids[req_index] = (
-                pooling_params.requires_token_ids
-            )
+        elif request.pooling_params is not None:
+            raise ValueError("Pooling was removed from the P4 text profile")
         else:
             raise NotImplementedError("Unrecognized request type")
 
         # Speculative decoding: by default 1 token is generated.
         self.num_accepted_tokens_cpu[req_index] = 1
 
-        # Add request lora ID
-        if request.lora_request:
-            lora_id = request.lora_request.lora_int_id
-            if lora_id not in self.lora_id_to_request_ids:
-                self.lora_id_to_request_ids[lora_id] = set()
-
-            self.request_lora_mapping[req_index] = lora_id
-            self.lora_id_to_request_ids[lora_id].add(request.req_id)
-            self.lora_id_to_lora_request[lora_id] = request.lora_request
-        else:
-            # No LoRA
-            self.request_lora_mapping[req_index] = 0
+        # Retired wire slot remains zero for native text requests.
+        self.request_lora_mapping[req_index] = 0
 
         return req_index
 
@@ -501,10 +486,7 @@ class InputBatch:
                 del self.lora_id_to_lora_request[lora_id]
             self.request_lora_mapping[req_index] = 0
 
-        if self.is_pooling_model:
-            self.pooling_params.pop(req_id, None)
-            self.pooling_states.pop(req_id, None)
-            return req_index
+        pass  # Unsupported P4 branch removed.
 
         self.greedy_reqs.discard(req_id)
         self.random_reqs.discard(req_id)
@@ -586,9 +568,7 @@ class InputBatch:
             self.request_lora_mapping[i1],
         )
 
-        if self.is_pooling_model:
-            # Sampling and logits parameters don't apply to pooling models.
-            return
+        pass  # Unsupported P4 branch removed.
 
         # For autoregressive models, track detailed request reordering info
         # to support logitsprocs.
@@ -711,10 +691,7 @@ class InputBatch:
                 last_req_index
             ]
 
-            if self.is_pooling_model:
-                last_req_index -= 1
-                # Sampling state not used by pooling models.
-                continue
+            pass  # Unsupported P4 branch removed.
 
             # Autoregressive models require detailed tracking of condense
             # operations to support logitsprocs
@@ -762,11 +739,7 @@ class InputBatch:
     def refresh_metadata(self):
         """Apply any batch updates to sampling metadata."""
 
-        if self.is_pooling_model:
-            batch_changed = self.batch_update_builder.reset()
-            if batch_changed:
-                self.sampling_metadata = self._make_sampling_metadata()
-            return
+        pass  # Unsupported P4 branch removed.
 
         # For non-pooling models - generate and apply logitsprocs update;
         # reset batch update tracking.
@@ -861,25 +834,6 @@ class InputBatch:
             logitsprocs=self.logitsprocs,
         )
 
-    def get_pooling_params(self) -> list[PoolingParams]:
-        assert len(self.req_ids) == len(self.pooling_params)
-        return [self.pooling_params[req_id] for req_id in self.req_ids]
-
-    def get_pooling_states(self) -> list[PoolingStates]:
-        assert len(self.req_ids) == len(self.pooling_states)
-        return [self.pooling_states[req_id] for req_id in self.req_ids]
-
-    def get_pooling_metadata(self) -> PoolingMetadata:
-        pooling_params = self.get_pooling_params()
-        pooling_states = self.get_pooling_states()
-
-        return PoolingMetadata(
-            prompt_lens=torch.from_numpy(self.num_prompt_tokens[: self.num_reqs]),
-            prompt_token_ids=self.sampling_metadata.prompt_token_ids,
-            pooling_params=pooling_params,
-            pooling_states=pooling_states,
-        )
-
     def _make_prompt_token_ids_tensor(self) -> torch.Tensor:
         num_reqs = self.num_reqs
         max_prompt_len = self.num_prompt_tokens[:num_reqs].max()
@@ -896,31 +850,6 @@ class InputBatch:
         for i in range(num_reqs):
             prompt_token_ids[i, self.num_prompt_tokens[i] :] = self.vocab_size
         return prompt_token_ids_cpu_tensor.to(device=self.device, non_blocking=True)
-
-    def make_lora_inputs(
-        self, num_scheduled_tokens: np.ndarray, num_sampled_tokens: np.ndarray
-    ) -> tuple[tuple[int, ...], tuple[int, ...], set[LoRARequest]]:
-        """
-        Given the num_scheduled_tokens for each request in the batch, return
-        datastructures used to activate the current LoRAs.
-        Returns:
-            1. prompt_lora_mapping: A tuple of size np.sum(num_sampled_tokens)
-               where, prompt_lora_mapping[i] is the LoRA id to use for the ith
-               sampled token.
-            2. token_lora_mapping: A tuple of size np.sum(num_scheduled_tokens)
-               where, token_lora_mapping[i] is the LoRA id to use for ith token.
-            3. lora_requests: Set of relevant LoRA requests.
-        """
-
-        req_lora_mapping = self.request_lora_mapping[: self.num_reqs]
-        prompt_lora_mapping = tuple(req_lora_mapping.repeat(num_sampled_tokens))
-        token_lora_mapping = tuple(req_lora_mapping.repeat(num_scheduled_tokens))
-
-        active_lora_requests: set[LoRARequest] = set(
-            self.lora_id_to_lora_request.values()
-        )
-
-        return prompt_lora_mapping, token_lora_mapping, active_lora_requests
 
     def set_async_sampled_token_ids(
         self,

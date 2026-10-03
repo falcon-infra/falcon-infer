@@ -16,7 +16,6 @@ from vllm.config import ModelConfig, SpeculativeConfig, StructuredOutputsConfig
 from vllm.exceptions import VLLMValidationError
 from vllm.logger import init_logger
 from vllm.tokenizers import TokenizerLike
-from vllm.utils.mistral import is_mistral_tokenizer
 from vllm.v1.serial_utils import PydanticMsgspecMixin
 
 logger = init_logger(__name__)
@@ -784,24 +783,14 @@ class SamplingParams(
             # allows <|special_token|> and similar, see
             # https://github.com/guidance-ai/llguidance/blob/main/docs/syntax.md#special-tokens
             # Without tokenizer these are disallowed in grammars.
-            if is_mistral_tokenizer(tokenizer):
-                raise ValueError(
-                    "Mistral tokenizer is not supported for the 'guidance' "
-                    "structured output backend. Please use ['xgrammar', 'outlines'] "
-                    "backends or tokenizer_mode='hf' instead."
-                )
+            pass  # Unsupported P4 branch removed.
             validate_guidance_grammar(self, tokenizer=None)
         elif backend == "outlines":
             # outlines backend
             validate_structured_output_request_outlines(self)
         elif backend == "lm-format-enforcer":
             # lm format enforcer backend
-            if is_mistral_tokenizer(tokenizer):
-                raise ValueError(
-                    "Mistral tokenizer is not supported for the 'lm-format-enforcer' "
-                    "structured output backend. Please use ['xgrammar', 'outlines'] "
-                    "backends or tokenizer_mode='hf' instead."
-                )
+            pass  # Unsupported P4 branch removed.
             validate_structured_output_request_lm_format_enforcer(self)
         else:
             # NOTE: backend must be "auto" here, because we have
@@ -828,7 +817,7 @@ class SamplingParams(
                         schema = so_params.json
                     skip_guidance = has_guidance_unsupported_json_features(schema)
 
-                if is_mistral_tokenizer(tokenizer) or skip_guidance:
+                if False or skip_guidance:
                     # Fall back to outlines if the tokenizer is Mistral
                     # or if schema contains features unsupported by guidance
                     validate_structured_output_request_outlines(self)

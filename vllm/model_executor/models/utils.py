@@ -5,7 +5,7 @@ import itertools
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, overload
+from typing import Any, Protocol
 
 import regex as re
 import torch
@@ -27,7 +27,6 @@ from vllm.model_executor.model_loader.reload import (
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.interfaces import supports_any_eagle
-from vllm.multimodal import NestedTensors
 from vllm.sequence import IntermediateTensors
 from vllm.utils.math_utils import cdiv
 from vllm.utils.platform_utils import (
@@ -372,125 +371,12 @@ def init_vllm_registered_model(
     return initialize_model(vllm_config=vllm_config, prefix=prefix)
 
 
-@overload
-def flatten_bn(x: torch.Tensor) -> torch.Tensor: ...
-
-
-@overload
-def flatten_bn(x: list[torch.Tensor]) -> list[torch.Tensor]: ...
-
-
-@overload
-def flatten_bn(
-    x: list[torch.Tensor] | torch.Tensor,
-    *,
-    concat: Literal[True],
-) -> torch.Tensor: ...
-
-
-@overload
-def flatten_bn(
-    x: list[torch.Tensor] | torch.Tensor,
-    *,
-    concat: bool = False,
-) -> list[torch.Tensor] | torch.Tensor: ...
-
-
-def flatten_bn(
-    x: list[torch.Tensor] | torch.Tensor,
-    *,
-    concat: bool = False,
-) -> list[torch.Tensor] | torch.Tensor:
-    """
-    Flatten the `B` and `N` dimensions of batched multimodal inputs.
-
-    The input tensor should have shape `(B, N, ...)`.
-    """
-    if isinstance(x, torch.Tensor):
-        return x.flatten(0, 1)
-
-    if concat:
-        return torch.cat(x)
-
-    return [x_n for x_b in x for x_n in x_b]
-
-
-def _flatten_embeddings(embeddings: NestedTensors) -> torch.Tensor:
-    """
-    Recursively flattens and concatenates NestedTensors on all but the last
-    dimension.
-    """
-
-    if isinstance(embeddings, torch.Tensor):
-        # Flatten all but the last dimension.
-        return embeddings.flatten(0, -2)
-
-    return torch.cat(tuple(_flatten_embeddings(t) for t in embeddings))
-
-
-def _embedding_count_expression(embeddings: NestedTensors) -> str:
-    """
-    Constructs a debugging representation of the number of embeddings in the
-    NestedTensors.
-    """
-
-    if isinstance(embeddings, torch.Tensor):
-        return " x ".join([str(dim) for dim in embeddings.shape[:-1]])
-
-    return " + ".join(_embedding_count_expression(inner) for inner in embeddings)
-
-
 def split_list_into_ranges(lst: torch.Tensor, interval: int) -> list[list[int]]:
     ranges: list[list[int]] = [[] for _ in range((max(lst) // interval) + 1)]
     for num in lst:
         index = num // interval
         ranges[index].append(num)
     return ranges
-
-
-def _merge_multimodal_embeddings(
-    inputs_embeds: torch.Tensor,
-    multimodal_embeddings: NestedTensors,
-    is_multimodal: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Merge `multimodal_embeddings` into `inputs_embeds` by overwriting the
-    positions in `inputs_embeds` corresponding to placeholder tokens in
-    `input_ids`.
-
-    Note:
-        This updates `inputs_embeds` in place.
-    """
-    if len(multimodal_embeddings) == 0:
-        return inputs_embeds
-
-    mm_embeds_flat = _flatten_embeddings(multimodal_embeddings)
-    input_dtype = inputs_embeds.dtype
-
-    try:
-        # For debugging
-        # inputs_embeds[is_multimodal] = mm_embeds_flat.to(dtype=input_dtype)
-
-        # NOTE: This can avoid D2H sync (#22105), but fails to
-        # raise an error if is_multimodal.sum() < len(mm_embeds_flat)
-        inputs_embeds.masked_scatter_(
-            is_multimodal.unsqueeze(-1), mm_embeds_flat.to(dtype=input_dtype)
-        )
-    except RuntimeError as e:
-        num_actual_tokens = len(mm_embeds_flat)
-        num_expected_tokens = is_multimodal.sum().item()
-
-        if num_actual_tokens != num_expected_tokens:
-            expr = _embedding_count_expression(multimodal_embeddings)
-
-            raise ValueError(
-                f"Attempted to assign {expr} = {num_actual_tokens} "
-                f"multimodal tokens to {num_expected_tokens} placeholders"
-            ) from e
-
-        raise ValueError("Error during masked scatter operation") from e
-
-    return inputs_embeds
 
 
 def isin_list(

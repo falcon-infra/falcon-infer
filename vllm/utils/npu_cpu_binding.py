@@ -23,8 +23,6 @@ GLOBAL_SLICE_MODE = "global_slice"
 
 DEVICE_BINDING_MODE: dict["AscendDeviceType", str] = {
     AscendDeviceType.A2: TOPO_AFFINITY_MODE,
-    AscendDeviceType.A3: GLOBAL_SLICE_MODE,
-    AscendDeviceType._310P: TOPO_AFFINITY_MODE,
 }
 
 
@@ -489,27 +487,7 @@ class CpuAlloc:
         pci_addr = ""
 
         device_type = get_ascend_device_type()
-        if device_type == AscendDeviceType.A3:
-            # A3: logical npu_id = card_id*2 + chip_id
-            card_id = npu // 2
-            chip_id = npu % 2
-            info, _ = execute_command(
-                [
-                    "npu-smi",
-                    "info",
-                    "-t",
-                    "board",
-                    "-i",
-                    str(card_id),
-                    "-c",
-                    str(chip_id),
-                ]
-            )
-        else:
-            # A2 / others: logical npu_id is card id
-            info, _ = execute_command(
-                ["npu-smi", "info", "-t", "board", "-i", str(npu)]
-            )
+        info, _ = execute_command(["npu-smi", "info", "-t", "board", "-i", str(npu)])
 
         for line in info.splitlines():
             if "PCIe Bus Info" in line:

@@ -386,19 +386,10 @@ class ParallelConfig:
             )
 
         if self.enable_eplb:
-            if not current_platform.is_cuda_alike():
-                raise ValueError(
-                    "Expert parallelism load balancing is only supported on "
-                    "CUDA devices or ROCm devices now."
-                )
-            if not self.enable_expert_parallel:
-                raise ValueError("enable_expert_parallel must be True to use EPLB.")
-            if self.tensor_parallel_size * self.data_parallel_size <= 1:
-                raise ValueError(
-                    "EPLB requires tensor_parallel_size or data_parallel_size "
-                    f"to be greater than 1, but got "
-                    f"TP={self.tensor_parallel_size},DP={self.data_parallel_size}."
-                )
+            raise ValueError(
+                "Expert parallelism load balancing is only supported on "
+                "CUDA devices or ROCm devices now."
+            )
         else:
             if self.eplb_config.num_redundant_experts != 0:
                 raise ValueError(
@@ -763,23 +754,7 @@ class ParallelConfig:
 
             backend: DistributedExecutorBackend = "mp"
             ray_found = ray_utils.ray_is_available()
-            if current_platform.is_tpu() and envs.VLLM_XLA_USE_SPMD:
-                backend = "uni"
-            elif current_platform.is_cuda() and self.nnodes > 1:
-                backend = "mp"
-            elif (
-                current_platform.is_cuda()
-                and cuda_device_count_stateless() < self.world_size
-            ):
-                gpu_count = cuda_device_count_stateless()
-                raise ValueError(
-                    f"World size ({self.world_size}) is larger than the number of "
-                    f"available GPUs ({gpu_count}) in this node. If this is "
-                    "intentional and you are using:\n"
-                    "- ray, set '--distributed-executor-backend ray'.\n"
-                    "- multiprocessing, set '--nnodes' appropriately."
-                )
-            elif self.data_parallel_backend == "ray":
+            if self.data_parallel_backend == "ray":
                 logger.info(
                     "Using ray distributed inference because "
                     "data_parallel_backend is ray"

@@ -24,23 +24,12 @@ from vllm.tasks import ScoreType
 from vllm.transformers_utils.config import (
     ConfigFormat,
     get_config,
-    get_hf_image_processor_config,
     get_hf_text_config,
-    get_pooling_config,
-    get_sentence_transformer_tokenizer_config,
     is_encoder_decoder,
     is_rope_parameters_nested,
-    try_get_dense_modules,
     try_get_generation_config,
-    try_get_tokenizer_config,
     uses_mrope,
     uses_xdrope_dim,
-)
-from vllm.transformers_utils.gguf_utils import (
-    is_gguf,
-    is_remote_gguf,
-    maybe_patch_hf_config_from_gguf,
-    split_remote_gguf,
 )
 from vllm.transformers_utils.model_arch_config_convertor import (
     MODEL_ARCH_CONFIG_CONVERTORS,
@@ -101,7 +90,7 @@ AttnTypeStr = Literal[
 class ModelConfig:
     """Configuration for the model."""
 
-    model: str = "Qwen/Qwen3-0.6B"
+    model: str = ""
     """Name or path of the Hugging Face model to use. It is also used as the
     content for `model_name` tag in metrics output when `served_model_name` is
     not specified."""
@@ -431,6 +420,23 @@ class ModelConfig:
         skip_mm_profiling: bool | None,
         video_pruning_rate: float | None,
     ) -> None:
+        from vllm.inference_profile import (
+            validate_model_metadata,
+            validate_model_options,
+        )
+
+        if not self.model:
+            raise ValueError("Ascend P4 requires an explicit GLM-5.2 checkpoint path")
+        if self.pooler_config is not None or self.multimodal_config is not None:
+            raise ValueError(
+                "Ascend P4 does not support pooling or multimodal configuration"
+            )
+        validate_model_options(
+            runner=self.runner,
+            convert=self.convert,
+            model_impl=self.model_impl,
+            quantization=self.quantization,
+        )
         # Keep set served_model_name before maybe_model_redirect(self.model)
         self.served_model_name = get_served_model_name(
             self.model, self.served_model_name
@@ -464,7 +470,7 @@ class ModelConfig:
 
         self.maybe_pull_model_tokenizer_for_runai(self.model, self.tokenizer)
 
-        if self.override_attention_dtype is not None and not current_platform.is_rocm():
+        if self.override_attention_dtype is not None and not False:
             warnings.warn(
                 "override-attention-dtype is set but not using ROCm platform",
                 stacklevel=2,
@@ -482,22 +488,16 @@ class ModelConfig:
             hf_overrides_kw=hf_overrides_kw,
             hf_overrides_fn=hf_overrides_fn,
         )
-        hf_config = maybe_patch_hf_config_from_gguf(
-            self.model,
-            hf_config,
-        )
-
         self.hf_config = hf_config
         if dict_overrides:
             self._apply_dict_overrides(hf_config, dict_overrides)
+        validate_model_metadata(self.hf_config, draft=self.runner == "draft")
         self.hf_text_config = get_hf_text_config(self.hf_config)
         self.attention_chunk_size = getattr(
             self.hf_text_config, "attention_chunk_size", None
         )
         self.encoder_config = self._get_encoder_config()
-        self.hf_image_processor_config = get_hf_image_processor_config(
-            self.model, hf_token=self.hf_token, revision=self.revision
-        )
+        self.hf_image_processor_config = {}
         self.model_arch_config = self.get_model_arch_config()
 
         architectures = self.architectures
@@ -515,15 +515,7 @@ class ModelConfig:
             if self.convert_type not in generate_converts:
                 # Currently we don't have any converters for generative models
                 raise ValueError("This model does not support `--runner generate`.")
-        if self.runner_type == "pooling" and not is_pooling_model:
-            pooling_converts = _RUNNER_CONVERTS["pooling"]
-            if self.convert_type not in pooling_converts:
-                convert_option = "<" + "|".join(pooling_converts) + ">"
-                raise ValueError(
-                    "This model does not support `--runner pooling`. "
-                    f"You can pass `--convert {convert_option} to adapt "
-                    "it into a pooling model."
-                )
+        pass  # Unsupported P4 branch removed.
 
         # Note: Initialize these attributes early because transformers fallback
         # may fail to load dynamic modules in child processes
@@ -531,43 +523,6 @@ class ModelConfig:
         self._model_info = model_info
         self._architecture = arch
         logger.info("Resolved architecture: %s", arch)
-
-        # Set default tokenizer modes based on model architecture
-        if self.tokenizer_mode == "auto":
-            if arch == "Grok1ForCausalLM":
-                self.tokenizer_mode = "grok2"
-            elif arch == "MoonshotKimiaForCausalLM":
-                self.tokenizer_mode = "kimi_audio"
-            elif arch == "QwenVLForConditionalGeneration":
-                self.tokenizer_mode = "qwen_vl"
-            elif arch == "DeepseekV32ForCausalLM":
-                self.tokenizer_mode = "deepseek_v32"
-
-            if self.tokenizer_mode != "auto":
-                logger.info(
-                    "Defaulting to tokenizer_mode=%r for %s",
-                    self.tokenizer_mode,
-                    arch,
-                )
-
-        # Init pooler config if needed
-        if self.runner_type == "pooling":
-            if self.pooler_config is None:
-                self.pooler_config = PoolerConfig()
-
-            base_config = get_pooling_config(self.model, self.revision)
-            if base_config is not None:
-                # Only set values that are not overridden by the user
-                for k, v in base_config.items():
-                    if getattr(self.pooler_config, k) is None:
-                        setattr(self.pooler_config, k, v)
-
-            default_seq_pooling_type = self._model_info.default_seq_pooling_type
-            if self.pooler_config.seq_pooling_type is None:
-                self.pooler_config.seq_pooling_type = default_seq_pooling_type
-            default_tok_pooling_type = self._model_info.default_tok_pooling_type
-            if self.pooler_config.tok_pooling_type is None:
-                self.pooler_config.tok_pooling_type = default_tok_pooling_type
 
         self.dtype: torch.dtype = _get_and_verify_dtype(
             self.model,
@@ -586,47 +541,10 @@ class ModelConfig:
             logger.info("Encoder-decoder model detected, disabling mm processor cache.")
 
         # Init multimodal config if needed
-        if self._model_info.supports_multimodal:
-            if (
-                mm_encoder_tp_mode == "data"
-                and not self._model_info.supports_multimodal_encoder_tp_data
-            ):
-                logger.warning_once(
-                    "This model does not support `--mm-encoder-tp-mode data`. "
-                    "Falling back to `--mm-encoder-tp-mode weights`."
-                )
-                mm_encoder_tp_mode = "weights"
-
-            mm_config_kwargs = dict(
-                language_model_only=language_model_only,
-                limit_per_prompt=limit_mm_per_prompt,
-                enable_mm_embeds=enable_mm_embeds,
-                media_io_kwargs=media_io_kwargs,
-                mm_processor_kwargs=mm_processor_kwargs,
-                mm_processor_cache_gb=mm_processor_cache_gb,
-                mm_processor_cache_type=mm_processor_cache_type,
-                mm_shm_cache_max_object_size_mb=mm_shm_cache_max_object_size_mb,
-                mm_encoder_only=mm_encoder_only,
-                mm_encoder_tp_mode=mm_encoder_tp_mode,
-                mm_encoder_attn_backend=mm_encoder_attn_backend,
-                interleave_mm_strings=interleave_mm_strings,
-                skip_mm_profiling=skip_mm_profiling,
-                video_pruning_rate=video_pruning_rate,
-            )
-
-            mm_config_kwargs = {
-                k: v for k, v in mm_config_kwargs.items() if v is not None
-            }
-
-            self.multimodal_config = MultiModalConfig(**mm_config_kwargs)
+        pass  # Unsupported P4 branch removed.
 
         # Multimodal GGUF models must use original repo for mm processing
-        if is_gguf(self.tokenizer) and self.is_multimodal_model:
-            raise ValueError(
-                "Loading a multimodal GGUF model needs to use original "
-                "tokenizer. Please specify the unquantized hf model's "
-                "repo name or path using the --tokenizer argument."
-            )
+        pass  # Unsupported P4 branch removed.
 
         if self.disable_sliding_window:
             # Set after get_and_verify_max_len to ensure that max_model_len
@@ -779,34 +697,10 @@ class ModelConfig:
             )
             self.tokenizer = object_storage_tokenizer.dir
 
-    def _get_encoder_config(self) -> dict[str, Any] | None:
-        model = self.model
-        if is_remote_gguf(model):
-            model, _ = split_remote_gguf(model)
-        return get_sentence_transformer_tokenizer_config(model, self.revision)
+    def _get_encoder_config(self) -> None:
+        return None
 
-    def _get_default_runner_type(
-        self,
-        architectures: list[str],
-    ) -> RunnerType:
-        registry = self.registry
-
-        # Some Sentence Transformers models use *ForCausalLM archs
-        if get_pooling_config(self.model, self.revision):
-            return "pooling"
-
-        for arch in architectures:
-            if arch in registry.get_supported_archs():
-                if registry.is_pooling_model(architectures, self):
-                    return "pooling"
-                if registry.is_text_generation_model(architectures, self):
-                    return "generate"
-
-            match = try_match_architecture_defaults(arch)
-            if match:
-                _, (runner_type, _) = match
-                return runner_type
-
+    def _get_default_runner_type(self, architectures: list[str]) -> RunnerType:
         return "generate"
 
     def _get_runner_type(
@@ -979,13 +873,7 @@ class ModelConfig:
     def _verify_cuda_graph(self) -> None:
         # CUDAGraph capture not supported for encoder-decoder models on ROCm
         unsupported_rocm = self.is_encoder_decoder
-        if unsupported_rocm and not self.enforce_eager and current_platform.is_rocm():
-            logger.warning(
-                "CUDA graph is not supported for %s on ROCm yet, fallback "
-                "to eager mode.",
-                self.model_arch_config.model_type,
-            )
-            self.enforce_eager = True
+        pass  # Unsupported P4 branch removed.
 
     def _verify_bnb_config(self) -> None:
         """
@@ -1137,19 +1025,8 @@ class ModelConfig:
 
     @cached_property
     def is_mm_prefix_lm(self) -> bool:
-        """Whether to use bidirectional attention for mm positions."""
-        if hasattr(self.hf_config, "is_mm_prefix_lm"):
-            return bool(self.hf_config.is_mm_prefix_lm)
-        # fallback to list of known models
-        MM_PREFIX_LM_MODELS = (
-            "bagel",
-            "gemma3",
-            "molmo2",
-            "paligemma",
-        )
-        if not hasattr(self.hf_config, "model_type"):
-            return False
-        return self.hf_config.model_type in MM_PREFIX_LM_MODELS
+        """P4 has no media-prefix attention."""
+        return False
 
     def get_head_size(self) -> int:
         return self.model_arch_config.head_size
@@ -1547,28 +1424,13 @@ class ModelConfig:
 
     @property
     def embedding_size(self):
-        # Check for embedding_size set by model config (e.g., Voyage models)
-        override = getattr(self.hf_config, "embedding_size", None)
-        if override is not None:
-            return override
-        dense_modules = try_get_dense_modules(self.model, revision=self.revision)
-        if dense_modules is not None:
-            return dense_modules[-1]["out_features"]
         return self.get_hidden_size()
 
     def get_and_verify_max_len(self, max_model_len: int):
         # Consider max_model_len in tokenizer_config only when
         # pooling models use absolute position_embedding.
         tokenizer_config = None
-        if (
-            self.runner_type == "pooling"
-            and getattr(self.hf_config, "position_embedding_type", "") == "absolute"
-        ):
-            tokenizer_config = try_get_tokenizer_config(
-                self.tokenizer,
-                trust_remote_code=self.trust_remote_code,
-                revision=self.tokenizer_revision,
-            )
+        pass  # Unsupported P4 branch removed.
         max_model_len = _get_and_verify_max_len(
             hf_config=self.hf_text_config,
             model_arch_config=self.model_arch_config,
@@ -1804,13 +1666,7 @@ def str_dtype_to_torch_dtype(type: str):
 
 
 # model_type -> reason
-_FLOAT16_NOT_SUPPORTED_MODELS = {
-    "gemma2": "Numerical instability. Please use bfloat16 or float32 instead.",
-    "gemma3": "Numerical instability. Please use bfloat16 or float32 instead.",
-    "gemma3_text": "Numerical instability. Please use bfloat16 or float32 instead.",
-    "plamo2": "Numerical instability. Please use bfloat16 or float32 instead.",
-    "glm4": "Numerical instability. Please use bfloat16 or float32 instead.",
-}
+_FLOAT16_NOT_SUPPORTED_MODELS: dict[str, str] = {}
 
 
 def _is_valid_dtype(model_type: str, dtype: torch.dtype):

@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import itertools
+import subprocess
 import unittest
 from collections import defaultdict
 from functools import lru_cache
@@ -23,7 +24,16 @@ ROOT = Path(__file__).resolve().parents[2]
 def load_function(relative: str, name: str, namespace: dict):
     """Compile the complete named function, without importing device backends."""
     path = ROOT / relative
-    tree = ast.parse(path.read_text())
+    if relative.startswith("ascend/legacy_patches/"):
+        # P4 removes the duplicate plugin tree. The immutable P3 tag is the
+        # historical oracle; no donor module or import-time patch is executed.
+        source = subprocess.check_output(
+            ["git", "-C", str(ROOT), "show", f"p3-frozen-20261003:{relative}"],
+            text=True,
+        )
+    else:
+        source = path.read_text()
+    tree = ast.parse(source)
     node = next(
         node
         for node in tree.body
@@ -160,7 +170,7 @@ class NativeKVCacheBindingTests(unittest.TestCase):
             self.bind(items, num_attn_module=2), [items[1][1], items[0][1]]
         )
 
-    def test_other_platform_behavior_is_unchanged(self):
+    def test_binding_has_only_native_npu_ordering(self):
         items = [
             ("model.layers.7.self_attn.indexer.k_cache", object()),
             ("model.layers.7.self_attn.attn", object()),
@@ -168,10 +178,10 @@ class NativeKVCacheBindingTests(unittest.TestCase):
         for platform in ("cuda", "cpu", "xpu"):
             with self.subTest(platform=platform):
                 self.assertEqual(
-                    self.bind(items, platform=platform), [v for _, v in items]
+                    self.bind(items, platform=platform), [items[1][1], items[0][1]]
                 )
-        with self.assertRaises(NotImplementedError):
-            self.bind(items, platform="unknown")
+        # Platform rejection happens before a worker is created, not here.
+        self.assertNotIn("current_platform", binding().__code__.co_names)
 
     def test_matches_archived_donor_without_running_its_patch(self):
         names = [

@@ -4,7 +4,6 @@
 
 import torch
 
-import vllm._custom_ops as ops
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 
 
@@ -113,7 +112,7 @@ class TopKWeightAndReduceContiguous(mk.TopKWeightAndReduce):
             f"Expected output size {(m, k)}. But got {output.size()}"
         )
 
-        ops.moe_sum(fused_expert_output, output)
+        torch.sum(fused_expert_output, dim=1, out=output)
         return output
 
 

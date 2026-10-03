@@ -37,10 +37,10 @@ function help_info() {
     echo "-h|--help            Displays help message."
     echo
     echo "-n|--op-name         Specifies the compiled operator. If there are multiple values, separate them with semicolons and use quotation marks. The default is all."
-    echo "                     For example: -n \"flash_attention_score\" or -n \"flash_attention_score;flash_attention_score_grad\""
+    echo "                     For example: -n \"sparse_flash_attention;lightning_indexer_vllm\""
     echo
     echo "-c|--compute-unit    Specifies the chip type. If there are multiple values, separate them with semicolons and use quotation marks. The default is ascend910b."
-    echo "                     For example: -c \"ascend910b\" or -c \"ascend910b;ascend310p\""
+    echo "                     P4 uses -c \"ascend910b\" for the approved ascend910b3 build."
     echo
     echo "--cov                Compiles with cov."
     echo

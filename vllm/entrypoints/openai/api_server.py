@@ -42,7 +42,6 @@ from vllm.entrypoints.openai.server_utils import (
     log_response,
     validation_exception_handler,
 )
-from vllm.entrypoints.sagemaker.api_router import sagemaker_standards_bootstrap
 from vllm.entrypoints.serve.elastic_ep.middleware import (
     ScalingMiddleware,
 )
@@ -51,11 +50,10 @@ from vllm.entrypoints.utils import (
     cli_env_setup,
     log_non_default_args,
     log_version_and_model,
-    process_lora_modules,
 )
 from vllm.logger import init_logger
 from vllm.reasoning import ReasoningParserManager
-from vllm.tasks import POOLING_TASKS, SupportedTask
+from vllm.tasks import SupportedTask
 from vllm.tool_parsers import ToolParserManager
 from vllm.tracing import instrument
 from vllm.usage.usage_lib import UsageContext
@@ -195,12 +193,6 @@ def build_app(
 
     register_models_api_router(app)
 
-    from vllm.entrypoints.sagemaker.api_router import (
-        attach_router as register_sagemaker_api_router,
-    )
-
-    register_sagemaker_api_router(app, supported_tasks)
-
     if "generate" in supported_tasks:
         from vllm.entrypoints.openai.generate.api_router import (
             register_generate_api_routers,
@@ -214,12 +206,6 @@ def build_app(
 
         attach_disagg_router(app)
 
-        from vllm.entrypoints.serve.rlhf.api_router import (
-            attach_router as attach_rlhf_router,
-        )
-
-        attach_rlhf_router(app)
-
         from vllm.entrypoints.serve.elastic_ep.api_router import (
             attach_router as elastic_ep_attach_router,
         )
@@ -232,25 +218,6 @@ def build_app(
         )
 
         attach_render_router(app)
-
-    if "transcription" in supported_tasks:
-        from vllm.entrypoints.openai.speech_to_text.api_router import (
-            attach_router as register_speech_to_text_api_router,
-        )
-
-        register_speech_to_text_api_router(app)
-
-    if "realtime" in supported_tasks:
-        from vllm.entrypoints.openai.realtime.api_router import (
-            attach_router as register_realtime_api_router,
-        )
-
-        register_realtime_api_router(app)
-
-    if any(task in POOLING_TASKS for task in supported_tasks):
-        from vllm.entrypoints.pooling import register_pooling_api_routers
-
-        register_pooling_api_routers(app, supported_tasks)
 
     app.root_path = args.root_path
     app.add_middleware(
@@ -282,14 +249,6 @@ def build_app(
     # Add scaling middleware to check for scaling state
     app.add_middleware(ScalingMiddleware)
 
-    if "realtime" in supported_tasks:
-        # Add WebSocket metrics middleware
-        from vllm.entrypoints.openai.realtime.metrics import (
-            WebSocketMetricsMiddleware,
-        )
-
-        app.add_middleware(WebSocketMetricsMiddleware)
-
     if envs.VLLM_DEBUG_LOG_API_SERVER_RESPONSE:
         logger.warning(
             "CAUTION: Enabling log response in the API Server. "
@@ -310,7 +269,6 @@ def build_app(
                 f"Invalid middleware {middleware}. Must be a function or a class."
             )
 
-    app = sagemaker_standards_bootstrap(app)
     return app
 
 
@@ -349,22 +307,16 @@ async def init_app_state(
     state.log_stats = not args.disable_log_stats
     state.vllm_config = vllm_config
     state.args = args
+    if getattr(args, "lora_modules", None):
+        raise ValueError("Ascend P4 does not support LoRA modules")
     resolved_chat_template = load_chat_template(args.chat_template)
 
     # Merge default_mm_loras into the static lora_modules
-    default_mm_loras = (
-        vllm_config.lora_config.default_mm_loras
-        if vllm_config.lora_config is not None
-        else {}
-    )
-    lora_modules = process_lora_modules(args.lora_modules, default_mm_loras)
 
     state.openai_serving_models = OpenAIServingModels(
         engine_client=engine_client,
         base_model_paths=base_model_paths,
-        lora_modules=lora_modules,
     )
-    await state.openai_serving_models.init_static_loras()
     state.openai_serving_tokenization = OpenAIServingTokenization(
         engine_client,
         state.openai_serving_models,
@@ -381,25 +333,6 @@ async def init_app_state(
         await init_generate_state(
             engine_client, state, args, request_logger, supported_tasks
         )
-
-    if "transcription" in supported_tasks:
-        from vllm.entrypoints.openai.speech_to_text.api_router import (
-            init_transcription_state,
-        )
-
-        init_transcription_state(
-            engine_client, state, args, request_logger, supported_tasks
-        )
-
-    if "realtime" in supported_tasks:
-        from vllm.entrypoints.openai.realtime.api_router import init_realtime_state
-
-        init_realtime_state(engine_client, state, args, request_logger, supported_tasks)
-
-    if any(task in POOLING_TASKS for task in supported_tasks):
-        from vllm.entrypoints.pooling import init_pooling_state
-
-        init_pooling_state(engine_client, state, args, request_logger, supported_tasks)
 
     state.enable_server_load_tracking = args.enable_server_load_tracking
     state.server_load_metrics = 0

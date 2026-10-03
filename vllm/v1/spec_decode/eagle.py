@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import ast
-from dataclasses import replace
-from importlib.util import find_spec
 from typing import cast
 
 import numpy as np
@@ -20,20 +18,10 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import supports_multimodal
-from vllm.model_executor.models.deepseek_eagle3 import Eagle3DeepseekV2ForCausalLM
 from vllm.model_executor.models.interfaces import SupportsMultiModal
-from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
-from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.platforms import current_platform
 from vllm.triton_utils import triton
 from vllm.utils.platform_utils import is_pin_memory_available
 from vllm.v1.attention.backend import CommonAttentionMetadata
-from vllm.v1.attention.backends.registry import AttentionBackendEnum
-from vllm.v1.attention.backends.tree_attn import (
-    TreeAttentionMetadata,
-    TreeAttentionMetadataBuilder,
-)
-from vllm.v1.attention.backends.triton_attn import TritonAttentionMetadata
 from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
 from vllm.v1.kv_cache_interface import KVCacheConfig, UniformTypeKVCacheSpecs
 from vllm.v1.sample.metadata import SamplingMetadata
@@ -107,10 +95,8 @@ class SpecDecodeBaseProposer:
         self.token_arange_np = np.arange(self.max_num_tokens)
 
         # Multi-modal data support
-        self.mm_registry = MULTIMODAL_REGISTRY
-        self.supports_mm_inputs = self.mm_registry.supports_multimodal_inputs(
-            vllm_config.model_config
-        )
+        self.mm_registry = None
+        self.supports_mm_inputs = False
 
         self.draft_attn_groups: list[AttentionGroup] = []
         self.kv_cache_gid: int = -1
@@ -135,31 +121,9 @@ class SpecDecodeBaseProposer:
         self.uses_mrope = self.draft_model_config.uses_mrope
         self.uses_xdrope_dim = self.vllm_config.model_config.uses_xdrope_dim
         self.draft_uses_xdrope_dim = self.draft_model_config.uses_xdrope_dim
-        if self.uses_mrope:
-            # NOTE: `mrope_positions` is implemented with one additional dummy
-            # position on purpose to make it non-contiguous so that it can work
-            # with torch compile.
-            # See detailed explanation in https://github.com/vllm-project/vllm/pull/12128#discussion_r1926431923
-
-            # NOTE: When M-RoPE is enabled, position ids are 3D regardless of
-            # the modality of inputs. For text-only inputs, each dimension has
-            # identical position IDs, making M-RoPE functionally equivalent to
-            # 1D-RoPE.
-            # See page 5 of https://arxiv.org/abs/2409.12191
-            self.mrope_positions = torch.zeros(
-                (3, self.max_num_tokens + 1), dtype=torch.int64, device=device
-            )
-        elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-            self.xdrope_positions = torch.zeros(
-                (self.uses_xdrope_dim, self.max_num_tokens + 1),
-                dtype=torch.int64,
-                device=device,
-            )
-        else:
-            # RoPE need (max_num_tokens,)
-            self.positions = torch.zeros(
-                self.max_num_tokens, dtype=torch.int64, device=device
-            )
+        self.positions = torch.zeros(
+            self.max_num_tokens, dtype=torch.int64, device=device
+        )
         self.hidden_states = torch.zeros(
             (self.max_num_tokens, self.hidden_size), dtype=self.dtype, device=device
         )
@@ -214,46 +178,7 @@ class SpecDecodeBaseProposer:
 
         # Determine allowed attention backends once during initialization.
         self.allowed_attn_types: tuple | None = None
-        if current_platform.is_rocm():
-            from vllm.v1.attention.backends.mla.rocm_aiter_mla_sparse import (
-                ROCMAiterMLASparseMetadata,
-            )
-            from vllm.v1.attention.backends.rocm_attn import RocmAttentionMetadata
-
-            rocm_types = [
-                TritonAttentionMetadata,
-                RocmAttentionMetadata,
-                ROCMAiterMLASparseMetadata,
-            ]
-            # ROCM_AITER_FA is an optional backend
-            # We check is_enabled() here to avoid importing the backend module during
-            # auto-discovery when VLLM_ROCM_USE_AITER=0, which would trigger aiter
-            # import and JIT compilation warnings. Explicit backend selection via
-            # attention_config still works because the backend module is loaded
-            # directly when selected, not through this auto-discovery path.
-            # Check if backend module exists to allow explicit selection
-            if find_spec(
-                AttentionBackendEnum.ROCM_AITER_FA.get_path(include_classname=False)
-            ):
-                from vllm.v1.attention.backends.rocm_aiter_fa import (
-                    AiterFlashAttentionMetadata,
-                )
-
-                rocm_types.append(AiterFlashAttentionMetadata)
-
-            # TRITON_MLA backend support for MLA models (e.g., DeepSeek)
-            from vllm.model_executor.layers.attention.mla_attention import (
-                MLACommonMetadata,
-            )
-
-            rocm_types.append(MLACommonMetadata)
-
-            # FlexAttention backend support
-            from vllm.v1.attention.backends.flex_attention import FlexAttentionMetadata
-
-            rocm_types.append(FlexAttentionMetadata)
-
-            self.allowed_attn_types = tuple(rocm_types)
+        pass  # Unsupported P4 branch removed.
 
         # Parse the speculative token tree.
         spec_token_tree = self.speculative_config.speculative_token_tree
@@ -287,18 +212,10 @@ class SpecDecodeBaseProposer:
             )
 
     def _raise_if_multimodal(self):
-        if self.supports_mm_inputs:
-            raise NotImplementedError(
-                "Speculative Decoding with draft models or parallel drafting "
-                "does not support multimodal models yet"
-            )
+        pass  # Unsupported P4 branch removed.
 
     def _raise_if_mrope(self):
-        if self.draft_model_config.uses_mrope:
-            raise NotImplementedError(
-                "Speculative Decoding with draft models or parallel drafting "
-                "does not support M-RoPE yet"
-            )
+        pass  # Unsupported P4 branch removed.
 
     def _init_parallel_drafting_params(self):
         # For parallel drafting, we need the token ID to use for masked slots
@@ -322,24 +239,13 @@ class SpecDecodeBaseProposer:
             )
 
     def _get_positions(self, num_tokens: int):
-        if self.uses_mrope:
-            return self.mrope_positions[:, :num_tokens]
-        if self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-            return self.xdrope_positions[:, :num_tokens]
+        pass  # Unsupported P4 branch removed.
+        pass  # Unsupported P4 branch removed.
         return self.positions[:num_tokens]
 
     def _set_positions(self, num_tokens: int, positions: torch.Tensor):
-        if self.uses_mrope:
-            self.mrope_positions[:, :num_tokens] = positions
-        elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-            self.xdrope_positions[:, :num_tokens] = positions
-        else:
-            # Convert M-RoPE positions if target model uses M-RoPE
-            # but draft doesn't, For text inputs, all M-RoPE
-            # dimensions are identical
-            if self.vllm_config.model_config.uses_mrope:
-                positions = positions[0]
-            self.positions[:num_tokens] = positions
+        pass  # Unsupported P4 branch removed.
+        self.positions[:num_tokens] = positions
 
     def _get_slot_mapping(
         self,
@@ -403,15 +309,6 @@ class SpecDecodeBaseProposer:
     ) -> torch.Tensor:
         batch_size = common_attn_metadata.batch_size()
 
-        if self.method == "eagle3":
-            assert isinstance(
-                self.model, (Eagle3LlamaForCausalLM, Eagle3DeepseekV2ForCausalLM)
-            )
-            target_hidden_states = self.model.combine_hidden_states(
-                target_hidden_states
-            )
-            assert target_hidden_states.shape[-1] == self.hidden_size
-
         num_tokens, token_indices_to_sample, common_attn_metadata = (
             self.set_inputs_first_pass(
                 target_token_ids=target_token_ids,
@@ -438,20 +335,8 @@ class SpecDecodeBaseProposer:
             self._determine_batch_execution_and_padding(num_tokens)
         )
 
-        if self.supports_mm_inputs:
-            mm_embeds, is_mm_embed = mm_embed_inputs or (None, None)
-
-            self.inputs_embeds[:num_tokens] = self.model.embed_input_ids(
-                self.input_ids[:num_tokens],
-                multimodal_embeddings=mm_embeds,
-                is_multimodal=is_mm_embed,
-            )
-
-            input_ids = None
-            inputs_embeds = self.inputs_embeds[:num_input_tokens]
-        else:
-            input_ids = self.input_ids[:num_input_tokens]
-            inputs_embeds = None
+        input_ids = self.input_ids[:num_input_tokens]
+        inputs_embeds = None
 
         model_kwargs = {
             "input_ids": input_ids,
@@ -485,25 +370,8 @@ class SpecDecodeBaseProposer:
             draft_token_ids = self._greedy_sample(sample_hidden_states)
             return draft_token_ids.view(-1, self.num_speculative_tokens)
 
-        if self.uses_mrope:
-            positions = self.mrope_positions[:, token_indices_to_sample]
-        else:
-            positions = self.positions[token_indices_to_sample]
+        positions = self.positions[token_indices_to_sample]
         hidden_states = hidden_states[token_indices_to_sample]
-
-        if isinstance(attn_metadata, TreeAttentionMetadata):
-            # Draft using tree attention - requires full logits for top-k
-            logits = self.model.compute_logits(sample_hidden_states)
-            draft_token_ids_list = self.propose_tree(
-                batch_size=batch_size,
-                logits=logits,
-                positions=positions,
-                hidden_states=hidden_states,
-                common_attn_metadata=common_attn_metadata,
-                slot_mappings=slot_mappings,
-            )
-            # [batch_size, num_tree_tokens]
-            return torch.cat(draft_token_ids_list, dim=1)
 
         draft_token_ids = self._greedy_sample(sample_hidden_states)
 
@@ -551,13 +419,8 @@ class SpecDecodeBaseProposer:
             # Use fused kernel for slot mapping and metadata updates.
             # Write clamped positions directly into the positions buffer to
             # avoid an extra D2D copy for the common (non-mrope) case.
-            positions_1d = positions[0] if self.uses_mrope else positions
-            if self.uses_mrope:
-                out_pos = self.mrope_positions[0, :batch_size]
-            elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-                out_pos = self.xdrope_positions[0, :batch_size]
-            else:
-                out_pos = self.positions[:batch_size]
+            positions_1d = positions
+            out_pos = self.positions[:batch_size]
             eagle_step_update_slot_mapping_and_metadata(
                 positions_1d=positions_1d,
                 block_table_tensor=common_attn_metadata.block_table_tensor,
@@ -569,18 +432,7 @@ class SpecDecodeBaseProposer:
                 input_batch_size=input_batch_size,
             )
             common_attn_metadata.slot_mapping = self._slot_mapping_buffer[:batch_size]
-            if self.uses_mrope:
-                self.mrope_positions[1:, :batch_size] = self.mrope_positions[
-                    0, :batch_size
-                ]
-                positions = self.mrope_positions[:, :batch_size]
-            elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-                self.xdrope_positions[1:, :batch_size] = self.xdrope_positions[
-                    0, :batch_size
-                ]
-                positions = self.xdrope_positions[0, :batch_size]
-            else:
-                positions = self.positions[:batch_size]
+            positions = self.positions[:batch_size]
             # Increment the maximum sequence length. We increment max_seq_len
             # unconditionally even though some seq_lens may have been capped above,
             # as max_seq_len serves as an upper bound for sequence lengths.
@@ -607,14 +459,8 @@ class SpecDecodeBaseProposer:
             # copy inputs to buffer for cudagraph
             self.input_ids[:batch_size] = input_ids
             self.hidden_states[:batch_size] = hidden_states
-            if self.supports_mm_inputs:
-                self.inputs_embeds[:batch_size] = self.model.embed_input_ids(input_ids)
-
-                input_ids = None
-                inputs_embeds = self.inputs_embeds[:input_batch_size]
-            else:
-                input_ids = self.input_ids[:input_batch_size]
-                inputs_embeds = None
+            input_ids = self.input_ids[:input_batch_size]
+            inputs_embeds = None
 
             # Run the model.
             model_kwargs = {
@@ -674,8 +520,7 @@ class SpecDecodeBaseProposer:
             self.input_ids[token_indices_to_sample] = next_token_ids
 
             # copy inputs to buffer for cudagraph
-            if self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim == 0:
-                target_positions = target_positions[0]
+            pass  # Unsupported P4 branch removed.
             self._set_positions(num_tokens, target_positions)
 
             self.hidden_states[:num_tokens] = target_hidden_states
@@ -938,178 +783,6 @@ class SpecDecodeBaseProposer:
             num_rejected_tokens_gpu,
         )
 
-    def propose_tree(
-        self,
-        batch_size: int,
-        # [num_tokens, vocab_size]
-        logits: torch.Tensor,
-        # [num_tokens]
-        positions: torch.Tensor,
-        # [num_tokens, hidden_size]
-        hidden_states: torch.Tensor,
-        common_attn_metadata: CommonAttentionMetadata,
-        slot_mappings: dict[str, torch.Tensor]
-        | list[dict[str, torch.Tensor]]
-        | None = None,
-    ) -> list[torch.Tensor]:
-        tree_attn_metadata_builder = self.draft_attn_groups[0].get_metadata_builder()
-        assert isinstance(tree_attn_metadata_builder, TreeAttentionMetadataBuilder)
-
-        total_num_drafts = self.cu_drafts_per_level[0]
-        level_num_drafts = total_num_drafts
-        # Sample a draft token for each child at the tree root level.
-        num_children = self.child_drafts_per_level[0]
-        if num_children == 1:
-            draft_token_ids = logits.argmax(dim=-1).view(batch_size, -1)
-        else:
-            draft_token_ids = torch.topk(logits, num_children, dim=-1).indices.view(
-                batch_size, -1
-            )
-        draft_token_ids_list = [draft_token_ids]
-        draft_hidden_states = hidden_states.view(batch_size, 1, -1)
-
-        # Initialize empty tensors for concatenation with the level outputs.
-        tree_input_ids = torch.empty(
-            0, device=self.input_ids.device, dtype=self.input_ids.dtype
-        )
-        tree_positions = torch.empty(
-            0, device=self.positions.device, dtype=self.positions.dtype
-        )
-        tree_hidden_states = torch.empty(
-            0, device=self.hidden_states.device, dtype=self.hidden_states.dtype
-        )
-        # Precompute the draft token positions.
-        flattened_draft_positions = (
-            positions.view(batch_size, -1) + self.tree_draft_pos_offsets[:batch_size, :]
-        )
-        tree_depth = len(self.cu_drafts_per_level)
-        for level in range(tree_depth - 1):
-            # Get draft positions for RoPE.
-            draft_positions = positions + (level + 1)
-            exceeds_max_model_len = (positions + total_num_drafts) >= self.max_model_len
-            # Mask out the position ids that exceed the max model length.
-            # Otherwise, we may get out-of-range error in RoPE.
-            draft_positions = torch.where(
-                exceeds_max_model_len,
-                0,
-                draft_positions,
-            ).view(batch_size, -1)
-
-            if level_num_drafts > 1:
-                # Repeat the positions for each draft at this level.
-                draft_positions = draft_positions.repeat_interleave(
-                    level_num_drafts, dim=1
-                )
-
-            if num_children > 1:
-                # Repeat draft hidden states for each child.
-                draft_hidden_states = draft_hidden_states.repeat_interleave(
-                    num_children, dim=1
-                )
-
-            # Concatenate the draft tokens, positions, and hidden states.
-            tree_input_ids = torch.cat([tree_input_ids, draft_token_ids], dim=1)
-            tree_positions = torch.cat([tree_positions, draft_positions], dim=1)
-            tree_hidden_states = torch.cat(
-                [tree_hidden_states, draft_hidden_states], dim=1
-            )
-
-            # Build new attention metadata for the next level of drafts.
-            # This is necessary to support tree attention.
-            query_len = total_num_drafts
-            common_attn_metadata = replace(
-                common_attn_metadata,
-                query_start_loc=query_len * self.arange[: batch_size + 1],
-                seq_lens=common_attn_metadata.seq_lens + level_num_drafts,
-                num_actual_tokens=batch_size * query_len,
-                max_query_len=query_len,
-            )
-            attn_metadata = tree_attn_metadata_builder.build_for_drafting(
-                common_attn_metadata=common_attn_metadata, draft_index=level + 1
-            )
-
-            # Apply new attention metadata to all draft layers.
-            per_layer_attn_metadata = {}
-            for attn_group in self.draft_attn_groups:
-                for layer_name in attn_group.layer_names:
-                    per_layer_attn_metadata[layer_name] = attn_metadata
-
-            # Consider max model length.
-            attn_metadata.max_seq_len = min(
-                attn_metadata.max_seq_len, self.max_model_len
-            )
-            # For the requests that exceed the max model length, we set the
-            # sequence length to 1 to minimize their overheads in attention.
-            attn_metadata.seq_lens.masked_fill_(exceeds_max_model_len, 1)
-
-            # Compute the slot mapping.
-            block_size = tree_attn_metadata_builder.kv_cache_spec.block_size
-            query_positions = flattened_draft_positions[:, level : level + query_len]
-            block_numbers = query_positions // block_size
-            block_ids = attn_metadata.block_table.gather(dim=1, index=block_numbers)
-            slot_mapping = block_ids * block_size + query_positions % block_size
-            # Mask out the slot mappings that exceed the max model length.
-            # Otherwise, the KV cache will be inadvertently updated with the
-            # padding tokens.
-            slot_mapping[exceeds_max_model_len] = PADDING_SLOT_ID
-            attn_metadata.slot_mapping = slot_mapping.view(-1)
-
-            # Copy inputs to buffer for cudagraph.
-            num_tokens = attn_metadata.num_actual_tokens
-            input_ids = tree_input_ids.view(-1)
-            self.input_ids[:num_tokens] = input_ids
-            self.positions[:num_tokens] = tree_positions.view(-1)
-            self.hidden_states[:num_tokens] = tree_hidden_states.view(num_tokens, -1)
-
-            cudagraph_runtime_mode, batch_desc = self.cudagraph_dispatcher.dispatch(
-                num_tokens
-            )
-            num_input_tokens = batch_desc.num_tokens
-            # Run the model.
-            with set_forward_context(
-                per_layer_attn_metadata,
-                self.vllm_config,
-                num_tokens=num_input_tokens,
-                cudagraph_runtime_mode=cudagraph_runtime_mode,
-                slot_mapping=self._get_slot_mapping(
-                    num_input_tokens, attn_metadata.slot_mapping
-                ),
-            ):
-                last_hidden_states, hidden_states = self.model(
-                    input_ids=self.input_ids[:num_input_tokens],
-                    positions=self.positions[:num_input_tokens],
-                    hidden_states=self.hidden_states[:num_input_tokens],
-                    inputs_embeds=None,
-                )
-
-            # Get the output hidden states for the draft tokens.
-            draft_hidden_states = hidden_states[:num_tokens].view(
-                batch_size, query_len, -1
-            )[:, -level_num_drafts:]
-            draft_last_hidden_states = last_hidden_states[:num_tokens].view(
-                batch_size, query_len, -1
-            )[:, -level_num_drafts:]
-
-            # Get the output logits for the draft tokens.
-            logits = self.model.compute_logits(
-                draft_last_hidden_states.reshape(batch_size * level_num_drafts, -1)
-            )
-
-            # Sample a draft token for each child at the next tree level.
-            num_children = self.child_drafts_per_level[level + 1]
-            if num_children == 1:
-                draft_token_ids = logits.argmax(dim=-1).view(batch_size, -1)
-            else:
-                draft_token_ids = torch.topk(logits, num_children, dim=-1).indices.view(
-                    batch_size, -1
-                )
-            draft_token_ids_list.append(draft_token_ids)
-
-            # Update the # drafts counters for the next tree level.
-            level_num_drafts = self.cu_drafts_per_level[level + 1] - total_num_drafts
-            total_num_drafts = self.cu_drafts_per_level[level + 1]
-        return draft_token_ids_list
-
     def prepare_inputs(
         self,
         common_attn_metadata: CommonAttentionMetadata,
@@ -1251,49 +924,9 @@ class SpecDecodeBaseProposer:
             set(all_attn_layers.keys()) - target_attn_layer_names
         )
 
-        if self.supports_mm_inputs:
-            # Even if the target model is multimodal, we can also use
-            # text-only draft models
-            try:
-                dummy_input_ids = torch.tensor([[1]], device=self.input_ids.device)
-                self.model.embed_input_ids(dummy_input_ids, multimodal_embeddings=None)
-            except (NotImplementedError, AttributeError, TypeError):
-                logger.warning(
-                    "Draft model does not support multimodal inputs, "
-                    "falling back to text-only mode"
-                )
-                self.supports_mm_inputs = False
+        pass  # Unsupported P4 branch removed.
 
-        if supports_multimodal(target_model):
-            # handle multimodality
-            assert hasattr(target_model, "config")
-            if self.get_model_name(target_model) in [
-                "Qwen2_5_VLForConditionalGeneration",
-                "Qwen3VLForConditionalGeneration",
-                "Qwen3VLMoeForConditionalGeneration",
-                "HunYuanVLForConditionalGeneration",
-                "GlmOcrForConditionalGeneration",
-                "Qwen3_5ForConditionalGeneration",
-                "Qwen3_5MoeForConditionalGeneration",
-            ]:
-                self.model.config.image_token_index = target_model.config.image_token_id
-            elif self.get_model_name(target_model) == "PixtralForConditionalGeneration":
-                self.model.config.image_token_index = (
-                    target_model.config.vision_config.image_token_id
-                )
-            elif self.get_model_name(target_model) == "KimiK25ForConditionalGeneration":
-                self.model.config.image_token_index = (
-                    target_model.config.media_placeholder_token_id
-                )
-            else:
-                self.model.config.image_token_index = (
-                    target_model.config.image_token_index
-                )
-            target_language_model = cast(
-                SupportsMultiModal, target_model
-            ).get_language_model()
-        else:
-            target_language_model = target_model
+        target_language_model = target_model
 
         self._maybe_share_embeddings(target_language_model)
         self._maybe_share_lm_head(target_language_model)
@@ -1507,12 +1140,8 @@ class SpecDecodeBaseProposer:
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 slot_mapping=slot_mapping_dict,
             ):
-                if self.supports_mm_inputs:
-                    input_ids = None
-                    inputs_embeds = self.inputs_embeds[:num_input_tokens]
-                else:
-                    input_ids = self.input_ids[:num_input_tokens]
-                    inputs_embeds = None
+                input_ids = self.input_ids[:num_input_tokens]
+                inputs_embeds = None
 
                 kwargs = dict(
                     input_ids=input_ids,
@@ -1530,8 +1159,7 @@ class SpecDecodeBaseProposer:
         They might indicate this by setting "use_aux_hidden_state" to False
         inside the "eagle_config" dict of their hf_config.
         """
-        if self.method != "eagle3":
-            return False
+        return False
         # Assume that eagle3 heads use aux hidden states by default
         use_aux_hidden_state = True
         eagle_config = getattr(self.draft_model_config.hf_config, "eagle_config", None)

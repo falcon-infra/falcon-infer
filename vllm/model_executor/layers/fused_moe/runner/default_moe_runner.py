@@ -28,7 +28,6 @@ from vllm.model_executor.layers.fused_moe.router.fused_moe_router import (
     FusedMoERouter,
 )
 from vllm.model_executor.layers.fused_moe.runner.moe_runner import MoERunner
-from vllm.platforms import current_platform
 from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import (
     HAS_OPAQUE_TYPE,
@@ -210,19 +209,10 @@ class DefaultMoERunner(MoERunner):
         # Needed for string -> FusedMoE layer lookup in custom ops.
         self.layer_name = layer.layer_name
 
-        if current_platform.is_tpu() or current_platform.is_cpu():
-            # TODO: Once the OOM issue for the TPU backend is resolved, we
-            # will switch to using the moe_forward custom op.
-            # Note: CPU doesn't require wrapped forward_impl.
-            if self.shared_experts is None:
-                self.moe_forward = _moe_forward
-            else:
-                self.moe_forward = _moe_forward_shared
+        if self.shared_experts is None:
+            self.moe_forward = torch.ops.vllm.moe_forward
         else:
-            if self.shared_experts is None:
-                self.moe_forward = torch.ops.vllm.moe_forward
-            else:
-                self.moe_forward = torch.ops.vllm.moe_forward_shared
+            self.moe_forward = torch.ops.vllm.moe_forward_shared
 
         # Chunked all2all staging tensor
         self.batched_hidden_states: torch.Tensor | None = None
@@ -245,7 +235,7 @@ class DefaultMoERunner(MoERunner):
         use_chunked_impl: bool,
     ) -> tuple[bool, torch.Tensor | None]:
         use_shared_experts_stream = (
-            current_platform.is_cuda()
+            False
             and has_separate_shared_experts
             and not use_chunked_impl
             and self.shared_experts_stream is not None
@@ -707,7 +697,7 @@ class DefaultMoERunner(MoERunner):
                     # sync end point immediately after it is done. This is
                     # important to avoid excessive stream allocations by the cuda
                     # graph replay later.
-                    with torch.cuda.stream(self.shared_experts_stream):
+                    with torch.npu.stream(self.shared_experts_stream):
                         # Note that hidden_states clone() is necessary here to avoid
                         # conflict with the main stream
                         shared_output = self.shared_experts(shared_experts_input)

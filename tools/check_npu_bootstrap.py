@@ -338,7 +338,7 @@ def main() -> int:
     parser.add_argument(
         "--check-lmcache",
         action="store_true",
-        help="paired P3 LMCache completion/resume check on host state; no NPU tensors",
+        help="paired P4 LMCache completion/resume check on host state; no NPU tensors",
     )
     parser.add_argument(
         "--child",

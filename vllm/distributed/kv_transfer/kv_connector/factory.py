@@ -3,7 +3,7 @@
 
 import importlib
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vllm.distributed.kv_transfer.kv_connector.base import (
     KVConnectorBase,
@@ -13,8 +13,13 @@ from vllm.distributed.kv_transfer.kv_connector.v1 import (
     KVConnectorRole,
     supports_hma,
 )
+from vllm.inference_profile import (
+    CONNECTOR,
+    CONNECTOR_MODULE,
+    NATIVE_CONNECTORS,
+    validate_connector,
+)
 from vllm.logger import init_logger
-from vllm.utils.func_utils import supports_kw
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
@@ -30,6 +35,9 @@ class KVConnectorFactory:
     @classmethod
     def register_connector(cls, name: str, module_path: str, class_name: str) -> None:
         """Register a connector with a lazy-loading module and class name."""
+        validate_connector(name, module_path)
+        if class_name != NATIVE_CONNECTORS[name][1]:
+            raise ValueError("Unsupported connector class")
         if name in cls._registry:
             raise ValueError(f"Connector '{name}' is already registered.")
 
@@ -104,31 +112,8 @@ class KVConnectorFactory:
         cls, kv_transfer_config: "KVTransferConfig"
     ) -> tuple[type[KVConnectorBaseType], bool]:
         connector_name = kv_transfer_config.kv_connector
-        if connector_name is None:
-            raise ValueError("Connector name is not set in KVTransferConfig")
-        compat_sig = False
-        if connector_name in cls._registry:
-            connector_cls = cls._registry[connector_name]()
-        else:
-            connector_module_path = kv_transfer_config.kv_connector_module_path
-            if connector_module_path is None:
-                raise ValueError(f"Unsupported connector type: {connector_name}")
-            connector_module = importlib.import_module(connector_module_path)
-            try:
-                connector_cls = getattr(connector_module, connector_name)
-            except AttributeError as e:
-                raise AttributeError(
-                    f"Class {connector_name} not found in {connector_module_path}"
-                ) from e
-            connector_cls = cast(type[KVConnectorBaseType], connector_cls)
-            if not supports_kw(connector_cls, "kv_cache_config"):
-                compat_sig = True
-                logger.warning(
-                    "Connector %s uses deprecated signature with 2 required arguments. "
-                    "Please update to include kv_cache_config as the second argument.",
-                    connector_cls.__name__,
-                )
-        return connector_cls, compat_sig
+        validate_connector(connector_name, kv_transfer_config.kv_connector_module_path)
+        return cls.get_connector_class_by_name(connector_name), False
 
     @classmethod
     def get_connector_class(
@@ -139,122 +124,8 @@ class KVConnectorFactory:
         return connector_cls
 
 
-# Register various connectors here.
-# The registration should not be done in each individual file, as we want to
-# only load the files corresponding to the current connector.
-
-KVConnectorFactory.register_connector(
-    "ExampleConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.example_connector",
-    "ExampleConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "ExampleHiddenStatesConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.example_hidden_states_connector",
-    "ExampleHiddenStatesConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "P2pNcclConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.p2p.p2p_nccl_connector",
-    "P2pNcclConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "LMCacheConnectorV1",
-    "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector",
-    "LMCacheConnectorV1",
-)
-
-KVConnectorFactory.register_connector(
-    "LMCacheMPConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_mp_connector",
-    "LMCacheMPConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "NixlConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector",
-    "NixlConnector",
-)
-
-
-KVConnectorFactory.register_connector(
-    "MoRIIOConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.moriio.moriio_connector",
-    "MoRIIOConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "OffloadingConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector",
-    "OffloadingConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "DecodeBenchConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.decode_bench_connector",
-    "DecodeBenchConnector",
-)
-KVConnectorFactory.register_connector(
-    "MooncakeConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.mooncake.mooncake_connector",
-    "MooncakeConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "FlexKVConnectorV1",
-    "vllm.distributed.kv_transfer.kv_connector.v1.flexkv_connector",
-    "FlexKVConnectorV1",
-)
-
-
-# Built-in NPU connectors. No connector module is imported by registration.
-KVConnectorFactory.register_connector(
-    "MultiConnector",
-    "vllm.distributed.kv_transfer.ascend.ascend_multi_connector",
-    "AscendMultiConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "MooncakeConnectorV1",
-    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_connector",
-    "MooncakeConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "MooncakeDSAIndexConnectorV1",
-    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_dsa_index_connector",
-    "MooncakeDSAIndexConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "MooncakeConnectorStoreV1",
-    "vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.ascend_store_connector",
-    "AscendStoreConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "AscendStoreConnector",
-    "vllm.distributed.kv_transfer.ascend.kv_pool.ascend_store.ascend_store_connector",
-    "AscendStoreConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "MooncakeLayerwiseConnector",
-    "vllm.distributed.kv_transfer.ascend.kv_p2p.mooncake_layerwise_connector",
-    "MooncakeLayerwiseConnector",
-)
-
-KVConnectorFactory.register_connector(
-    "UCMConnector",
-    "vllm.distributed.kv_transfer.ascend.kv_pool.ucm_connector",
-    "UCMConnectorV1",
-)
-
-KVConnectorFactory.register_connector(
-    "LMCacheAscendConnector",
-    "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector",
-    "LMCacheConnectorV1",
-)
+# The dependency remains lazy: no LMCache import for no-KV inference.
+KVConnectorFactory.register_connector(CONNECTOR, CONNECTOR_MODULE, CONNECTOR)
+for name, (module, class_name) in NATIVE_CONNECTORS.items():
+    if name != CONNECTOR:
+        KVConnectorFactory.register_connector(name, module, class_name)

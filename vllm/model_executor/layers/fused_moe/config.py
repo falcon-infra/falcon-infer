@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Union
 
 import torch
 
@@ -17,20 +16,11 @@ from vllm.model_executor.layers.quantization.utils.ocp_mx_utils import (
 )
 from vllm.model_executor.layers.quantization.utils.quant_utils import GroupShape
 from vllm.platforms import current_platform
-from vllm.utils.import_utils import has_triton_kernels
 from vllm.utils.math_utils import cdiv
 
 logger = init_logger(__name__)
 
-if has_triton_kernels():
-    try:
-        from triton_kernels.matmul_ogs import PrecisionConfig
-    except (ImportError, AttributeError) as e:
-        logger.error(
-            "Failed to import Triton kernels. Please make sure your triton "
-            "version is compatible. Error: %s",
-            e,
-        )
+pass  # Unsupported P4 branch removed.
 
 
 def _get_config_dtype_str(
@@ -172,7 +162,7 @@ class FusedMoEQuantDesc:
 
     # Quantization scales.
     # TODO(bnell): maybe put PrecisionConfigs in subclass of QuantDesc?
-    scale: Union[torch.Tensor, "PrecisionConfig", None] = None
+    scale: torch.Tensor | None = None
 
     # Quantization alphas or gscales, used for nvfp4 types.
     # W4A8 FP8: used for per-channel scales
@@ -314,11 +304,6 @@ class FusedMoEQuantConfig:
         return self._w1.bias
 
     @property
-    def w1_precision(self) -> "PrecisionConfig | None":
-        assert self._w1.scale is None or isinstance(self._w1.scale, PrecisionConfig)
-        return self._w1.scale
-
-    @property
     def g1_alphas(self) -> torch.Tensor | None:
         return self._w1.alpha_or_gscale
 
@@ -334,11 +319,6 @@ class FusedMoEQuantConfig:
     @property
     def w2_bias(self) -> torch.Tensor | None:
         return self._w2.bias
-
-    @property
-    def w2_precision(self) -> "PrecisionConfig | None":
-        assert self._w2.scale is None or isinstance(self._w2.scale, PrecisionConfig)
-        return self._w2.scale
 
     @property
     def g2_alphas(self) -> torch.Tensor | None:
@@ -463,8 +443,8 @@ class FusedMoEQuantConfig:
         per_act_token_quant: bool = False,
         per_out_ch_quant: bool = False,
         block_shape: list[int] | None = None,
-        w1_scale: Union[torch.Tensor, "PrecisionConfig", None] = None,
-        w2_scale: Union[torch.Tensor, "PrecisionConfig", None] = None,
+        w1_scale: torch.Tensor | None = None,
+        w2_scale: torch.Tensor | None = None,
         a1_scale: torch.Tensor | None = None,
         a2_scale: torch.Tensor | None = None,
         g1_alphas: torch.Tensor | None = None,
@@ -646,8 +626,8 @@ def gptq_marlin_moe_quant_config(
 
 
 def mxfp4_w4a16_moe_quant_config(
-    w1_scale: Union[torch.Tensor, "PrecisionConfig"],
-    w2_scale: Union[torch.Tensor, "PrecisionConfig"],
+    w1_scale: torch.Tensor,
+    w2_scale: torch.Tensor,
     w1_bias: torch.Tensor | None = None,
     w2_bias: torch.Tensor | None = None,
 ) -> FusedMoEQuantConfig:
@@ -663,8 +643,8 @@ def mxfp4_w4a16_moe_quant_config(
 
 
 def mxfp4_mxfp8_moe_quant_config(
-    w1_scale: Union[torch.Tensor, "PrecisionConfig"],
-    w2_scale: Union[torch.Tensor, "PrecisionConfig"],
+    w1_scale: torch.Tensor,
+    w2_scale: torch.Tensor,
     a1_scale: torch.Tensor | None = None,
     a2_scale: torch.Tensor | None = None,
     w1_bias: torch.Tensor | None = None,
@@ -683,8 +663,8 @@ def mxfp4_mxfp8_moe_quant_config(
 
 
 def mxfp4_w4a8_moe_quant_config(
-    w1_scale: Union[torch.Tensor, "PrecisionConfig"],
-    w2_scale: Union[torch.Tensor, "PrecisionConfig"],
+    w1_scale: torch.Tensor,
+    w2_scale: torch.Tensor,
     a1_scale: torch.Tensor | None = None,
     a2_scale: torch.Tensor | None = None,
     w1_bias: torch.Tensor | None = None,
@@ -704,8 +684,8 @@ def mxfp4_w4a8_moe_quant_config(
 
 def ocp_mx_moe_quant_config(
     quant_dtype: str,
-    w1_scale: Union[torch.Tensor, "PrecisionConfig"],
-    w2_scale: Union[torch.Tensor, "PrecisionConfig"],
+    w1_scale: torch.Tensor,
+    w2_scale: torch.Tensor,
     weight_dtype: str | None = None,
     a1_scale: torch.Tensor | None = None,
     a2_scale: torch.Tensor | None = None,

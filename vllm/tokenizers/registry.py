@@ -10,17 +10,6 @@ from typing_extensions import TypeVar, assert_never
 
 import vllm.envs as envs
 from vllm.logger import init_logger
-from vllm.transformers_utils.gguf_utils import (
-    check_gguf_file,
-    get_gguf_file_path_from_hf,
-    is_gguf,
-    is_remote_gguf,
-    split_remote_gguf,
-)
-from vllm.transformers_utils.repo_utils import (
-    any_pattern_in_repo_files,
-    is_mistral_model_repo,
-)
 from vllm.utils.import_utils import resolve_obj_by_qualname
 
 from .protocol import TokenizerLike
@@ -31,14 +20,7 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-_VLLM_TOKENIZERS = {
-    "deepseek_v32": ("deepseek_v32", "DeepseekV32Tokenizer"),
-    "grok2": ("grok2", "Grok2Tokenizer"),
-    "hf": ("hf", "CachedHfTokenizer"),
-    "kimi_audio": ("kimi_audio", "KimiAudioTokenizer"),
-    "mistral": ("mistral", "MistralTokenizer"),
-    "qwen_vl": ("qwen_vl", "QwenVLTokenizer"),
-}
+_VLLM_TOKENIZERS = {"hf": ("hf", "CachedHfTokenizer")}
 
 
 @dataclass
@@ -46,19 +28,10 @@ class _TokenizerRegistry:
     # Tokenizer mode ->  (tokenizer module, tokenizer class)
     tokenizers: dict[str, tuple[str, str]] = field(default_factory=dict)
 
-    def register(self, tokenizer_mode: str, module: str, class_name: str) -> None:
-        if tokenizer_mode in self.tokenizers:
-            logger.warning(
-                "%s.%s is already registered for tokenizer_mode=%r. "
-                "It is overwritten by the new one.",
-                module,
-                class_name,
-                tokenizer_mode,
-            )
-
-        self.tokenizers[tokenizer_mode] = (module, class_name)
-
-        return None
+    def register(self, *args, **kwargs) -> None:
+        raise ValueError(
+            "Ascend P4 does not support external tokenizer/renderer registration"
+        )
 
     def load_tokenizer_cls(self, tokenizer_mode: str) -> type[TokenizerLike]:
         if tokenizer_mode not in self.tokenizers:
@@ -89,6 +62,10 @@ def resolve_tokenizer_args(
     tokenizer_mode: str = "auto",
     **kwargs,
 ):
+    if tokenizer_mode not in ("auto", "hf", "slow"):
+        raise ValueError("Ascend P4 requires the checkpoint HF tokenizer")
+    if runner_type not in ("generate", "draft"):
+        raise ValueError("Ascend P4 supports generation only")
     revision: str | None = kwargs.get("revision")
     download_dir: str | None = kwargs.get("download_dir")
 
@@ -116,19 +93,6 @@ def resolve_tokenizer_args(
                 tokenizer_name = tokenizer_path
 
     # Separate model folder from file path for GGUF models
-    if is_gguf(tokenizer_name):
-        if check_gguf_file(tokenizer_name):
-            kwargs["gguf_file"] = Path(tokenizer_name).name
-            tokenizer_name = Path(tokenizer_name).parent
-        elif is_remote_gguf(tokenizer_name):
-            tokenizer_name, quant_type = split_remote_gguf(tokenizer_name)
-            # Get the HuggingFace Hub path for the GGUF file
-            gguf_file = get_gguf_file_path_from_hf(
-                tokenizer_name,
-                quant_type,
-                revision=revision,
-            )
-            kwargs["gguf_file"] = gguf_file
 
     if "truncation_side" not in kwargs:
         if runner_type == "generate" or runner_type == "draft":
@@ -146,18 +110,6 @@ def resolve_tokenizer_args(
         kwargs["use_fast"] = False
 
     # Try to use official Mistral tokenizer if possible
-    if (
-        tokenizer_mode == "auto"
-        and is_mistral_model_repo(
-            model_name_or_path=str(tokenizer_name), revision=revision
-        )
-        and any_pattern_in_repo_files(
-            model_name_or_path=str(tokenizer_name),
-            allow_patterns=["tekken.json", "tokenizer.model.v*"],
-            revision=revision,
-        )
-    ):
-        tokenizer_mode = "mistral"
 
     # Fallback to HF tokenizer
     if tokenizer_mode == "auto":

@@ -291,24 +291,3 @@ class TorchProfilerWrapper(WorkerProfiler):
     @override
     def annotate_context_manager(self, name: str):
         return torch.profiler.record_function(name)
-
-
-class CudaProfilerWrapper(WorkerProfiler):
-    def __init__(self, profiler_config: ProfilerConfig) -> None:
-        super().__init__(profiler_config)
-        # Note: lazy import to avoid dependency issues if CUDA is not available.
-        import torch.cuda.profiler as cuda_profiler
-
-        self._cuda_profiler = cuda_profiler
-
-    @override
-    def _start(self) -> None:
-        self._cuda_profiler.start()
-
-    @override
-    def _stop(self) -> None:
-        self._cuda_profiler.stop()
-
-    @override
-    def annotate_context_manager(self, name: str):
-        return torch.cuda.nvtx.range(name)

@@ -21,7 +21,6 @@ from pydantic import ConfigDict, Field, model_validator
 
 import vllm.envs as envs
 from vllm.logger import enable_trace_function_call, init_logger
-from vllm.transformers_utils.runai_utils import is_runai_obj_uri
 from vllm.utils import random_uuid
 from vllm.utils.hashing import safe_hash
 
@@ -44,7 +43,6 @@ from .scheduler import SchedulerConfig
 from .speculative import EagleModelTypes, NgramGPUTypes, SpeculativeConfig
 from .structured_outputs import StructuredOutputsConfig
 from .utils import SupportsHash, config, replace
-from .weight_transfer import WeightTransferConfig
 
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
@@ -113,12 +111,11 @@ def enable_act_fusion(cfg: "VllmConfig") -> bool:
 def enable_allreduce_rms_fusion(cfg: "VllmConfig") -> bool:
     """Enable if TP > 1 and Hopper/Blackwell and flashinfer installed."""
     from vllm.platforms import current_platform
-    from vllm.utils.flashinfer import has_flashinfer
 
     return (
         cfg.parallel_config.tensor_parallel_size > 1
-        and current_platform.is_cuda()
-        and has_flashinfer()
+        and False
+        and False
         and (
             current_platform.is_device_capability(100)
             or current_platform.is_device_capability(90)
@@ -136,10 +133,9 @@ def enable_rope_kvcache_fusion(cfg: "VllmConfig") -> bool:
     """Enable if rotary embedding custom op is active and
     use_inductor_graph_partition is enabled.
     """
-    from vllm._aiter_ops import rocm_aiter_ops
 
     return (
-        rocm_aiter_ops.is_enabled()
+        False
         and cfg.compilation_config.is_custom_op_enabled("rotary_embedding")
         and cfg.compilation_config.use_inductor_graph_partition
     )
@@ -148,11 +144,10 @@ def enable_rope_kvcache_fusion(cfg: "VllmConfig") -> bool:
 def enable_norm_pad_fusion(cfg: "VllmConfig") -> bool:
     """Enable if using AITER RMSNorm and AITER Triton GEMMs
     and hidden size is 2880 i.e. gpt-oss; otherwise Inductor handles fusion."""
-    from vllm._aiter_ops import rocm_aiter_ops
 
     return (
-        rocm_aiter_ops.is_rmsnorm_enabled()
-        and not rocm_aiter_ops.is_triton_gemm_enabled()
+        False
+        and not False
         and cfg.model_config is not None
         and cfg.model_config.get_hidden_size() == 2880
     )
@@ -324,7 +319,6 @@ class VllmConfig:
     'throughput' favors aggregate tokens/sec at high concurrency (larger CUDA
     graphs, more aggressive batching, throughput-oriented kernels)."""
 
-    weight_transfer_config: WeightTransferConfig | None = None
     """The configurations for weight transfer during RL training."""
 
     shutdown_timeout: int = Field(default=0, ge=0)
@@ -390,10 +384,7 @@ class VllmConfig:
             vllm_factors.append(self.attention_config.compute_hash())
         else:
             vllm_factors.append("None")
-        if self.lora_config:
-            vllm_factors.append(self.lora_config.compute_hash())
-        else:
-            vllm_factors.append("None")
+        vllm_factors.append("None")
         if self.speculative_config:
             vllm_factors.append(self.speculative_config.compute_hash())
         else:
@@ -547,28 +538,7 @@ class VllmConfig:
 
         model_config = copy.deepcopy(self.model_config)
 
-        if (
-            model_config.is_multimodal_model
-            and hasattr(model_config.hf_config, "tie_word_embeddings")
-            and not hasattr(hf_config.get_text_config(), "tie_word_embeddings")
-        ):
-            # In Transformers v5, tie_word_embeddings belongs to the config of the class
-            # that can see both layers to be tied. For example:
-            #
-            # SomeVLModel:
-            #   self.language_model = SomeLanguageModel()
-            #   self.vision_model = SomeVisionModel()
-            #
-            # SomeVLModelForMultimodalLM:
-            #   self.model = SomeVLModel()
-            #   self.lm_head = nn.Linear()
-            #
-            # Therefore, tie_word_embeddings is defined in SomeVLModelForMultimodalLM's
-            # config and is not present in SomeVLModel's config. In vLLM, the lm_head
-            # belongs to the language_model, so we must ensure that tie_word_embeddings
-            # is set in the language_model's config.
-            tie_word_embeddings = model_config.hf_config.tie_word_embeddings
-            hf_config.get_text_config().tie_word_embeddings = tie_word_embeddings
+        pass  # Unsupported P4 branch removed.
 
         model_config.hf_config = hf_config
         model_config.model_arch_config = model_config.get_model_arch_config()
@@ -656,6 +626,9 @@ class VllmConfig:
         self.kv_transfer_config.kv_role = "kv_both"
 
     def __post_init__(self):
+        from vllm.inference_profile import validate_runtime_features
+
+        validate_runtime_features(self)
         """Verify configs are valid & consistent with each other."""
 
         # To give each torch profile run a unique instance name.
@@ -674,8 +647,7 @@ class VllmConfig:
 
             self.parallel_config.is_moe_model = self.model_config.is_moe
 
-        if self.lora_config is not None:
-            self.lora_config.verify_with_model_config(self.model_config)
+        pass  # Unsupported P4 branch removed.
 
         if self.quant_config is None and self.model_config is not None:
             self.quant_config = VllmConfig._get_quantization_config(
@@ -870,7 +842,7 @@ class VllmConfig:
                 # small for SP to be beneficial).
                 pass_config = self.compilation_config.pass_config
                 if pass_config.sp_min_token_num is None:
-                    from vllm.compilation.passes.fusion.sequence_parallelism import (
+                    from vllm.compilation.ascend.profile import (
                         get_sequence_parallelism_threshold,
                     )
 
@@ -1071,25 +1043,7 @@ class VllmConfig:
                     )
 
         # final check of cudagraph mode after all possible updates
-        if current_platform.is_cuda_alike():
-            if (
-                self.compilation_config.cudagraph_mode.has_full_cudagraphs()
-                and self.model_config is not None
-                and not self.model_config.disable_cascade_attn
-                and not self.compilation_config.cudagraph_mode.has_piecewise_cudagraphs()  # noqa: E501
-            ):
-                logger.warning_once(
-                    "No piecewise cudagraph for executing cascade attention."
-                    " Will fall back to eager execution if a batch runs "
-                    "into cascade attentions."
-                )
-
-            if self.compilation_config.cudagraph_mode.requires_piecewise_compilation():
-                assert self.compilation_config.mode == CompilationMode.VLLM_COMPILE, (
-                    "Compilation mode should be CompilationMode.VLLM_COMPILE "
-                    "when cudagraph_mode piecewise cudagraphs is used, "
-                    f"cudagraph_mode={self.compilation_config.cudagraph_mode}"
-                )
+        pass  # Unsupported P4 branch removed.
         from vllm.model_executor.layers.batch_invariant import vllm_is_batch_invariant
 
         if (
@@ -1482,7 +1436,7 @@ class VllmConfig:
             # Calculate min_token_num if not explicitly provided
             # User override works regardless of hidden_size
             if pass_config.sp_min_token_num is None:
-                from vllm.compilation.passes.fusion.sequence_parallelism import (
+                from vllm.compilation.ascend.profile import (
                     get_sequence_parallelism_threshold,
                 )
 
@@ -1544,42 +1498,11 @@ class VllmConfig:
 
         from vllm.model_executor.models.config import (
             MODELS_CONFIG_MAP,
-            HybridAttentionMambaModelConfig,
         )
 
         cls = MODELS_CONFIG_MAP.get(architecture, None)
         if cls is not None:
             cls.verify_and_update_config(self)
-
-        if self.model_config.is_hybrid:
-            HybridAttentionMambaModelConfig.verify_and_update_config(self)
-
-        if self.model_config.convert_type == "classify":
-            # Maybe convert ForCausalLM into ForSequenceClassification model.
-            from vllm.model_executor.models.adapters import SequenceClassificationConfig
-
-            SequenceClassificationConfig.verify_and_update_config(self)
-
-        if hasattr(self.model_config, "model_weights") and is_runai_obj_uri(
-            self.model_config.model_weights
-        ):
-            if self.load_config.load_format == "auto":
-                logger.info(
-                    "Detected Run:ai model config. "
-                    "Overriding `load_format` to 'runai_streamer'"
-                )
-                self.load_config.load_format = "runai_streamer"
-            elif self.load_config.load_format not in (
-                "runai_streamer",
-                "runai_streamer_sharded",
-            ):
-                raise ValueError(
-                    f"To load a model from object storage (S3/GCS/Azure), "
-                    f"'load_format' must be 'runai_streamer' or "
-                    f"'runai_streamer_sharded', "
-                    f"but got '{self.load_config.load_format}'. "
-                    f"Model: {self.model_config.model}"
-                )
 
     def compile_debug_dump_path(self) -> Path | None:
         """Returns a rank-aware path for dumping

@@ -9,14 +9,12 @@ import torch
 import torch.nn as nn
 
 from vllm.logger import init_logger
-from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.v1.outputs import LogprobsLists, LogprobsTensors, SamplerOutput
 from vllm.v1.sample.logits_processor.builtin import MinTokensLogitsProcessor
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.ops.bad_words import apply_bad_words_with_drafts
 from vllm.v1.sample.ops.penalties import apply_all_penalties
-from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.sample.sampler import Sampler
 from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
 
@@ -365,104 +363,20 @@ def rejection_sample(
     bonus_token_ids: torch.Tensor,
     sampling_metadata: SamplingMetadata,
 ) -> torch.Tensor:
-    if current_platform.is_npu():
-        from vllm.v1.sample.ascend.rejection_sampler import (
-            rejection_sample as native_impl,
-        )
-
-        return native_impl(
-            draft_token_ids=draft_token_ids,
-            num_draft_tokens=num_draft_tokens,
-            max_spec_len=max_spec_len,
-            cu_num_draft_tokens=cu_num_draft_tokens,
-            draft_probs=draft_probs,
-            target_logits=target_logits,
-            bonus_token_ids=bonus_token_ids,
-            sampling_metadata=sampling_metadata,
-        )
-    assert draft_token_ids.ndim == 1
-    assert draft_probs is None or draft_probs.ndim == 2
-    assert cu_num_draft_tokens.ndim == 1
-    assert target_logits.ndim == 2
-
-    batch_size = len(num_draft_tokens)
-    num_tokens = draft_token_ids.shape[0]
-    vocab_size = target_logits.shape[-1]
-    device = target_logits.device
-    assert draft_token_ids.is_contiguous()
-    assert draft_probs is None or draft_probs.is_contiguous()
-    assert bonus_token_ids.is_contiguous()
-    assert target_logits.shape == (num_tokens, vocab_size)
-
-    # Create output buffer.
-    output_token_ids = torch.full(
-        (batch_size, max_spec_len + 1),
-        PLACEHOLDER_TOKEN_ID,
-        dtype=torch.int32,  # Consistent with SamplerOutput.sampled_token_ids.
-        device=device,
+    from vllm.v1.sample.ascend.rejection_sampler import (
+        rejection_sample as native_impl,
     )
 
-    if sampling_metadata.all_greedy:
-        is_greedy = None
-    else:
-        is_greedy = sampling_metadata.temperature == GREEDY_TEMPERATURE
-    if not sampling_metadata.all_random:
-        # Rejection sampling for greedy sampling requests.
-        target_argmax = target_logits.argmax(dim=-1)
-        rejection_greedy_sample_kernel[(batch_size,)](
-            output_token_ids,
-            cu_num_draft_tokens,
-            draft_token_ids,
-            target_argmax,
-            bonus_token_ids,
-            is_greedy,
-            max_spec_len,
-        )
-        if sampling_metadata.all_greedy:
-            return output_token_ids
-
-    # Compute probability distribution from target logits.
-    target_probs = target_logits.softmax(dim=-1, dtype=torch.float32)
-    assert target_probs.is_contiguous()
-
-    # Generate uniform probabilities for rejection sampling.
-    # [num_tokens]
-    uniform_probs = generate_uniform_probs(
-        num_tokens,
-        num_draft_tokens,
-        sampling_metadata.generators,
-        device,
+    return native_impl(
+        draft_token_ids=draft_token_ids,
+        num_draft_tokens=num_draft_tokens,
+        max_spec_len=max_spec_len,
+        cu_num_draft_tokens=cu_num_draft_tokens,
+        draft_probs=draft_probs,
+        target_logits=target_logits,
+        bonus_token_ids=bonus_token_ids,
+        sampling_metadata=sampling_metadata,
     )
-
-    # Sample recovered tokens for each position.
-    # [num_tokens]
-    recovered_token_ids = sample_recovered_tokens(
-        max_spec_len,
-        num_draft_tokens,
-        cu_num_draft_tokens,
-        draft_token_ids,
-        draft_probs,
-        target_probs,
-        sampling_metadata,
-        device,
-    )
-
-    # Rejection sampling for random sampling requests.
-    rejection_random_sample_kernel[(batch_size,)](
-        output_token_ids,
-        cu_num_draft_tokens,
-        draft_token_ids,
-        draft_probs,
-        target_probs,
-        bonus_token_ids,
-        recovered_token_ids,
-        uniform_probs,
-        is_greedy,
-        max_spec_len,
-        vocab_size,
-        NO_DRAFT_PROBS=draft_probs is None,
-    )
-    return output_token_ids
 
 
 def apply_sampling_constraints(
@@ -486,51 +400,15 @@ def apply_sampling_constraints(
         torch.Tensor: Processed logits if non-greedy sampling is used,
         otherwise returns the original logits.
     """
-    if current_platform.is_npu():
-        from vllm.v1.sample.ascend.rejection_sampler import (
-            apply_sampling_constraints as native_impl,
-        )
-
-        return native_impl(
-            logits=logits,
-            cu_num_draft_tokens=cu_num_draft_tokens,
-            sampling_metadata=sampling_metadata,
-        )
-    assert logits.ndim == 2
-    assert cu_num_draft_tokens.ndim == 1
-    if sampling_metadata.all_greedy:
-        return logits
-
-    num_tokens = logits.shape[0]
-    temperature = expand_batch_to_tokens(
-        sampling_metadata.temperature,
-        cu_num_draft_tokens,
-        num_tokens,
-        replace_from=GREEDY_TEMPERATURE,
-        replace_to=1,
+    from vllm.v1.sample.ascend.rejection_sampler import (
+        apply_sampling_constraints as native_impl,
     )
-    # NOTE(woosuk): Update `logits` in place to avoid allocating a new tensor.
-    logits.div_(temperature.unsqueeze(-1))
 
-    # Get expanded top_k and top_p tensors.
-    top_k = None
-    if sampling_metadata.top_k is not None:
-        top_k = expand_batch_to_tokens(
-            sampling_metadata.top_k,
-            cu_num_draft_tokens,
-            num_tokens,
-        )
-    top_p = None
-    if sampling_metadata.top_p is not None:
-        top_p = expand_batch_to_tokens(
-            sampling_metadata.top_p,
-            cu_num_draft_tokens,
-            num_tokens,
-        )
-
-    # NOTE(woosuk): `apply_top_k_top_p` uses sorting to calculate the mask,
-    # which is slow for large vocab sizes. This may cause performance issues.
-    return apply_top_k_top_p(logits, top_k, top_p)
+    return native_impl(
+        logits=logits,
+        cu_num_draft_tokens=cu_num_draft_tokens,
+        sampling_metadata=sampling_metadata,
+    )
 
 
 def expand_batch_to_tokens(
@@ -559,30 +437,17 @@ def expand_batch_to_tokens(
     Returns:
         expanded_x: [num_tokens] tensor.
     """
-    if current_platform.is_npu():
-        from vllm.v1.sample.ascend.rejection_sampler import (
-            expand_batch_to_tokens as native_impl,
-        )
-
-        return native_impl(
-            x=x,
-            cu_num_tokens=cu_num_tokens,
-            num_tokens=num_tokens,
-            replace_from=replace_from,
-            replace_to=replace_to,
-        )
-    batch_size = x.shape[0]
-    assert cu_num_tokens.shape[0] == batch_size
-    expanded_x = x.new_empty(num_tokens)
-    expand_kernel[(batch_size,)](
-        expanded_x,
-        x,
-        cu_num_tokens,
-        replace_from,
-        replace_to,
-        MAX_NUM_TOKENS=MAX_SPEC_LEN,  # To avoid recompilation.
+    from vllm.v1.sample.ascend.rejection_sampler import (
+        expand_batch_to_tokens as native_impl,
     )
-    return expanded_x
+
+    return native_impl(
+        x=x,
+        cu_num_tokens=cu_num_tokens,
+        num_tokens=num_tokens,
+        replace_from=replace_from,
+        replace_to=replace_to,
+    )
 
 
 def generate_uniform_probs(

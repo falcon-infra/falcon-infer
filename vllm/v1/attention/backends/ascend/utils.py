@@ -15,10 +15,8 @@ from vllm.distributed.kv_transfer import (
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.logger import init_logger
 from vllm.utils.ascend import (
-    AscendDeviceType,
     StagedSFARouteReason,
     get_ascend_config,
-    get_ascend_device_type,
 )
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 
@@ -128,8 +126,7 @@ def ascend_chunked_prefill_workspace_size(vllm_config: VllmConfig) -> int:
 def using_paged_attention(runtime_shape: int, vllm_config: VllmConfig) -> bool:
     if vllm_config.speculative_config is not None:
         return False
-    if get_ascend_device_type() == AscendDeviceType.A5:
-        return False
+    pass  # Unsupported P4 branch removed.
     from vllm.config.compilation import CUDAGraphMode
 
     cudagraph_mode = vllm_config.compilation_config.cudagraph_mode

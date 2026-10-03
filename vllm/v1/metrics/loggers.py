@@ -203,9 +203,7 @@ class LoggingStatLogger(StatLoggerBase):
         self.last_interval_output_batches = self.num_output_batches
         self.last_interval_scheduler_updates = self.num_scheduler_updates
         self.last_output_age_s = (
-            now - self.last_output_time
-            if self.last_output_time is not None
-            else None
+            now - self.last_output_time if self.last_output_time is not None else None
         )
 
         self._reset(now)
@@ -1029,26 +1027,7 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
         # TODO: This metric might be incorrect in case of using multiple
         # api_server counts which uses prometheus mp.
         self.gauge_lora_info: Gauge | None = None
-        if vllm_config.lora_config is not None:
-            if len(self.engine_indexes) > 1:
-                logger.warning(
-                    "vllm:lora_requests_info prometheus metrics may be "
-                    "incorrect/misleading with data parallel deployments."
-                )
-            self.labelname_max_lora = "max_lora"
-            self.labelname_waiting_lora_adapters = "waiting_lora_adapters"
-            self.labelname_running_lora_adapters = "running_lora_adapters"
-            self.max_lora = vllm_config.lora_config.max_loras
-            self.gauge_lora_info = self._gauge_cls(
-                name="vllm:lora_requests_info",
-                documentation="Running stats on lora requests.",
-                multiprocess_mode="sum",
-                labelnames=[
-                    self.labelname_max_lora,
-                    self.labelname_waiting_lora_adapters,
-                    self.labelname_running_lora_adapters,
-                ],
-            )
+        pass  # Unsupported P4 branch removed.
 
     def log_metrics_info(self, type: str, config_obj: SupportsMetricsInfo):
         metrics_info = config_obj.metrics_info()

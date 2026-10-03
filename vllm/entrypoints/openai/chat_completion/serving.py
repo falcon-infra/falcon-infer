@@ -36,10 +36,6 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionStreamResponse,
     ChatMessage,
 )
-from vllm.entrypoints.openai.chat_completion.stream_harmony import (
-    TokenState,
-    extract_harmony_streaming_delta,
-)
 from vllm.entrypoints.openai.engine.protocol import (
     CompletionTokenUsageInfo,
     DeltaFunctionCall,
@@ -58,11 +54,6 @@ from vllm.entrypoints.openai.engine.serving import (
     clamp_prompt_logprobs,
 )
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
-from vllm.entrypoints.openai.parser.harmony_utils import (
-    get_stop_tokens_for_assistant_actions,
-    get_streamable_parser_for_assistant,
-    parse_chat_output,
-)
 from vllm.entrypoints.openai.utils import maybe_filter_parallel_tool_calls
 from vllm.entrypoints.utils import get_max_tokens, should_include_usage
 from vllm.inputs.data import ProcessorInputs
@@ -75,10 +66,8 @@ from vllm.renderers import ChatParams
 from vllm.sampling_params import BeamSearchParams, SamplingParams
 from vllm.tokenizers import TokenizerLike
 from vllm.tool_parsers import ToolParser
-from vllm.tool_parsers.mistral_tool_parser import MistralToolCall
 from vllm.tool_parsers.utils import partial_json_loads
 from vllm.utils.collection_utils import as_list
-from vllm.utils.mistral import is_mistral_tokenizer
 
 if TYPE_CHECKING:
     from vllm.entrypoints.serve.render.serving import OpenAIServingRender
@@ -148,12 +137,7 @@ class OpenAIServingChat(OpenAIServing):
             else getattr(mc, "override_generation_config", {}).get("max_new_tokens")
         )
         self.use_harmony = self.model_config.hf_config.model_type == "gpt_oss"
-        if self.use_harmony:
-            if "stop_token_ids" not in self.default_sampling_params:
-                self.default_sampling_params["stop_token_ids"] = []
-            self.default_sampling_params["stop_token_ids"].extend(
-                get_stop_tokens_for_assistant_actions()
-            )
+        pass  # Unsupported P4 branch removed.
 
         # Handle tool call ID type for Kimi K2 (supporting test mocking via overrides)
         hf_overrides = getattr(self.model_config, "hf_overrides", None)
@@ -525,11 +509,7 @@ class OpenAIServingChat(OpenAIServing):
         finish_reason_sent = [False] * num_choices
         num_prompt_tokens = 0
         num_cached_tokens = None
-        if self.use_harmony:
-            harmony_parsers = [
-                get_streamable_parser_for_assistant() for _ in range(num_choices)
-            ]
-            harmony_tools_streamed = [False] * num_choices
+        pass  # Unsupported P4 branch removed.
         tools_streamed = [False] * num_choices
         streamed_tool_args: list[dict[int, str]] = [{} for _ in range(num_choices)]
 
@@ -698,28 +678,7 @@ class OpenAIServingChat(OpenAIServing):
                     else:
                         logprobs = None
 
-                    if self.use_harmony:
-                        harmony_parser = harmony_parsers[i]
-                        prev_recipient = harmony_parser.current_recipient
-
-                        token_states: list[TokenState] = []
-                        for token_id in output.token_ids:
-                            harmony_parser.process(token_id)
-                            token_delta = harmony_parser.last_content_delta or ""
-                            token_states.append(
-                                TokenState(
-                                    harmony_parser.current_channel,
-                                    harmony_parser.current_recipient,
-                                    token_delta,
-                                )
-                            )
-                        delta_text = "".join(delta for _, _, delta in token_states)
-                        cur_channel = harmony_parser.current_channel
-
-                        if not cur_channel and delta_text:
-                            cur_channel = "final"
-                    else:
-                        delta_text = output.text
+                    delta_text = output.text
 
                     if (
                         not delta_text
@@ -743,17 +702,7 @@ class OpenAIServingChat(OpenAIServing):
                         else:
                             current_token_ids = as_list(output.token_ids)
 
-                    if self.use_harmony:
-                        delta_message, tools_streamed_flag = (
-                            extract_harmony_streaming_delta(
-                                harmony_parser=harmony_parser,
-                                token_states=token_states,
-                                prev_recipient=prev_recipient,
-                                include_reasoning=request.include_reasoning,
-                            )
-                        )
-                        harmony_tools_streamed[i] |= tools_streamed_flag
-                    elif tool_choice_function_name:
+                    if tool_choice_function_name:
                         if (
                             reasoning_parser
                             and not reasoning_end_arr[i]
@@ -799,14 +748,11 @@ class OpenAIServingChat(OpenAIServing):
                                     index=i,
                                 )
                             else:
-                                if is_mistral_tokenizer(tokenizer):
-                                    tool_call_id = MistralToolCall.generate_random_id()
-                                else:
-                                    tool_call_id = make_tool_call_id(
-                                        id_type=self.tool_call_id_type,
-                                        func_name=tool_choice_function_name,
-                                        idx=history_tool_call_cnt,
-                                    )
+                                tool_call_id = make_tool_call_id(
+                                    id_type=self.tool_call_id_type,
+                                    func_name=tool_choice_function_name,
+                                    idx=history_tool_call_cnt,
+                                )
                                 delta_tool_call = DeltaToolCall(
                                     id=tool_call_id,
                                     type="function",
@@ -1083,7 +1029,7 @@ class OpenAIServingChat(OpenAIServing):
                         if (
                             auto_tools_called
                             or (tools_streamed[i] and not tool_choice_function_name)
-                            or (self.use_harmony and harmony_tools_streamed[i])
+                            or False
                         ):
                             finish_reason_ = "tool_calls"
                         else:
@@ -1456,7 +1402,6 @@ class OpenAIServingChat(OpenAIServing):
         request_metadata: RequestResponseMetadata,
         reasoning_parser: ReasoningParser | None = None,
     ) -> ErrorResponse | ChatCompletionResponse:
-        from vllm.tokenizers.mistral import MistralTokenizer
 
         created_time = int(time.time())
         final_res: RequestOutput | None = None
@@ -1501,56 +1446,7 @@ class OpenAIServingChat(OpenAIServing):
             else:
                 logprobs = None
 
-            if self.use_harmony:
-                reasoning, content, _ = parse_chat_output(token_ids)
-                if not request.include_reasoning:
-                    reasoning = None
-
-                if self.tool_parser is not None:
-                    if tokenizer is None:
-                        raise ValueError(
-                            "Tokenizer not available when `skip_tokenizer_init=True`"
-                        )
-
-                    tool_parser = self.tool_parser(tokenizer)
-                    # NOTE: We use token_ids for openai tool parser
-                    tool_call_info = tool_parser.extract_tool_calls(
-                        "",
-                        request=request,
-                        token_ids=token_ids,  # type: ignore
-                    )
-                    content = tool_call_info.content
-                    message = ChatMessage(
-                        role=role,
-                        reasoning=reasoning,
-                        content=content,
-                        tool_calls=tool_call_info.tool_calls,
-                    )
-                else:
-                    message = ChatMessage(
-                        role=role,
-                        reasoning=reasoning,
-                        content=content,
-                    )
-
-                choice_data = ChatCompletionResponseChoice(
-                    index=output.index,
-                    message=message,
-                    logprobs=logprobs,
-                    finish_reason=(
-                        "tool_calls"
-                        if (tool_call_info is not None and tool_call_info.tools_called)
-                        else output.finish_reason
-                        if output.finish_reason
-                        else "stop"
-                    ),
-                    stop_reason=output.stop_reason,
-                    token_ids=(
-                        as_list(output.token_ids) if request.return_token_ids else None
-                    ),
-                )
-                choices.append(choice_data)
-                continue
+            pass  # Unsupported P4 branch removed.
 
             if reasoning_parser:
                 # If the reasoning parser is enabled,
@@ -1574,9 +1470,7 @@ class OpenAIServingChat(OpenAIServing):
                 enable_auto_tools=self.enable_auto_tools,
                 tool_parser_cls=self.tool_parser,
             )
-            tool_call_class = (
-                MistralToolCall if is_mistral_tokenizer(tokenizer) else ToolCall
-            )
+            tool_call_class = ToolCall
             if (not self.enable_auto_tools or not self.tool_parser) and (
                 not isinstance(request.tool_choice, ChatCompletionNamedToolChoiceParam)
                 and request.tool_choice != "required"
@@ -1600,17 +1494,14 @@ class OpenAIServingChat(OpenAIServing):
                         # Generate ID using the correct format (kimi_k2 or random),
                         # but leave it to the class if it's Mistral to preserve
                         # 9-char IDs
-                        if isinstance(tokenizer, MistralTokenizer):
-                            tool_call_class_items.append(tool_call_class(function=tc))
-                        else:
-                            generated_id = make_tool_call_id(
-                                id_type=self.tool_call_id_type,
-                                func_name=tc.name,
-                                idx=history_tool_call_cnt,
-                            )
-                            tool_call_class_items.append(
-                                tool_call_class(id=generated_id, function=tc)
-                            )
+                        generated_id = make_tool_call_id(
+                            id_type=self.tool_call_id_type,
+                            func_name=tc.name,
+                            idx=history_tool_call_cnt,
+                        )
+                        tool_call_class_items.append(
+                            tool_call_class(id=generated_id, function=tc)
+                        )
                     history_tool_call_cnt += 1
                 message = ChatMessage(
                     role=role,
@@ -1633,19 +1524,14 @@ class OpenAIServingChat(OpenAIServing):
                         # Generate ID using the correct format (kimi_k2 or random),
                         # but leave it to the class if it's Mistral to preserve
                         # 9-char IDs
-                        if isinstance(tokenizer, MistralTokenizer):
-                            tool_call_class_items.append(
-                                tool_call_class(function=tool_call)
-                            )
-                        else:
-                            generated_id = make_tool_call_id(
-                                id_type=self.tool_call_id_type,
-                                func_name=tool_call.name,
-                                idx=history_tool_call_cnt,
-                            )
-                            tool_call_class_items.append(
-                                tool_call_class(id=generated_id, function=tool_call)
-                            )
+                        generated_id = make_tool_call_id(
+                            id_type=self.tool_call_id_type,
+                            func_name=tool_call.name,
+                            idx=history_tool_call_cnt,
+                        )
+                        tool_call_class_items.append(
+                            tool_call_class(id=generated_id, function=tool_call)
+                        )
                     history_tool_call_cnt += 1
                 message = ChatMessage(
                     role=role,
@@ -1683,17 +1569,14 @@ class OpenAIServingChat(OpenAIServing):
                             # Generate ID using the correct format (kimi_k2 or random),
                             # but leave it to the class if it's Mistral to preserve
                             # 9-char IDs
-                            if isinstance(tokenizer, MistralTokenizer):
-                                tool_call_items.append(tool_call_class(function=tc))
-                            else:
-                                generated_id = make_tool_call_id(
-                                    id_type=self.tool_call_id_type,
-                                    func_name=tc.name,
-                                    idx=history_tool_call_cnt,
-                                )
-                                tool_call_items.append(
-                                    tool_call_class(id=generated_id, function=tc)
-                                )
+                            generated_id = make_tool_call_id(
+                                id_type=self.tool_call_id_type,
+                                func_name=tc.name,
+                                idx=history_tool_call_cnt,
+                            )
+                            tool_call_items.append(
+                                tool_call_class(id=generated_id, function=tc)
+                            )
                         history_tool_call_cnt += 1
                     message = ChatMessage(
                         role=role,

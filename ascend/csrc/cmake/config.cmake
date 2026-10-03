@@ -31,52 +31,6 @@ else()
 endif ()
 message(STATUS "ASCEND_CANN_PACKAGE_PATH=${ASCEND_CANN_PACKAGE_PATH}")
 
-# Detect A5-compatible SoC enum support from the CANN headers we are compiling against.
-set(_saved_CMAKE_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
-set(CMAKE_REQUIRED_INCLUDES
-        ${ASCEND_CANN_PACKAGE_PATH}/include
-        ${ASCEND_CANN_PACKAGE_PATH}/include/external
-        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/platform
-        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime
-)
-
-check_cxx_source_compiles([[
-    #include "tiling/platform/platform_ascendc.h"
-    int main()
-    {
-        auto soc = platform_ascendc::SocVersion::ASCEND950;
-        (void)soc;
-        return 0;
-    }
-]] VLLM_ASCEND_HAS_SOC_ASCEND950)
-
-check_cxx_source_compiles([[
-    #include "tiling/platform/platform_ascendc.h"
-    int main()
-    {
-        auto soc = platform_ascendc::SocVersion::ASCEND910_95;
-        (void)soc;
-        return 0;
-    }
-]] VLLM_ASCEND_HAS_SOC_ASCEND910_95)
-
-if (VLLM_ASCEND_HAS_SOC_ASCEND950)
-    set(VLLM_ASCEND_950_SOC_ENUM "ASCEND950")
-    set(VLLM_ASCEND_950_SOC_CONFIG "ascend950")
-elseif (VLLM_ASCEND_HAS_SOC_ASCEND910_95)
-    set(VLLM_ASCEND_950_SOC_ENUM "ASCEND910_95")
-    set(VLLM_ASCEND_950_SOC_CONFIG "ascend910_95")
-else ()
-    message(FATAL_ERROR
-            "Neither platform_ascendc::SocVersion::ASCEND950 nor ASCEND910_95 is available in CANN headers.")
-endif ()
-
-set(CMAKE_REQUIRED_INCLUDES "${_saved_CMAKE_REQUIRED_INCLUDES}")
-unset(_saved_CMAKE_REQUIRED_INCLUDES)
-
-message(STATUS "VLLM_ASCEND_950_SOC_ENUM=${VLLM_ASCEND_950_SOC_ENUM}, "
-               "VLLM_ASCEND_950_SOC_CONFIG=${VLLM_ASCEND_950_SOC_CONFIG}")
-
 ########################################################################################################################
 # Common Configuration
 ########################################################################################################################

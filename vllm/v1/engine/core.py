@@ -25,7 +25,6 @@ from vllm.envs import enable_envs_cache
 from vllm.logger import init_logger
 from vllm.logging_utils.dump_input import dump_engine_exception
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.tasks import POOLING_TASKS, SupportedTask
 from vllm.tracing import instrument, maybe_init_worker_tracer
 from vllm.transformers_utils.config import maybe_register_config_serialize_by_value
@@ -152,10 +151,8 @@ class EngineCore:
         if self.scheduler.connector is not None:  # type: ignore
             self.model_executor.init_kv_output_aggregator(self.scheduler.connector)  # type: ignore
 
-        mm_registry = MULTIMODAL_REGISTRY
-        self.mm_receiver_cache = mm_registry.engine_receiver_cache_from_config(
-            vllm_config
-        )
+        mm_registry = None
+        self.mm_receiver_cache = None
 
         # If a KV connector is initialized for scheduler, we want to collect
         # handshake metadata from all workers so the connector in the scheduler
@@ -2220,13 +2217,10 @@ class EngineCoreActorMixin:
     def _set_visible_devices(self, vllm_config: VllmConfig, local_dp_rank: int):
         from vllm.platforms import current_platform
 
-        if current_platform.is_xpu():
-            pass
-        else:
-            device_control_env_var = current_platform.device_control_env_var
-            self._set_cuda_visible_devices(
-                vllm_config, local_dp_rank, device_control_env_var
-            )
+        device_control_env_var = current_platform.device_control_env_var
+        self._set_cuda_visible_devices(
+            vllm_config, local_dp_rank, device_control_env_var
+        )
 
     def _set_cuda_visible_devices(
         self, vllm_config: VllmConfig, local_dp_rank: int, device_control_env_var: str

@@ -37,7 +37,6 @@ from vllm.distributed.stateless_coordinator import StatelessGroupCoordinator
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.layer import FusedMoEParallelConfig
 from vllm.v1.engine import ReconfigureDistributedRequest, ReconfigureRankType
-from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
 from vllm.v1.worker.workspace import lock_workspace, unlock_workspace
 
 logger = init_logger(__name__)
@@ -390,8 +389,6 @@ class ElasticEPScalingExecutor:
         if isinstance(self.worker.model_runner.model, CUDAGraphWrapper):
             wrapper = self.worker.model_runner.model
             wrapper.concrete_cudagraph_entries = {}
-        elif isinstance(self.worker.model_runner.model, UBatchWrapper):
-            raise RuntimeError("DBO is not yet supported in elastic EP")
 
         multi_block_table = self.worker.model_runner.input_batch.block_table
         saved_block_tables: list[tuple[torch.Tensor, torch.Tensor]] = []

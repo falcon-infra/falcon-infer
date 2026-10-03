@@ -11,10 +11,8 @@ from vllm.utils.hashing import safe_hash
 
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader import LoadFormats
-    from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 else:
     LoadFormats = Any
-    TensorizerConfig = Any
 
 logger = init_logger(__name__)
 
@@ -70,7 +68,7 @@ class LoadConfig:
       was quantized using torchao and saved using safetensors.
       Needs torchao >= 0.14.0
     """
-    model_loader_extra_config: dict | TensorizerConfig = Field(default_factory=dict)
+    model_loader_extra_config: dict = Field(default_factory=dict)
     """Extra config for model loader. This will be passed to the model loader
     corresponding to the chosen load_format."""
     device: str | None = None
@@ -113,7 +111,20 @@ class LoadConfig:
 
     @field_validator("load_format", mode="after")
     def _lowercase_load_format(cls, load_format: str) -> str:
-        return load_format.lower()
+        value = load_format.lower()
+        if value not in (
+            "auto",
+            "hf",
+            "safetensors",
+            "pt",
+            "npcache",
+            "dummy",
+            "sharded_state",
+            "netloader",
+            "rfork",
+        ):
+            raise ValueError(f"Unsupported Ascend P4 weight format: {value}")
+        return value
 
     @field_validator("ignore_patterns", mode="after")
     def _validate_ignore_patterns(

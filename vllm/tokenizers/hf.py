@@ -7,7 +7,6 @@ from typing import TypeAlias
 
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from vllm.transformers_utils.config import get_sentence_transformer_tokenizer_config
 
 from .protocol import TokenizerLike
 
@@ -108,18 +107,5 @@ class CachedHfTokenizer(TokenizerLike):
                 raise RuntimeError(err_msg) from e
             else:
                 raise e
-
-        # The special_tokens in tokenizer should also be
-        # controlled by do_lower_case in encoder_config
-        encoder_config = get_sentence_transformer_tokenizer_config(
-            path_or_repo_id, revision
-        )
-        if isinstance(encoder_config, dict) and encoder_config.get(
-            "do_lower_case", False
-        ):
-            special_tokens_map = {
-                k: v.lower() for k, v in tokenizer.special_tokens_map.items()
-            }
-            tokenizer.add_special_tokens(special_tokens_map)
 
         return get_cached_tokenizer(tokenizer)

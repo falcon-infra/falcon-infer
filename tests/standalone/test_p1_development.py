@@ -212,7 +212,7 @@ class DevelopmentContracts(unittest.TestCase):
                     DEV.check_install_target(True)
 
     def test_install_accepts_p3_pair_and_rejects_p1_p2_mixtures(self) -> None:
-        versions = {"vllm": "0.18.0+ascend.p3", "lmcache": "0.4.3+ascend.p3"}
+        versions = {"vllm": "0.18.0+ascend.p4", "lmcache": "0.4.3+ascend.p4"}
 
         def installed(name: str) -> str:
             if name in versions:

@@ -30,7 +30,7 @@ from vllm.v1.attention.backends.ascend.utils import (
     AscendCommonAttentionMetadata,
     AscendPrefillContextParallelMetadata,
 )
-from vllm.v1.kv_cache_interface import EncoderOnlyAttentionSpec, KVCacheConfig
+from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.utils import AttentionGroup
 
 _ATTENTION_MASK_BUILDER = None
@@ -121,15 +121,7 @@ def build_attn_state(
     num_valid_tokens,
 ):
     """Build attention state for npu's attention backend."""
-    if vllm_config.model_config.runner_type == "pooling":
-        if isinstance(
-            vllm_config.kv_cache_config.kv_cache_groups[0].kv_cache_spec,
-            EncoderOnlyAttentionSpec,
-        ):
-            attn_state = AscendAttentionState.PrefillNoCache
-        else:
-            attn_state = AscendAttentionState.PrefillCacheHit
-    elif np.array_equal(seq_lens_np[:num_reqs], num_scheduled_tokens):
+    if np.array_equal(seq_lens_np[:num_reqs], num_scheduled_tokens):
         attn_state = AscendAttentionState.PrefillNoCache
     # We assume it is the decode stage, where prefill occurs
     # but only one token is not hit in cache.

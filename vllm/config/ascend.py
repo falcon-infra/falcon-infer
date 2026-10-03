@@ -196,14 +196,9 @@ class AscendConfig:
 
         from vllm.utils.ascend import AscendDeviceType, get_ascend_device_type
 
-        # Disable Sparse C8 for A5
-        # A5 has not been fully validated for this path and may carry hidden risks.
-        # TODO(rjg-lyh): Enable A5 support after sufficient validation.
-        self.enable_sparse_c8 = (
-            additional_config.get("enable_sparse_c8", False)
-            and use_sparse
-            and get_ascend_device_type() != AscendDeviceType.A5
-        )
+        if additional_config.get("enable_sparse_c8", False):
+            raise ValueError("Ascend P4 requires enable_sparse_c8=false")
+        self.enable_sparse_c8 = False
 
         self.enable_sp_by_pass = (
             vllm_config.model_config is not None
@@ -424,6 +419,12 @@ class XliteGraphConfig:
     """
 
     def __init__(self, xlite_graph_config, vllm_config):
+        if xlite_graph_config.get("enabled", False) or xlite_graph_config.get(
+            "full_mode", False
+        ):
+            raise ValueError(
+                "Xlite was removed from P4; use native Ascend/TorchAir graphs"
+            )
         self.enabled = xlite_graph_config.get("enabled", False)
         self.full_mode = xlite_graph_config.get("full_mode", False)
         if self.enabled:

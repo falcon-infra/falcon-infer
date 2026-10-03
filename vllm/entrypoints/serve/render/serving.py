@@ -4,7 +4,6 @@ from collections.abc import Callable, Sequence
 from http import HTTPStatus
 from typing import Any
 
-from openai_harmony import Message as OpenAIMessage
 
 from vllm.config import ModelConfig
 from vllm.entrypoints.chat_utils import (
@@ -18,24 +17,15 @@ from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
 )
 from vllm.entrypoints.openai.models.serving import OpenAIModelRegistry
-from vllm.entrypoints.openai.parser.harmony_utils import (
-    get_developer_message,
-    get_system_message,
-    parse_chat_inputs_to_harmony_messages,
-    render_for_completion,
-)
 from vllm.entrypoints.serve.disagg.protocol import (
     GenerateRequest,
-    MultiModalFeatures,
-    PlaceholderRangeInfo,
 )
 from vllm.entrypoints.utils import (
     create_error_response,
     get_max_tokens,
 )
-from vllm.inputs.data import ProcessorInputs, PromptType, SingletonPrompt, TokensPrompt
+from vllm.inputs.data import ProcessorInputs, PromptType, SingletonPrompt
 from vllm.logger import init_logger
-from vllm.multimodal.inputs import MultiModalHashes, MultiModalPlaceholderDict
 from vllm.parser import ParserManager
 from vllm.renderers import BaseRenderer, merge_kwargs
 from vllm.renderers.inputs.preprocess import (
@@ -47,8 +37,6 @@ from vllm.renderers.inputs.preprocess import (
 from vllm.tokenizers import TokenizerLike
 from vllm.tool_parsers import ToolParser
 from vllm.utils import random_uuid
-from vllm.utils.mistral import is_mistral_tokenizer
-from vllm.utils.mistral import mt as _mt
 
 logger = init_logger(__name__)
 
@@ -183,19 +171,11 @@ class OpenAIServingRender:
 
         tool_parser = self.tool_parser
 
-        if is_mistral_tokenizer(tokenizer):
-            # because of issues with pydantic we need to potentially
-            # re-serialize the tool_calls field of the request
-            # for more info: see comment in `maybe_serialize_tool_calls`
-            _mt.maybe_serialize_tool_calls(request)  # type: ignore[arg-type]
-            _mt.truncate_tool_call_ids(request)  # type: ignore[arg-type]
-            _mt.validate_request_params(request)
+        pass  # Unsupported P4 branch removed.
 
         # Check if tool parsing is unavailable (common condition)
         tool_parsing_unavailable = (
-            tool_parser is None
-            and not is_mistral_tokenizer(tokenizer)
-            and not self.use_harmony
+            tool_parser is None and not False and not self.use_harmony
         )
 
         # Validate tool_choice when tool parsing is required but unavailable
@@ -224,31 +204,23 @@ class OpenAIServingRender:
         else:
             tool_dicts = [tool.model_dump() for tool in request.tools]
 
-        if not self.use_harmony:
-            # Common case.
-            error_check_ret = self._validate_chat_template(
-                request_chat_template=request.chat_template,
-                chat_template_kwargs=request.chat_template_kwargs,
-                trust_request_chat_template=self.trust_request_chat_template,
-            )
-            if error_check_ret is not None:
-                return error_check_ret
+        error_check_ret = self._validate_chat_template(
+            request_chat_template=request.chat_template,
+            chat_template_kwargs=request.chat_template_kwargs,
+            trust_request_chat_template=self.trust_request_chat_template,
+        )
+        if error_check_ret is not None:
+            return error_check_ret
 
-            conversation, engine_prompts = await self._preprocess_chat(
-                request,
-                request.messages,
-                default_template=self.chat_template,
-                default_template_content_format=self.chat_template_content_format,
-                default_template_kwargs=self.default_chat_template_kwargs,
-                tool_dicts=tool_dicts,
-                tool_parser=tool_parser,
-            )
-        else:
-            # For GPT-OSS.
-            should_include_tools = tool_dicts is not None
-            conversation, engine_prompts = self._make_request_with_harmony(
-                request, should_include_tools
-            )
+        conversation, engine_prompts = await self._preprocess_chat(
+            request,
+            request.messages,
+            default_template=self.chat_template,
+            default_template_content_format=self.chat_template_content_format,
+            default_template_kwargs=self.default_chat_template_kwargs,
+            tool_dicts=tool_dicts,
+            tool_parser=tool_parser,
+        )
 
         return conversation, engine_prompts
 
@@ -337,79 +309,11 @@ class OpenAIServingRender:
         return engine_prompts
 
     @staticmethod
-    def _extract_mm_features(
-        engine_prompt: ProcessorInputs,
-    ) -> MultiModalFeatures | None:
-        """Extract multimodal metadata from a rendered engine prompt.
+    def _extract_mm_features(engine_prompt: ProcessorInputs) -> None:
+        from vllm.inference_profile import validate_text_prompt
 
-        Returns ``None`` for text-only prompts.
-        """
-        if engine_prompt.get("type") != "multimodal":
-            return None
-
-        # At this point engine_prompt is a MultiModalInputs TypedDict.
-        mm_hashes: MultiModalHashes = engine_prompt["mm_hashes"]  # type: ignore[typeddict-item]
-        raw_placeholders: MultiModalPlaceholderDict = engine_prompt["mm_placeholders"]  # type: ignore[typeddict-item]
-
-        mm_placeholders = {
-            modality: [
-                PlaceholderRangeInfo(offset=p.offset, length=p.length) for p in ranges
-            ]
-            for modality, ranges in raw_placeholders.items()
-        }
-
-        return MultiModalFeatures(
-            mm_hashes=mm_hashes,
-            mm_placeholders=mm_placeholders,
-        )
-
-    def _make_request_with_harmony(
-        self,
-        request: ChatCompletionRequest,
-        should_include_tools: bool = True,
-    ):
-        """Build Harmony (GPT-OSS) messages and engine prompt from a chat request."""
-        messages: list[OpenAIMessage] = []
-
-        # because of issues with pydantic we need to potentially
-        # re-serialize the tool_calls field of the request
-        # for more info: see comment in `maybe_serialize_tool_calls`
-        _mt.maybe_serialize_tool_calls(request)  # type: ignore[arg-type]
-
-        # Add system message.
-        # NOTE: In Chat Completion API, browsing is enabled by default
-        # if the model supports it. TODO: Support browsing.
-        assert not self.supports_browsing
-        assert not self.supports_code_interpreter
-        if (reasoning_effort := request.reasoning_effort) == "none":
-            raise ValueError(f"Harmony does not support {reasoning_effort=}")
-        sys_msg = get_system_message(
-            reasoning_effort=reasoning_effort,
-            browser_description=None,
-            python_description=None,
-            with_custom_tools=should_include_tools,
-        )
-        messages.append(sys_msg)
-
-        # Add developer message.
-        if request.tools:
-            dev_msg = get_developer_message(
-                tools=request.tools if should_include_tools else None  # type: ignore[arg-type]
-            )
-            messages.append(dev_msg)
-
-        # Add user message.
-        messages.extend(parse_chat_inputs_to_harmony_messages(request.messages))
-
-        # Render prompt token ids.
-        prompt_token_ids = render_for_completion(messages)
-        engine_prompt = TokensPrompt(prompt_token_ids=prompt_token_ids)
-
-        # Add cache_salt if provided in the request
-        if request.cache_salt is not None:
-            engine_prompt["cache_salt"] = request.cache_salt
-
-        return messages, [engine_prompt]
+        validate_text_prompt(engine_prompt)
+        return None
 
     def create_error_response(
         self,
@@ -512,7 +416,7 @@ class OpenAIServingRender:
             default_template_kwargs,
             dict(
                 tools=tool_dicts,
-                tokenize=is_mistral_tokenizer(renderer.tokenizer),
+                tokenize=False,
             ),
         )
 

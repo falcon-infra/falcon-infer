@@ -214,8 +214,7 @@ def parse_enc_dec_prompt(prompt: PromptType | object) -> EncoderDecoderDictPromp
 
 
 def parse_model_prompt(model_config: "ModelConfig", prompt: object):
-    if model_config.is_encoder_decoder:
-        return parse_enc_dec_prompt(prompt)
+    pass  # Unsupported P4 branch removed.
 
     return parse_dec_only_prompt(prompt)
 
@@ -227,11 +226,7 @@ class PromptComponents(NamedTuple):
 
 
 def extract_target_prompt(model_config: "ModelConfig", prompt: object):
-    return (
-        parse_enc_dec_prompt(prompt)["encoder_prompt"]
-        if model_config.is_encoder_decoder
-        else parse_dec_only_prompt(prompt)
-    )
+    return parse_dec_only_prompt(prompt)
 
 
 def extract_prompt_components(

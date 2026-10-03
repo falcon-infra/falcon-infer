@@ -3041,8 +3041,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         ):
             return "the PIECEWISE descriptor does not match the staged SFA graph key"
 
-        if self.vllm_config.lora_config is not None:
-            return "LoRA is configured"
+        pass  # Unsupported P4 branch removed.
         expected_state = (
             AscendAttentionState.DecodeOnly
             if graph_key.query_profile == StagedSFAQueryProfile.DECODE_Q1

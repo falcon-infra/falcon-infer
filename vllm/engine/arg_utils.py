@@ -58,7 +58,6 @@ from vllm.config import (
     StructuredOutputsConfig,
     UVAOffloadConfig,
     VllmConfig,
-    WeightTransferConfig,
     get_attr_docs,
 )
 from vllm.config.cache import (
@@ -99,7 +98,6 @@ from vllm.transformers_utils.config import (
     is_interleaved,
     maybe_override_with_speculators,
 )
-from vllm.transformers_utils.gguf_utils import is_gguf
 from vllm.transformers_utils.repo_utils import get_model_path
 from vllm.transformers_utils.utils import is_cloud_storage
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -609,15 +607,16 @@ class EngineArgs:
 
     shutdown_timeout: int = 0
 
-    weight_transfer_config: WeightTransferConfig | None = get_field(
-        VllmConfig,
-        "weight_transfer_config",
-    )
-
     fail_on_environ_validation: bool = False
     gdn_prefill_backend: Literal["flashinfer", "triton"] | None = None
 
     def __post_init__(self):
+        if getattr(self, "enable_lora", False) or getattr(
+            self, "default_mm_loras", None
+        ):
+            raise ValueError("Ascend P4 does not support LoRA")
+        if getattr(self, "pooler_config", None) is not None:
+            raise ValueError("Ascend P4 does not support pooling")
         # support `EngineArgs(compilation_config={...})`
         # without having to manually construct a
         # CompilationConfig object
@@ -629,10 +628,6 @@ class EngineArgs:
             self.kernel_config = KernelConfig(**self.kernel_config)
         if isinstance(self.eplb_config, dict):
             self.eplb_config = EPLBConfig(**self.eplb_config)
-        if isinstance(self.weight_transfer_config, dict):
-            self.weight_transfer_config = WeightTransferConfig(
-                **self.weight_transfer_config
-            )
         # Setup plugins
         from vllm.plugins import load_general_plugins
 
@@ -731,7 +726,6 @@ class EngineArgs:
             help=model_kwargs["hf_token"]["help"],
         )
         model_group.add_argument("--hf-overrides", **model_kwargs["hf_overrides"])
-        model_group.add_argument("--pooler-config", **model_kwargs["pooler_config"])
         model_group.add_argument(
             "--generation-config", **model_kwargs["generation_config"]
         )
@@ -1035,88 +1029,6 @@ class EngineArgs:
             "--offload-params", **prefetch_kwargs["offload_params"]
         )
 
-        # Multimodal related configs
-        multimodal_kwargs = get_kwargs(MultiModalConfig)
-        multimodal_group = parser.add_argument_group(
-            title="MultiModalConfig",
-            description=MultiModalConfig.__doc__,
-        )
-        multimodal_group.add_argument(
-            "--language-model-only", **multimodal_kwargs["language_model_only"]
-        )
-        multimodal_group.add_argument(
-            "--limit-mm-per-prompt", **multimodal_kwargs["limit_per_prompt"]
-        )
-        multimodal_group.add_argument(
-            "--enable-mm-embeds", **multimodal_kwargs["enable_mm_embeds"]
-        )
-        multimodal_group.add_argument(
-            "--media-io-kwargs", **multimodal_kwargs["media_io_kwargs"]
-        )
-        multimodal_group.add_argument(
-            "--mm-processor-kwargs", **multimodal_kwargs["mm_processor_kwargs"]
-        )
-        multimodal_group.add_argument(
-            "--mm-processor-cache-gb", **multimodal_kwargs["mm_processor_cache_gb"]
-        )
-        multimodal_group.add_argument(
-            "--mm-processor-cache-type", **multimodal_kwargs["mm_processor_cache_type"]
-        )
-        multimodal_group.add_argument(
-            "--mm-shm-cache-max-object-size-mb",
-            **multimodal_kwargs["mm_shm_cache_max_object_size_mb"],
-        )
-        multimodal_group.add_argument(
-            "--mm-encoder-only", **multimodal_kwargs["mm_encoder_only"]
-        )
-        multimodal_group.add_argument(
-            "--mm-encoder-tp-mode", **multimodal_kwargs["mm_encoder_tp_mode"]
-        )
-        multimodal_group.add_argument(
-            "--mm-encoder-attn-backend",
-            **multimodal_kwargs["mm_encoder_attn_backend"],
-        )
-        multimodal_group.add_argument(
-            "--interleave-mm-strings", **multimodal_kwargs["interleave_mm_strings"]
-        )
-        multimodal_group.add_argument(
-            "--skip-mm-profiling", **multimodal_kwargs["skip_mm_profiling"]
-        )
-
-        multimodal_group.add_argument(
-            "--video-pruning-rate", **multimodal_kwargs["video_pruning_rate"]
-        )
-
-        # LoRA related configs
-        lora_kwargs = get_kwargs(LoRAConfig)
-        lora_group = parser.add_argument_group(
-            title="LoRAConfig",
-            description=LoRAConfig.__doc__,
-        )
-        lora_group.add_argument(
-            "--enable-lora",
-            action=argparse.BooleanOptionalAction,
-            help="If True, enable handling of LoRA adapters.",
-        )
-        lora_group.add_argument("--max-loras", **lora_kwargs["max_loras"])
-        lora_group.add_argument("--max-lora-rank", **lora_kwargs["max_lora_rank"])
-        lora_group.add_argument(
-            "--lora-dtype",
-            **lora_kwargs["lora_dtype"],
-        )
-        lora_group.add_argument(
-            "--enable-tower-connector-lora",
-            **lora_kwargs["enable_tower_connector_lora"],
-        )
-        lora_group.add_argument("--max-cpu-loras", **lora_kwargs["max_cpu_loras"])
-        lora_group.add_argument(
-            "--fully-sharded-loras", **lora_kwargs["fully_sharded_loras"]
-        )
-        lora_group.add_argument("--default-mm-loras", **lora_kwargs["default_mm_loras"])
-        lora_group.add_argument(
-            "--specialize-active-lora", **lora_kwargs["specialize_active_lora"]
-        )
-
         # Observability arguments
         observability_kwargs = get_kwargs(ObservabilityConfig)
         observability_group = parser.add_argument_group(
@@ -1291,9 +1203,6 @@ class EngineArgs:
             "--optimization-level", **vllm_kwargs["optimization_level"]
         )
         vllm_group.add_argument("--performance-mode", **vllm_kwargs["performance_mode"])
-        vllm_group.add_argument(
-            "--weight-transfer-config", **vllm_kwargs["weight_transfer_config"]
-        )
 
         # Other arguments
         parser.add_argument(
@@ -1345,8 +1254,6 @@ class EngineArgs:
 
     def create_model_config(self) -> ModelConfig:
         # gguf file needs a specific model loader
-        if is_gguf(self.model):
-            self.quantization = self.load_format = "gguf"
 
         if not envs.VLLM_ENABLE_V1_MULTIPROCESSING:
             logger.warning(
@@ -1412,29 +1319,10 @@ class EngineArgs:
             io_processor_plugin=self.io_processor_plugin,
         )
 
-    def validate_tensorizer_args(self):
-        from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
-
-        for key in self.model_loader_extra_config:
-            if key in TensorizerConfig._fields:
-                self.model_loader_extra_config["tensorizer_config"][key] = (
-                    self.model_loader_extra_config[key]
-                )
-
     def create_load_config(self) -> LoadConfig:
-        if self.quantization == "bitsandbytes":
-            self.load_format = "bitsandbytes"
+        pass  # Unsupported P4 branch removed.
 
-        if self.load_format == "tensorizer":
-            if hasattr(self.model_loader_extra_config, "to_serializable"):
-                self.model_loader_extra_config = (
-                    self.model_loader_extra_config.to_serializable()
-                )
-            self.model_loader_extra_config["tensorizer_config"] = {}
-            self.model_loader_extra_config["tensorizer_config"]["tensorizer_dir"] = (
-                self.model
-            )
-            self.validate_tensorizer_args()
+        pass  # Unsupported P4 branch removed.
 
         return LoadConfig(
             load_format=self.load_format,
@@ -1793,46 +1681,7 @@ class EngineArgs:
             stream_interval=self.stream_interval,
         )
 
-        if not model_config.is_multimodal_model and self.default_mm_loras:
-            raise ValueError(
-                "Default modality-specific LoRA(s) were provided for a "
-                "non multimodal model"
-            )
-
-        lora_config = (
-            LoRAConfig(
-                max_lora_rank=self.max_lora_rank,
-                max_loras=self.max_loras,
-                default_mm_loras=self.default_mm_loras,
-                fully_sharded_loras=self.fully_sharded_loras,
-                lora_dtype=self.lora_dtype,
-                enable_tower_connector_lora=self.enable_tower_connector_lora,
-                specialize_active_lora=self.specialize_active_lora,
-                max_cpu_loras=self.max_cpu_loras
-                if self.max_cpu_loras and self.max_cpu_loras > 0
-                else None,
-            )
-            if self.enable_lora
-            else None
-        )
-
-        if (
-            lora_config is not None
-            and speculative_config is not None
-            and scheduler_config.max_num_batched_tokens
-            < (
-                scheduler_config.max_num_seqs
-                * (speculative_config.num_speculative_tokens + 1)
-            )
-        ):
-            raise ValueError(
-                "Consider increasing max_num_batched_tokens or "
-                "decreasing num_speculative_tokens"
-            )
-
-        # bitsandbytes pre-quantized model need a specific model loader
-        if model_config.quantization == "bitsandbytes":
-            self.quantization = self.load_format = "bitsandbytes"
+        lora_config = None
 
         # Attention config overrides
         attention_config = copy.deepcopy(self.attention_config)
@@ -1942,7 +1791,6 @@ class EngineArgs:
             additional_config=self.additional_config,
             optimization_level=self.optimization_level,
             performance_mode=self.performance_mode,
-            weight_transfer_config=self.weight_transfer_config,
             shutdown_timeout=self.shutdown_timeout,
         )
 
@@ -2027,35 +1875,10 @@ class EngineArgs:
             }
 
         # tpu specific default values.
-        if current_platform.is_tpu():
-            chip_name = current_platform.get_device_name()
-
-            if chip_name == "V6E":
-                default_max_num_batched_tokens = {
-                    UsageContext.LLM_CLASS: 2048,
-                    UsageContext.OPENAI_API_SERVER: 1024,
-                }
-            elif chip_name == "V5E":
-                default_max_num_batched_tokens = {
-                    UsageContext.LLM_CLASS: 1024,
-                    UsageContext.OPENAI_API_SERVER: 512,
-                }
-            elif chip_name == "V5P":
-                default_max_num_batched_tokens = {
-                    UsageContext.LLM_CLASS: 512,
-                    UsageContext.OPENAI_API_SERVER: 256,
-                }
+        pass  # Unsupported P4 branch removed.
 
         # cpu specific default values.
-        if current_platform.is_cpu():
-            default_max_num_batched_tokens = {
-                UsageContext.LLM_CLASS: 4096 * world_size,
-                UsageContext.OPENAI_API_SERVER: 2048 * world_size,
-            }
-            default_max_num_seqs = {
-                UsageContext.LLM_CLASS: 256 * world_size,
-                UsageContext.OPENAI_API_SERVER: 128 * world_size,
-            }
+        pass  # Unsupported P4 branch removed.
 
         return default_max_num_batched_tokens, default_max_num_seqs
 
@@ -2083,17 +1906,7 @@ class EngineArgs:
                 "or produce incorrect outputs.",
                 scope="local",
             )
-        elif (
-            model_config.runner_type == "pooling"
-            and self.enable_chunked_prefill
-            and not default_chunked_prefill
-        ):
-            logger.warning_once(
-                "This model does not officially support chunked prefill. "
-                "Enabling this manually may cause the engine to crash "
-                "or produce incorrect outputs.",
-                scope="local",
-            )
+        pass  # Unsupported P4 branch removed.
 
         if self.enable_prefix_caching is None:
             self.enable_prefix_caching = default_prefix_caching
@@ -2102,35 +1915,11 @@ class EngineArgs:
                 "%s prefix caching by default",
                 "Enabling" if default_prefix_caching else "Disabling",
             )
-        elif (
-            model_config.runner_type == "pooling"
-            and self.enable_prefix_caching
-            and not default_prefix_caching
-        ):
-            logger.warning_once(
-                "This model does not officially support prefix caching. "
-                "Enabling this manually may cause the engine to crash "
-                "or produce incorrect outputs.",
-                scope="local",
-            )
+        pass  # Unsupported P4 branch removed.
 
         # Disable chunked prefill and prefix caching for:
         # RISCV CPUs in V1
-        if current_platform.is_cpu() and current_platform.get_cpu_architecture() in (
-            CpuArchEnum.RISCV,
-        ):
-            logger.info(
-                "Chunked prefill is not supported for"
-                "RISC-V CPUs; "
-                "disabling it for V1 backend."
-            )
-            self.enable_chunked_prefill = False
-            logger.info(
-                "Prefix caching is not supported for "
-                "RISC-V CPUs; "
-                "disabling it for V1 backend."
-            )
-            self.enable_prefix_caching = False
+        pass  # Unsupported P4 branch removed.
 
     def _set_default_max_num_seqs_and_batched_tokens_args(
         self,

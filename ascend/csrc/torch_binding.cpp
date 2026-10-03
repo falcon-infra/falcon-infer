@@ -3251,179 +3251,6 @@ at::Tensor npu_dsa_prepare_sparse_indices_sharded_(
         clear_invalid_rows, true);
 }
 
-void bgmv_shrink(at::Tensor &x, at::Tensor &weight, at::Tensor &indices, at::Tensor &y, double scale)
-{
-    at::ScalarType scalar_type = x.scalar_type();
-    TORCH_CHECK(scalar_type == torch::kHalf || scalar_type == torch::kBFloat16, "only support half and bf16");
-    TORCH_CHECK(x.dim() == 2, "x should be [batch_size, hidden_in]");
-    TORCH_CHECK(weight.dim() == 3 || weight.dim() == 4,
-                "weight should be [num_loras, hidden_out, hidden_in] or [num_loras, 1, hidden_out, hidden_in]");
-    TORCH_CHECK(y.dim() == 2, "y should be [batch_size, hidden_out]");
-    TORCH_CHECK(indices.dim() == 1, "indices should be [batch_size]");
-    TORCH_CHECK(x.size(0) == y.size(0) && x.size(0) == indices.size(0),
-                "the first dimension of x, y, indices should be same");
-    TORCH_CHECK(x.size(1) > y.size(1), "hidden in should be greater than hidden out");
-    void* x_ptr = x.data_ptr();
-    void* weight_ptr = weight.data_ptr();
-    void* indices_ptr = indices.data_ptr();
-    int indices_size = indices.size(0);
-    void* y_ptr = y.data_ptr();
-    int batch_size = x.size(0);
-    int input_hidden_token = x.size(1);
-    uint32_t lora_rank = y.size(1);
-    float scale_f = static_cast<float>(scale);
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-    at_npu::native::OpCommand cmd;
-    cmd.Name("bgmv_shrink");
-    cmd.SetCustomHandler([scalar_type, stream, x_ptr, weight_ptr, indices_ptr, indices_size, y_ptr, batch_size, input_hidden_token,
-                          lora_rank, scale_f]() -> int {
-        auto dtype = get_dtype_from_torch(scalar_type);
-        int device_id = 0;
-        int64_t aiv_num = 0;
-        TORCH_CHECK(aclGetDeviceCapability(device_id, ACL_DEVICE_INFO_VECTOR_CORE_NUM, &aiv_num) == ACL_SUCCESS);
-        int num_tokens_per_core = (batch_size + aiv_num - 1) / aiv_num;
-        TORCH_CHECK("num_tokens_per_core != 0", "num_tokens_per_core should not be 0");
-        bgmv_shrink_impl(dtype, stream, x_ptr, weight_ptr, indices_ptr, indices_size, y_ptr, batch_size, num_tokens_per_core,
-                         input_hidden_token, lora_rank, scale_f);
-        return 0;
-    });
-    cmd.Run();
-    return;
-}
-
-at::Tensor bgmv_expand(at::Tensor &x, at::Tensor &weight, at::Tensor &indices, at::Tensor &y,
-                       int64_t slice_offset, int64_t slice_size)
-{
-    at::ScalarType scalar_type = y.scalar_type();
-    TORCH_CHECK(scalar_type == torch::kHalf || scalar_type == torch::kBFloat16, "only support half and bf16");
-    TORCH_CHECK(x.dim() == 2, "x should be [batch_size, hidden_in]");
-    TORCH_CHECK(weight.dim() == 3 || weight.dim() == 4,
-                "weight should be [num_loras, hidden_out, hidden_in] or [num_loras, 1, hidden_out, hidden_in]");
-    TORCH_CHECK(y.dim() == 2, "y should be [batch_size, hidden_out]");
-    TORCH_CHECK(indices.dim() == 1, "indices should be [batch_size]");
-    TORCH_CHECK(x.size(0) == y.size(0) && x.size(0) == indices.size(0),
-                "the first dimension of x, y, indices should be same");
-    TORCH_CHECK(x.size(1) <= slice_size, "hidden in should be smaller than hidden out");
-    TORCH_CHECK(slice_offset >= 0, "slice offset should be no smaller than 0");
-    TORCH_CHECK((slice_size + slice_offset) <= y.size(1),
-                "slice_size + slice_offset should be smaller than the second dimension of y")
-
-    at::Tensor y_out = y;
-    void* x_ptr = x.data_ptr();
-    void* weight_ptr = weight.data_ptr();
-    void* indices_ptr = indices.data_ptr();
-    int indices_size = indices.size(0);
-    void* y_ptr = y.data_ptr();
-    void* y_out_ptr = y_out.data_ptr();
-    int batch_size = x.size(0);
-    int lora_rank = x.size(1);
-    int output_full_dim = y.size(1);
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-    at_npu::native::OpCommand cmd;
-    cmd.Name("bgmv_expand");
-    cmd.SetCustomHandler([scalar_type, stream, x_ptr, weight_ptr, indices_ptr, indices_size, y_ptr, y_out_ptr, batch_size, lora_rank,
-                          slice_offset, slice_size, output_full_dim]() -> int {
-        auto dtype = get_dtype_from_torch(scalar_type);
-        int device_id = 0;
-        int64_t aiv_num = 0;
-        TORCH_CHECK(aclGetDeviceCapability(device_id, ACL_DEVICE_INFO_VECTOR_CORE_NUM, &aiv_num) == ACL_SUCCESS);
-        int num_tokens_per_core = (batch_size + aiv_num - 1) / aiv_num;
-        TORCH_CHECK("num_tokens_per_core != 0", "num_tokens_per_core should not be 0");
-        bgmv_expand_impl(dtype, stream, x_ptr, weight_ptr, indices_ptr, indices_size, y_ptr, y_out_ptr, batch_size,
-                         num_tokens_per_core, lora_rank, slice_size, slice_offset, output_full_dim);
-        return 0;
-    });
-    cmd.Run();
-    return y_out;
-}
-
-void sgmv_shrink(at::Tensor &x, at::Tensor &weight, at::Tensor &lora_indices, at::Tensor &seq_len,
-                 at::Tensor &y, double scale)
-{
-    at::ScalarType scalar_type = x.scalar_type();
-    TORCH_CHECK(scalar_type == torch::kHalf || scalar_type == torch::kBFloat16, "only support half and bf16");
-    TORCH_CHECK(x.dim() == 2, "x should be [batch_size, hidden_in]");
-    TORCH_CHECK(weight.dim() == 3 || weight.dim() == 4,
-                "weight should be [num_loras, hidden_out, hidden_in] or [num_loras, 1, hidden_out, hidden_in]");
-    TORCH_CHECK(y.dim() == 2, "y should be [batch_size, hidden_out]");
-    TORCH_CHECK(x.size(1) > y.size(1), "hidden in should be greater than hidden out");
-    void* x_ptr = x.data_ptr();
-    void* weight_ptr = weight.data_ptr();
-    void* lora_indices_ptr = lora_indices.data_ptr();
-    void* seq_len_ptr = seq_len.data_ptr();
-    int lora_indices_size = lora_indices.size(0);
-    int seq_len_size = seq_len.size(0);
-    void* y_ptr = y.data_ptr();
-    int batch_size = x.size(0);
-    int input_hidden_token = x.size(1);
-    uint32_t lora_rank = y.size(1);
-    float scale_f = static_cast<float>(scale);
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-    at_npu::native::OpCommand cmd;
-    cmd.Name("sgmv_shrink");
-    cmd.SetCustomHandler([scalar_type, stream, x_ptr, weight_ptr, lora_indices_ptr, lora_indices_size,
-                          seq_len_ptr, seq_len_size, y_ptr,
-                          batch_size, input_hidden_token, lora_rank, scale_f]() -> int {
-        auto dtype = get_dtype_from_torch(scalar_type);
-        int device_id = 0;
-        int64_t aiv_num = 0;
-        TORCH_CHECK(aclGetDeviceCapability(device_id, ACL_DEVICE_INFO_VECTOR_CORE_NUM, &aiv_num) == ACL_SUCCESS);
-        int num_tokens_per_core = (batch_size + aiv_num - 1) / aiv_num;
-        TORCH_CHECK("num_tokens_per_core != 0", "num_tokens_per_core should not be 0");
-        sgmv_shrink_impl(dtype, stream, x_ptr, weight_ptr, lora_indices_ptr, lora_indices_size, seq_len_ptr, seq_len_size,
-                         y_ptr, batch_size,
-                         num_tokens_per_core, input_hidden_token, lora_rank, scale_f);
-        return 0;
-    });
-    cmd.Run();
-    return;
-}
-
-at::Tensor sgmv_expand(at::Tensor &x, at::Tensor &weight, at::Tensor &lora_indices, at::Tensor &seq_len,
-                       at::Tensor &y, int64_t slice_offset, int64_t slice_size)
-{
-    at::ScalarType scalar_type = y.scalar_type();
-    TORCH_CHECK(scalar_type == torch::kHalf || scalar_type == torch::kBFloat16, "only support half and bf16");
-    TORCH_CHECK(x.dim() == 2, "x should be [batch_size, hidden_in]");
-    TORCH_CHECK(weight.dim() == 3 || weight.dim() == 4,
-                "weight should be [num_loras, hidden_out, hidden_in] or [num_loras, 1, hidden_out, hidden_in]");
-    TORCH_CHECK(y.dim() == 2, "y should be [batch_size, hidden_out]");
-    TORCH_CHECK(x.size(1) <= slice_size, "hidden in should be smaller than hidden out");
-    TORCH_CHECK(slice_offset >= 0, "slice offset should be no smaller than 0");
-    TORCH_CHECK((slice_size + slice_offset) <= y.size(1),
-                "slice_size + slice_offset should be smaller than the second dimension of y")
-
-    at::Tensor y_out = y;
-    void* x_ptr = x.data_ptr();
-    void* weight_ptr = weight.data_ptr();
-    void* lora_indices_ptr = lora_indices.data_ptr();
-    void* seq_len_ptr = seq_len.data_ptr();
-    int lora_indices_size = lora_indices.size(0);
-    int seq_len_size = seq_len.size(0);
-    void* y_ptr = y.data_ptr();
-    void* y_out_ptr = y_out.data_ptr();
-    int batch_size = x.size(0);
-    int lora_rank = x.size(1);
-    int output_full_dim = y.size(1);
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-    at_npu::native::OpCommand cmd;
-    cmd.Name("sgmv_expand");
-    cmd.SetCustomHandler([scalar_type, stream, x_ptr, weight_ptr, lora_indices_ptr, lora_indices_size, seq_len_ptr, seq_len_size, y_ptr, y_out_ptr,
-                          batch_size, lora_rank, slice_offset, slice_size, output_full_dim]() -> int {
-        auto dtype = get_dtype_from_torch(scalar_type);
-        int device_id = 0;
-        int64_t aiv_num = 0;
-        TORCH_CHECK(aclGetDeviceCapability(device_id, ACL_DEVICE_INFO_VECTOR_CORE_NUM, &aiv_num) == ACL_SUCCESS);
-        int num_tokens_per_core = (batch_size + aiv_num - 1) / aiv_num;
-        TORCH_CHECK("num_tokens_per_core != 0", "num_tokens_per_core should not be 0");
-        sgmv_expand_impl(dtype, stream, x_ptr, weight_ptr, lora_indices_ptr, lora_indices_size, seq_len_ptr, seq_len_size, y_ptr, y_out_ptr,
-                         batch_size, num_tokens_per_core, lora_rank, slice_size, slice_offset, output_full_dim);
-        return 0;
-    });
-    cmd.Run();
-    return y_out;
-}
-
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> dispatch_prefill(
     const at::Tensor& x, const at::Tensor& topk_idx, const at::Tensor& topk_weights,
     const at::Tensor& num_tokens_per_rank, const at::Tensor& is_token_in_rank, at::Tensor& num_tokens_per_expert,
@@ -3585,34 +3412,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> dispatch_prefill(
     return {expandx_out, expand_idx_out, recv_count, num_recv_tokens_per_expert};
 }
 
-std::tuple<at::Tensor, at::Tensor> npu_gemma_rms_norm(
-    const at::Tensor& x,
-    const at::Tensor& gamma,
-    double epsilon)
-{
-    int64_t dim_x = x.dim();
-    int64_t dim_gamma = gamma.dim();
-    int64_t diff = dim_x - dim_gamma;
-    std::vector<int64_t> new_shape;
-    at::Tensor rstd;
-    if (diff > 0) {
-        new_shape.reserve(dim_x);
-        auto x_sizes = x.sizes();
-        for (int64_t i = 0; i < diff; ++i) {
-            new_shape.push_back(x_sizes[i]);
-        }
-        for (int64_t i = 0; i < dim_gamma; ++i) {
-            new_shape.push_back(1);
-        }
-    } else {
-        new_shape.assign(dim_x, 1);
-    }
-    rstd = at::empty(new_shape, x.options().dtype(at::kFloat));
-    at::Tensor y = at::empty(x.sizes(), x.options());
-    EXEC_NPU_CMD(aclnnGemmaRmsNorm, x, gamma, epsilon, y, rstd);
-    return std::tuple<at::Tensor, at::Tensor>(y, rstd);
-}
-
 void transpose_kv_cache_by_block(
     const at::TensorList &kCache,
     const at::TensorList &vCache,
@@ -3664,38 +3463,6 @@ npu_copy_and_expand_eagle_inputs(
             out_new_token_indices, out_hidden_state_mapping};
 }
 
-at::Tensor npu_causal_conv1d_custom(
-    const at::Tensor& x,
-    const at::Tensor& weight,
-    const at::Tensor& conv_state,
-    const c10::optional<at::Tensor>& bias_opt,
-    at::IntArrayRef query_start_loc_opt,
-    at::IntArrayRef cache_indices_opt,
-    at::IntArrayRef initial_state_mode_opt,
-    at::IntArrayRef num_accepted_tokens_opt,
-    int64_t  activation_mode,
-    int64_t  pad_slot_id,
-    int64_t  run_mode)
-{
-    at::Tensor output = at::empty(x.sizes(), x.options());
-    EXEC_NPU_CMD(aclnnCausalConv1d,
-                    x,
-                    weight,
-                    bias_opt,
-                    conv_state,
-                    query_start_loc_opt,
-                    cache_indices_opt,
-                    initial_state_mode_opt,
-                    num_accepted_tokens_opt,
-                    activation_mode,
-                    pad_slot_id,
-                    run_mode,
-                    output
-                );
-
-    return output;
-}
-  
 // It is expected that further improvements will be made after it is incorporated into CANN on June 30th.
 std::vector<at::Tensor> moe_grouped_matmul(
     at::Tensor x,
@@ -3734,14 +3501,6 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
 {
 
     // vLLM-Ascend custom ops
-    // Gemma RmsNorm
-    ops.def(
-        "npu_gemma_rms_norm(Tensor x, "
-                            "Tensor gamma, "
-                            "float epsilon=1e-6)"
-        "-> (Tensor y ,Tensor rstd)"
-        );
-    ops.impl("npu_gemma_rms_norm", torch::kPrivateUse1, &vllm_ascend::npu_gemma_rms_norm);
     ops.def("weak_ref_tensor(Tensor input) -> Tensor");
     ops.impl("weak_ref_tensor", torch::kPrivateUse1, &vllm_ascend::weak_ref_tensor);
 
@@ -4016,22 +3775,6 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         torch::kPrivateUse1,
         &vllm_ascend::npu_dsa_staged_copy_rows_);
 
-    ops.def("bgmv_shrink(Tensor! x, Tensor! weight, Tensor! indices, Tensor! y, float scale) -> ()");
-    ops.impl("bgmv_shrink", torch::kPrivateUse1, &vllm_ascend::bgmv_shrink);
-
-    ops.def(
-        "bgmv_expand(Tensor! x, Tensor! weight, Tensor! indices, Tensor! y,"
-        "            int slice_offset, int slice_size) -> Tensor");
-    ops.impl("bgmv_expand", torch::kPrivateUse1, &vllm_ascend::bgmv_expand);
-
-    ops.def("sgmv_shrink(Tensor! x, Tensor! weight, Tensor! lora_indices, Tensor! seq_len, Tensor! y, float scale) -> ()");
-    ops.impl("sgmv_shrink", torch::kPrivateUse1, &vllm_ascend::sgmv_shrink);
-
-    ops.def(
-        "sgmv_expand(Tensor! x, Tensor! weight, Tensor! lora_indices, Tensor! seq_len, Tensor! y,"
-        "            int slice_offset, int slice_size) -> Tensor");
-    ops.impl("sgmv_expand", torch::kPrivateUse1, &vllm_ascend::sgmv_expand);
-
     ops.def(
         "mla_preprocess(Tensor hiddenState, Tensor wdqkv,"
         "               Tensor? descale0, Tensor gamma1, Tensor? beta1, Tensor wuq, Tensor? descale1,"
@@ -4182,20 +3925,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "Tensor out_is_masked_token_mask, Tensor out_new_token_indices, Tensor out_hidden_state_mapping)"
     );
     ops.impl("npu_copy_and_expand_eagle_inputs", torch::kPrivateUse1, &vllm_ascend::npu_copy_and_expand_eagle_inputs);
-    ops.def(
-        "npu_causal_conv1d_custom(Tensor x, "
-        "                         Tensor weight, "
-        "                         Tensor conv_state, "
-        "                         Tensor? bias_opt, "
-        "                         int[] query_start_loc_opt, "
-        "                         int[] cache_indices_opt, "
-        "                         int[] initial_state_mode_opt, "
-        "                         int[] num_accepted_tokens_opt, "
-        "                         int activation_mode, "
-        "                         int pad_slot_id, "
-        "                         int run_mode"
-        ") -> (Tensor output)");
-    ops.impl("npu_causal_conv1d_custom", torch::kPrivateUse1, &vllm_ascend::npu_causal_conv1d_custom);
+
     ops.def(
         "moe_grouped_matmul("
             "Tensor x,"

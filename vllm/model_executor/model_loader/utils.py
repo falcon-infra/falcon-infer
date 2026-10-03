@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 
 import torch
 from torch import nn
-from typing_extensions import assert_never
 
 import vllm.envs as envs
 from vllm.config import ModelConfig, VllmConfig, set_current_vllm_config
@@ -21,7 +20,6 @@ from vllm.model_executor.layers.quantization.base_config import (
 )
 from vllm.model_executor.model_loader.reload import (
     record_metadata_for_reloading,
-    set_torchao_reload_attrs,
 )
 from vllm.model_executor.models.interfaces import SupportsQuant
 from vllm.tracing import instrument
@@ -118,8 +116,7 @@ def process_weights_after_loading(
 
     # Needed for torchao model reloading via model.reload_weights
     # @kylesayrs @jerryzh168 this can be removed if callers move to `reload_weights`
-    if model_config.quantization == "torchao":
-        set_torchao_reload_attrs(model, model_config)
+    pass  # Unsupported P4 branch removed.
 
 
 @contextmanager
@@ -172,7 +169,6 @@ _MODEL_ARCH_BY_HASH = dict[int, tuple[type[nn.Module], str]]()
 
 
 def _get_model_architecture(model_config: ModelConfig) -> tuple[type[nn.Module], str]:
-    from vllm.model_executor.models.adapters import as_embedding_model, as_seq_cls_model
 
     architectures = getattr(model_config.hf_config, "architectures", [])
 
@@ -191,17 +187,8 @@ def _get_model_architecture(model_config: ModelConfig) -> tuple[type[nn.Module],
                 arch,
             )
 
-    convert_type = model_config.convert_type
-    if convert_type == "none":
-        pass
-    elif convert_type == "embed":
-        logger.debug_once("Converting to embedding model.")
-        model_cls = as_embedding_model(model_cls)
-    elif convert_type == "classify":
-        logger.debug_once("Converting to sequence classification model.")
-        model_cls = as_seq_cls_model(model_cls)
-    else:
-        assert_never(convert_type)
+    if model_config.convert_type != "none":
+        raise ValueError("Ascend P4 does not support pooling/conversion")
 
     return model_cls, arch
 
