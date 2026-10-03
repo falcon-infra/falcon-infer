@@ -6,6 +6,7 @@ import dataclasses
 import importlib
 import logging
 import uuid
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any, Literal, get_args
@@ -242,27 +243,115 @@ def test_migrated_config_resolves_native_factory_without_old_module_import(
 
 def connector():
     tree = ast.parse(SOURCE.read_text())
-    cls = next(
+    classes = [
         n
         for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "LMCacheConnectorV1"
+        if isinstance(n, ast.ClassDef)
+        and n.name in ("LMCacheKVEvents", "LMCacheConnectorV1")
+    ]
+    aggregator_path = ROOT / "vllm/distributed/kv_events.py"
+    aggregator = next(
+        n
+        for n in ast.parse(aggregator_path.read_text()).body
+        if isinstance(n, ast.ClassDef) and n.name == "KVEventAggregator"
     )
     namespace = {
         "KVConnectorBase_V1": type("Base", (), {}),
         "SupportsHMA": type("HMA", (), {}),
+        "KVConnectorKVEvents": type("Events", (), {}),
+        "Counter": Counter,
     }
     prefix = ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0
     )
     exec(
         compile(
-            ast.fix_missing_locations(ast.Module(body=[prefix, cls], type_ignores=[])),
+            ast.fix_missing_locations(
+                ast.Module(body=[prefix, aggregator, *classes], type_ignores=[])
+            ),
             str(SOURCE),
             "exec",
         ),
         namespace,
     )
-    return object.__new__(namespace[cls.name])
+    wrapper = object.__new__(namespace["LMCacheConnectorV1"])
+    wrapper._kv_cache_events = None
+    return wrapper
+
+
+def kv_events(wrapper, values):
+    """Use the production event container/aggregator with hashable host fixtures."""
+    cls = wrapper.update_connector_output.__globals__["LMCacheKVEvents"]
+    events = cls(num_workers=1)
+    events.add_events(values)
+    return events
+
+
+@pytest.mark.parametrize("kind", ["none", "falsey", "foreign", "empty", "events"])
+def test_worker_output_is_forwarded_even_without_kv_events(kind):
+    wrapper = connector()
+    events = {
+        "none": None,
+        "falsey": [],
+        "foreign": object(),
+        "empty": kv_events(wrapper, []),
+        "events": kv_events(wrapper, ["block"]),
+    }[kind]
+    output = NS(
+        finished_recving={"cold-request"},
+        finished_sending={"sent-request"},
+        invalid_block_ids={7},
+        completed_decode_window_saves={"decode-request": 256},
+        kv_cache_events=events,
+    )
+    before = vars(output).copy()
+    wrapper._lmcache_engine = NS(update_connector_output=Mock())
+    wrapper.update_connector_output(output)
+    wrapper._lmcache_engine.update_connector_output.assert_called_once_with(output)
+    assert wrapper._lmcache_engine.update_connector_output.call_args.args[0] is output
+    assert vars(output) == before
+    assert wrapper._kv_cache_events is (events if kind in ("empty", "events") else None)
+
+
+def test_output_forwarding_preserves_kv_event_aggregation_and_drain():
+    wrapper = connector()
+    first = kv_events(wrapper, ["common", "worker-1"])
+    second = kv_events(wrapper, ["common", "worker-2"])
+    outputs = [NS(kv_cache_events=first), NS(kv_cache_events=second)]
+    observed = []
+    wrapper._lmcache_engine = NS(
+        update_connector_output=lambda out: observed.append(
+            (out, wrapper._kv_cache_events)
+        )
+    )
+    for output in outputs:
+        wrapper.update_connector_output(output)
+    assert observed == [(outputs[0], None), (outputs[1], first)]
+    assert wrapper._kv_cache_events is first
+    assert first.get_number_of_workers() == 2
+    assert Counter(first.get_all_events()) == Counter(
+        ["common", "worker-1", "common", "worker-2"]
+    )
+    assert list(wrapper.take_events()) == ["common"]
+    assert wrapper._kv_cache_events is None
+    assert list(wrapper.take_events()) == []
+
+
+@pytest.mark.parametrize("has_events", [False, True])
+def test_adapter_completion_errors_are_not_hidden_by_kv_events(has_events):
+    wrapper = connector()
+    existing = kv_events(wrapper, ["existing"])
+    wrapper._kv_cache_events = existing
+    output = NS(kv_cache_events=kv_events(wrapper, ["new"]) if has_events else None)
+    wrapper._lmcache_engine = NS(
+        update_connector_output=Mock(side_effect=RuntimeError("invalid completion"))
+    )
+    with pytest.raises(RuntimeError, match="invalid completion"):
+        wrapper.update_connector_output(output)
+    wrapper._lmcache_engine.update_connector_output.assert_called_once_with(output)
+    assert wrapper._kv_cache_events is existing
+    assert existing.get_all_events() == ["existing"]
+    assert existing.get_number_of_workers() == 1
 
 
 @pytest.mark.parametrize(

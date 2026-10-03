@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Intranet P2/P3 cold-import, KV-binding and uncached registry inspection gate.
+"""Intranet cold-import, KV-binding and optional LMCache completion/GLM gate.
 
 Run outside source checkouts after installation. No weights are loaded and no
 inference, installation or network service is started. Imports can load native
@@ -44,6 +44,7 @@ IDENTITY_FILES = (
     "config/compilation.py",
     "config/kv_transfer.py",
     "v1/worker/utils.py",
+    "distributed/kv_transfer/kv_connector/v1/lmcache_connector.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="
 
@@ -95,6 +96,71 @@ def check_kv_cache_binding(
     return {"cases_passed": len(cases), "contract": "order_and_reference_identity"}
 
 
+def check_lmcache_completion(
+    connector_cls: type, adapter_cls: type, output_cls: type
+) -> dict:
+    """Exercise real scheduler methods on isolated host state, without __init__.
+
+    No cache engine, lookup client, NPU allocation or service is created. This
+    checks completion-to-resume state transitions, not tensors or inference.
+    """
+    wrapper = object.__new__(connector_cls)
+    adapter = object.__new__(adapter_cls)
+    wrapper._lmcache_engine = adapter
+    wrapper._kv_cache_events = None
+    adapter.load_specs = {}
+
+    def receive(finished=None, invalid=()):
+        wrapper.update_connector_output(
+            output_cls(
+                finished_recving=finished,
+                finished_sending=None,
+                kv_cache_events=None,
+                invalid_block_ids=set(invalid),
+                completed_decode_window_saves={},
+            )
+        )
+
+    for index, failed in enumerate((False, False, True)):
+        req_id = f"bootstrap-cold-{index}"
+        spec = SimpleNamespace(dsa_cold_compact_load=True, can_load=False)
+        adapter.load_specs[req_id] = spec
+        adapter._dsa_group1_direct_hbm_active_req_id = req_id
+        adapter._dsa_cold_indexer_block_ids = {req_id: {index}}
+        # An unrelated completion must not release the active request's slot.
+        receive({"unrelated"})
+        receive(invalid={index} if failed else ())
+        if getattr(adapter, "_dsa_group1_direct_hbm_active_req_id", None) != req_id:
+            raise RuntimeError("LMCache released a cold-load slot before completion")
+        if adapter._take_completed_cold_load(req_id, spec):
+            raise RuntimeError("LMCache resumed a cold load before completion")
+        receive({req_id})
+        if getattr(adapter, "_dsa_group1_direct_hbm_active_req_id", None) is not None:
+            raise RuntimeError("LMCache completion did not release the cold-load slot")
+        ready = adapter._take_completed_cold_load(req_id, spec)
+        if ready != (not failed):
+            raise RuntimeError("LMCache cold-load validation/resume state is incorrect")
+        if not failed and (
+            getattr(spec, "dsa_cold_compact_load", False)
+            or not getattr(spec, "dsa_cold_compact_resume", False)
+            or not spec.can_load
+        ):
+            raise RuntimeError("LMCache completion did not set sparse resume markers")
+        if adapter._take_completed_cold_load(req_id, spec):
+            raise RuntimeError("LMCache consumed a cold-load completion twice")
+        if wrapper._kv_cache_events is not None:
+            raise RuntimeError("LMCache control completion generated KV events")
+        # Keep prior LoadSpecs alive: B must proceed before A finishes decoding.
+
+    return {
+        "cases_passed": 3,
+        "contract": "cold_load_slot_release_sparse_resume_and_invalid_block_rejection",
+        "kv_events_enabled": False,
+        "constructors_called": False,
+        "device_allocation": False,
+    }
+
+
 def check_order(order: str) -> dict:
     """Check one real installed import order without prewarming vLLM or torch."""
     expected = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"][
@@ -117,6 +183,7 @@ def check_order(order: str) -> dict:
         "ascend_utils": "vllm.utils.ascend",
         "registry_subprocess": "vllm.model_executor.models.registry",
         "kv_cache_bind": "vllm.v1.worker.utils",
+        "lmcache_completion": "vllm.config",
         "glm_inspect": "vllm.model_executor.models.registry",
     }[order]
     importlib.import_module(first)
@@ -186,6 +253,22 @@ def check_order(order: str) -> dict:
             "connector": owner,
             "instance_created": False,
         }
+    if order == "lmcache_completion":
+        # Opt-in only: no-KV installations must not acquire an LMCache dependency.
+        from lmcache.integration.vllm.vllm_v1_adapter import LMCacheConnectorV1Impl
+
+        from vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector import (
+            LMCacheConnectorV1,
+        )
+        from vllm.v1.outputs import KVConnectorOutput
+
+        result["lmcache_completion"] = check_lmcache_completion(
+            LMCacheConnectorV1, LMCacheConnectorV1Impl, KVConnectorOutput
+        )
+        result["lmcache_version"] = metadata.version("lmcache")
+        result["lmcache_adapter_path"] = importlib.import_module(
+            LMCacheConnectorV1Impl.__module__
+        ).__file__
     if order == "kv_cache_bind":
         from vllm.v1.worker.utils import bind_kv_cache
 
@@ -253,7 +336,14 @@ def main() -> int:
         help="uncached GLM class inspection; no weights",
     )
     parser.add_argument(
-        "--child", choices=(*ORDERS, "glm_inspect"), help=argparse.SUPPRESS
+        "--check-lmcache",
+        action="store_true",
+        help="paired P3 LMCache completion/resume check on host state; no NPU tensors",
+    )
+    parser.add_argument(
+        "--child",
+        choices=(*ORDERS, "glm_inspect", "lmcache_completion"),
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
     if args.child is not None:
@@ -274,6 +364,8 @@ def main() -> int:
     args.output.mkdir(parents=True, exist_ok=False)
     checks = []
     orders = (*ORDERS, "glm_inspect") if args.inspect_glm else ORDERS
+    if args.check_lmcache:
+        orders = (*orders, "lmcache_completion")
     for order in orders:
         command = [
             sys.executable,
@@ -303,7 +395,7 @@ def main() -> int:
         print(f"{order}: {'PASS' if result['passed'] else 'FAIL'}", flush=True)
     report = {
         "scope": (
-            "installed_cold_import_KV_binding_and_optional_class_inspection_not_inference"
+            "installed_cold_import_KV_binding_optional_LMCache_completion_and_GLM_not_inference"
         ),
         "python": sys.executable,
         "optional_plugins_disabled": True,
