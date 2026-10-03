@@ -44,7 +44,9 @@ from .partition_rules import (
     should_split,
 )
 from .passes.inductor_pass import InductorPass, pass_context
-from .passes.pass_manager import PostGradPassManager
+from .ascend.graph_fusion_pass_manager import (
+    GraphFusionPassManager as PostGradPassManager,
+)
 
 logger = init_logger(__name__)
 

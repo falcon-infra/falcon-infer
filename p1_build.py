@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""P3 native Ascend build commands; imported without torch or device probing.
+"""P4 native Ascend build commands; imported without torch or device probing.
 
 The two repositories carry independent copies of this build helper. Native
 builds are performed only by intranet operators. Metadata/sdist preparation
@@ -99,25 +99,25 @@ def package_names(primary: str, addon: str) -> list[str]:
 def check_environment() -> dict:
     """Validate explicit build inputs; called by build commands, never metadata."""
     if os.environ.get("SOC_VERSION", "").lower() != "ascend910b3":
-        raise RuntimeError("P1 candidate requires explicit SOC_VERSION=ascend910b3")
+        raise RuntimeError("P4 candidate requires explicit SOC_VERSION=ascend910b3")
     if os.environ.get("USE_MINDSPORE", "").lower() not in ("", "0", "false", "off"):
-        raise RuntimeError("P1 builds the PyTorch Ascend path only")
+        raise RuntimeError("P4 builds the PyTorch Ascend path only")
     if os.environ.get("BUILD_WITH_HIP", "0") != "0":
-        raise RuntimeError("HIP builds are not part of P1")
+        raise RuntimeError("HIP builds are not part of P4")
     if os.environ.get("VLLM_TARGET_DEVICE", "ascend") != "ascend":
         raise RuntimeError(
-            "P1 target is ascend; remove the old empty/cpu/cuda override"
+            "P4 target is ascend; remove the old empty/cpu/cuda override"
         )
     if os.environ.get("VLLM_USE_PRECOMPILED", "0") != "0":
-        raise RuntimeError("Precompiled upstream wheels are not P1 build inputs")
+        raise RuntimeError("Precompiled upstream wheels are not P4 build inputs")
     if os.environ.get("COMPILE_CUSTOM_KERNELS", "1") != "1":
-        raise RuntimeError("A P1 wheel must contain the required Ascend kernels")
+        raise RuntimeError("A P4 wheel must contain the required Ascend kernels")
     if sys.version_info[:2] != (3, 11) or platform.machine() != "aarch64":
-        raise RuntimeError("P1 candidate requires Python 3.11 on aarch64")
+        raise RuntimeError("P4 candidate requires Python 3.11 on aarch64")
     if metadata.version("torch").split("+", 1)[0] != TORCH_VERSION:
         raise RuntimeError("Reuse the approved torch 2.9.0 environment; do not upgrade")
     if metadata.version("torch-npu") != TORCH_NPU_VERSION:
-        raise RuntimeError("torch-npu differs from the approved P1 candidate")
+        raise RuntimeError("torch-npu differs from the approved P4 candidate")
     cann_value = os.environ.get("ASCEND_HOME_PATH")
     if not cann_value or not Path(cann_value).is_dir():
         raise RuntimeError(
@@ -309,7 +309,7 @@ class P1BuildExt(build_ext):
         addon = resource_namespace(primary)
         info["submodule"] = verify_materials(primary)
         if primary == "vllm" and metadata.version("triton-ascend") != TRITON_VERSION:
-            raise RuntimeError("triton-ascend differs from the approved P1 candidate")
+            raise RuntimeError("triton-ascend differs from the approved P4 candidate")
         native = ROOT / "ascend"
         needed = (
             native / "csrc/third_party/catlass/include"

@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from vllm.exceptions import VLLMValidationError
 from vllm.inputs import EmbedsPrompt, TextPrompt, TokensPrompt
 from vllm.logger import init_logger
-from vllm.multimodal.media.connector import merge_media_io_kwargs
+
+
+def merge_media_io_kwargs(defaults, overrides):
+    if defaults or overrides:
+        raise ValueError("Ascend P4 does not support media I/O options")
+    return None
+
+
 from vllm.tokenizers import TokenizerLike
 from vllm.utils.import_utils import LazyLoader
 

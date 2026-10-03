@@ -17,10 +17,6 @@ from vllm.distributed import (
 )
 from vllm.logger import init_logger
 from vllm.model_executor.custom_op import PluggableLayer
-from vllm.model_executor.layers.batch_invariant import (
-    linear_batch_invariant,
-    vllm_is_batch_invariant,
-)
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
@@ -38,7 +34,6 @@ from vllm.model_executor.parameter import (
     RowvLLMParameter,
 )
 from vllm.model_executor.utils import set_weight_attrs
-from vllm.platforms import current_platform
 
 logger = init_logger(__name__)
 
@@ -212,10 +207,7 @@ class UnquantizedLinearMethod(LinearMethodBase):
         set_weight_attrs(weight, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if current_platform.is_cpu():
-            from vllm.model_executor.layers.utils import dispatch_cpu_unquantized_gemm
-
-            dispatch_cpu_unquantized_gemm(layer, remove_weight=True)
+        pass  # Unsupported P4 branch removed.
 
     def apply(
         self,
@@ -223,8 +215,7 @@ class UnquantizedLinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if vllm_is_batch_invariant() and current_platform.is_cuda_alike():
-            return linear_batch_invariant(x, layer.weight, bias)
+        pass  # Unsupported P4 branch removed.
         return dispatch_unquantized_gemm()(layer, x, layer.weight, bias)
 
 

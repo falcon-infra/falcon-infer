@@ -54,7 +54,6 @@ if TYPE_CHECKING:
 else:
     VllmConfig = None
 
-SOC_VERSION_INFERENCE_SERIES = ["Ascend310P3"]
 
 ACL_FORMAT_FRACTAL_ND = 2
 ACL_FORMAT_FRACTAL_NZ = 29
@@ -147,8 +146,6 @@ _GRAPH_PRINT_STREAM_LOCK = Lock()
 _HAS_ROPE = None
 
 
-def is_310p():
-    return get_ascend_device_type() == AscendDeviceType._310P
 
 
 def _print_callback_on_stream(*args):
@@ -214,11 +211,7 @@ def _should_trans_nz(weight: torch.Tensor) -> bool:
     if weight.dtype == torch.float32:
         return False
 
-    # 310P always converts to NZ.
-    if is_310p():
-        return True
-
-    # NZ is disabled on non-310P.
+    # 910B3 follows the explicit NZ setting.
     if not envs_ascend.VLLM_ASCEND_ENABLE_NZ:
         return False
 
@@ -231,8 +224,7 @@ def _should_trans_nz(weight: torch.Tensor) -> bool:
 
 
 # NZ conversion policy:
-# - 310P: always convert supported weights to FRACTAL_NZ
-# - non-310P: follow VLLM_ASCEND_ENABLE_NZ
+# - 910B3: follow VLLM_ASCEND_ENABLE_NZ
 # - FP32: never convert
 def maybe_trans_nz(weight: torch.Tensor) -> torch.Tensor:
     if not _should_trans_nz(weight):
@@ -271,73 +263,6 @@ def _custom_transpose(x, dim1, dim2):
     return x.transpose(dim1, dim2)
 
 
-def nd_to_nz_2d(in_tensor: torch.Tensor) -> torch.Tensor:
-    # in_tensor: (13, 30)
-    aux_dims = [1, 0, 0, 16]
-    # aux_dims[1]: 16
-    aux_dims[1] = _round_up(in_tensor.size(0), 16)
-    # aux_dims[2]: 2
-    aux_dims[2] = _round_up(in_tensor.size(1), 16) // 16
-
-    # after: aux_dims: [1, 16, 2, 16]
-
-    pad_dims = [0, 0, 0, 0]
-    # pad_dims[1]: 2
-    pad_dims[1] = _round_up(in_tensor.size(1), 16) - in_tensor.size(1)
-    # pad_dims[3]: 3
-    pad_dims[3] = _round_up(in_tensor.size(0), 16) - in_tensor.size(0)
-
-    # after: pad_dims: [0, 2, 0, 3]
-
-    # return: (1, 2, 16, 16)
-    return _custom_transpose(
-        _custom_reshape(_custom_pad(in_tensor, pad_dims), aux_dims), 1, 2
-    ).contiguous()
-
-
-def nd_to_nz_spec(mask_tensor: torch.Tensor) -> torch.Tensor:
-    num_tokens = mask_tensor.shape[0]
-    max_seq_len = mask_tensor.shape[1]
-
-    tokens_pad = (num_tokens + 15) // 16 * 16
-    max_seq_len_pad = (max_seq_len + 15) // 16 * 16
-
-    mask_tensor_pad = torch.zeros(
-        (1, tokens_pad, max_seq_len_pad),
-        dtype=mask_tensor.dtype,
-        device=mask_tensor.device,
-    )
-    mask_tensor_pad[0][:num_tokens, :max_seq_len] = mask_tensor
-    mask = mask_tensor_pad.reshape((1, tokens_pad, max_seq_len_pad // 16, 16)).permute(
-        0, 2, 1, 3
-    )
-    return mask
-
-
-def aligned_16(tensor: torch.Tensor):
-    """Aligned tensor for 310P"""
-
-    # Get the size of the current 0th dimension
-    n = tensor.size(0)
-
-    # Calculate the aligned size
-    n_aligned = ((n + 15) // 16) * 16
-
-    # If already aligned, return the original tensor
-    if n == n_aligned:
-        return tensor
-
-    # Create a new tensor with shape (n_aligned, H, W) and fill it with zeros
-    new_tensor = torch.zeros(
-        n_aligned, *tensor.shape[1:], dtype=tensor.dtype, device=tensor.device
-    )
-
-    # Copy the original tensor to the first N positions of the new tensor
-    new_tensor[:n] = tensor
-
-    return new_tensor
-
-
 def enable_custom_op():
     """
     Enable lazy init for _ascend_C to avoid early initialization of CANN's RTS component.
@@ -352,10 +277,7 @@ def enable_custom_op():
 
     # There are some customed operators which aren't implemented
     # with batch invariant in vllm-ascend, we need to disable them.
-    # FIXME(linfeng): Currently custom op compilation and execution are partially available
-    # in ASCEND950 chip, we temporarily disable all custom ops. Please refer to
-    # https://github.com/vllm-project/vllm-ascend/issues/7157 for latest update about custom op.
-    if vllm_is_batch_invariant() or get_ascend_device_type() == AscendDeviceType.A5:
+    if vllm_is_batch_invariant():
         _CUSTOM_OP_ENABLED = False
         return _CUSTOM_OP_ENABLED
 
@@ -894,10 +816,7 @@ def dispose_tensor(x: torch.Tensor):
 
 
 class AscendDeviceType(Enum):
-    A2 = 0
-    A3 = 1
-    _310P = 2
-    A5 = 3
+    A2 = 0  # Internal family code; actual hardware is separately restricted to 910B3.
 
 
 _ascend_device_type = None
@@ -911,26 +830,11 @@ def _init_ascend_device_type():
 
 
 def check_ascend_device_type():
-    global _ascend_device_type
-    if _ascend_device_type is None:
-        _init_ascend_device_type()
+    """Validate the build and actual SoC before allocating model resources."""
+    pass  # Unsupported P4 branch removed.
+    from vllm.inference_profile import validate_device_name
 
-    soc_version = torch_npu.npu.get_soc_version()
-    if 220 <= soc_version <= 225:
-        cur_device_type = AscendDeviceType.A2
-    elif 250 <= soc_version <= 255:
-        cur_device_type = AscendDeviceType.A3
-    elif 200 <= soc_version <= 205:
-        cur_device_type = AscendDeviceType._310P
-    elif soc_version == 260:
-        cur_device_type = AscendDeviceType.A5
-    else:
-        raise RuntimeError(f"Can not support soc_version: {soc_version}.")
-
-    assert _ascend_device_type == cur_device_type, (
-        f"Current device type: {cur_device_type} does not match the installed version's device type: "
-        f"{_ascend_device_type}, please check your installation package."
-    )
+    validate_device_name(torch_npu.npu.get_device_name())
 
 
 def get_ascend_device_type():

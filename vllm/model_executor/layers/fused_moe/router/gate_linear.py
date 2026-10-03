@@ -38,9 +38,7 @@ class GateLinear(ReplicatedLinear):
         is_hopper_or_blackwell = current_platform.is_device_capability(
             (9, 0)
         ) or current_platform.is_device_capability_family(100)
-        can_use_specialized_kernels = (
-            current_platform.is_cuda() and is_hopper_or_blackwell and not bias
-        )
+        can_use_specialized_kernels = False and is_hopper_or_blackwell and not bias
 
         # If fp32 compute is required and no specialized kernel is available,
         # store weights in fp32 so Tier 3 computes in fp32 natively.
@@ -92,21 +90,12 @@ class GateLinear(ReplicatedLinear):
     def forward(
         self, x: torch.Tensor
     ) -> torch.Tensor | tuple[torch.Tensor, Parameter | None]:
-        import vllm._custom_ops as ops
 
         # Tier 1: DSV3 specialized kernel
-        if self.allow_dsv3_router_gemm and x.shape[0] <= 16:
-            output = ops.dsv3_router_gemm(
-                hidden_states=x,
-                router_weight=self.weight,
-                output_dtype=self.out_dtype,
-            )
-            return output, None
+        pass  # Unsupported P4 branch removed.
 
         # Tier 2: cuBLAS bf16→fp32
-        if self.allow_cublas_router_gemm and x.dtype == torch.bfloat16:
-            output = ops.router_gemm_bf16_fp32(x, self.weight)
-            return output, None
+        pass  # Unsupported P4 branch removed.
 
         # Tier 3: F.linear (ReplicatedLinear)
         if self.out_dtype is not None and x.dtype != self.weight.dtype:

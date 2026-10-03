@@ -2,13 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
-from importlib.util import find_spec
 
 import torch
 
 from vllm.logger import init_logger
 from vllm.model_executor.custom_op import CustomOp
-from vllm.utils.torch_utils import direct_register_custom_op
 
 logger = init_logger(__name__)
 
@@ -74,48 +72,7 @@ def yarn_get_mscale(scale: float = 1) -> float:
     return 0.1 * math.log(scale) + 1.0
 
 
-def _flashinfer_rotary_embedding(
-    positions: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    head_size: int,
-    cos_sin_cache: torch.Tensor,
-    is_neox: bool,
-) -> None:
-    """Custom op wrapper for flashinfer's rotary embedding.
-
-    This is an in-place operation that modifies query and key tensors directly.
-    """
-    from flashinfer.rope import apply_rope_with_cos_sin_cache_inplace
-
-    apply_rope_with_cos_sin_cache_inplace(
-        positions=positions,
-        query=query,
-        key=key,
-        head_size=head_size,
-        cos_sin_cache=cos_sin_cache,
-        is_neox=is_neox,
-    )
-
-
-def _flashinfer_rotary_embedding_fake(
-    positions: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    head_size: int,
-    cos_sin_cache: torch.Tensor,
-    is_neox: bool,
-) -> None:
-    return
-
-
 # Register flashinfer rotary embedding custom op
-direct_register_custom_op(
-    op_name="flashinfer_rotary_embedding",
-    op_func=_flashinfer_rotary_embedding,
-    mutates_args=["query", "key"],  # These tensors are modified in-place
-    fake_impl=_flashinfer_rotary_embedding_fake,
-)
 
 
 # --8<-- [start:apply_rotary_emb]
@@ -134,10 +91,6 @@ class ApplyRotaryEmb(CustomOp):
         self.enable_fp32_compute = enable_fp32_compute
 
         self.apply_rotary_emb_flash_attn = None
-        if find_spec("flash_attn") is not None:
-            from flash_attn.ops.triton.rotary import apply_rotary
-
-            self.apply_rotary_emb_flash_attn = apply_rotary
 
     @staticmethod
     def forward_static(
@@ -222,66 +175,6 @@ class ApplyRotaryEmb(CustomOp):
             x, cos, sin, self.is_neox_style, self.enable_fp32_compute
         )
         return output
-
-    def forward_cuda(
-        self,
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-    ) -> torch.Tensor:
-        from vllm.vllm_flash_attn.layers.rotary import apply_rotary_emb
-
-        x, cos, sin, origin_shape, origin_dtype = self._pre_process(x, cos, sin)
-
-        """
-        Arguments of apply_rotary_emb() in vllm_flash_attn:
-            x: [batch_size, seq_len, nheads, headdim]
-            cos, sin: [seqlen_rotary, rotary_dim / 2]
-            interleaved: default as False (Neox-style).
-            ...
-        """
-        interleaved = not self.is_neox_style
-        output = apply_rotary_emb(x, cos, sin, interleaved)
-
-        output = self._post_process(output, origin_shape, origin_dtype)
-        return output
-
-    def forward_hip(
-        self,
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-    ) -> torch.Tensor:
-        if self.apply_rotary_emb_flash_attn is not None:
-            x, cos, sin, origin_shape, origin_dtype = self._pre_process(x, cos, sin)
-
-            """
-            Arguments of apply_rotary() in flash_attn:
-                x: [batch_size, seq_len, nheads, headdim]
-                cos, sin: [seqlen_rotary, rotary_dim / 2]
-                interleaved: default as False (Neox-style).
-                ...
-            """
-            interleaved = not self.is_neox_style
-            output = self.apply_rotary_emb_flash_attn(
-                x, cos, sin, interleaved=interleaved
-            ).type_as(x)
-
-            output = self._post_process(output, origin_shape, origin_dtype)
-        else:
-            # Falling back to PyTorch native implementation.
-            output = self.forward_native(x, cos, sin)
-
-        return output
-
-    def forward_cpu(
-        self,
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-    ) -> torch.Tensor:
-        # TODO (bigPYJ1151): need to enable fused CPU ROPE here
-        return self.forward_native(x, cos, sin)
 
     def extra_repr(self) -> str:
         s = f"is_neox_style={self.is_neox_style}"

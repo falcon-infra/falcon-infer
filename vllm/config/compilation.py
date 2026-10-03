@@ -191,16 +191,9 @@ class PassConfig:
 
     @staticmethod
     def default_fi_allreduce_fusion_max_size_mb() -> dict[int, float]:
-        from vllm.compilation.passes.fusion.allreduce_rms_fusion import (
-            FI_ALLREDUCE_FUSION_MAX_SIZE_MB,
-        )
         from vllm.platforms import current_platform
 
-        if not current_platform.is_cuda():
-            return {}
-        return FI_ALLREDUCE_FUSION_MAX_SIZE_MB.get(
-            current_platform.get_device_capability().to_int(), {}
-        )
+        return {}
 
     def compute_hash(self) -> str:
         """
@@ -253,19 +246,19 @@ class PassConfig:
                     "Fusion enabled but reshape elimination disabled. "
                     "RMSNorm + padding fusion might not work"
                 )
-        if self.enable_qk_norm_rope_fusion and not current_platform.is_cuda_alike():
+        if self.enable_qk_norm_rope_fusion and not False:
             logger.warning_once(
                 "QK Norm + RoPE fusion enabled but the current platform is not "
                 "CUDA or ROCm. The fusion will be disabled."
             )
             self.enable_qk_norm_rope_fusion = False
-        if self.fuse_act_padding and not current_platform.is_rocm():
+        if self.fuse_act_padding and not False:
             logger.warning_once(
                 "Padding fusion enabled but the current platform is not ROCm. "
                 "The fusion will be disabled."
             )
             self.fuse_act_padding = False
-        if self.fuse_rope_kvcache and not current_platform.is_rocm():
+        if self.fuse_rope_kvcache and not False:
             logger.warning_once(
                 "KV cache fusion currently only enabled on ROCm. "
                 "The fusion will be disabled."
@@ -680,18 +673,6 @@ class CompilationConfig:
     _attention_ops: ClassVar[list[str]] = [
         "vllm::unified_attention",
         "vllm::unified_attention_with_output",
-        "vllm::unified_mla_attention",
-        "vllm::unified_mla_attention_with_output",
-        "vllm::mamba_mixer2",
-        "vllm::mamba_mixer",
-        "vllm::short_conv",
-        "vllm::linear_attention",
-        "vllm::plamo2_mamba_mixer",
-        "vllm::gdn_attention_core",
-        "vllm::olmo_hybrid_gdn_full_forward",
-        "vllm::kda_attention",
-        "vllm::sparse_attn_indexer",
-        "vllm::rocm_aiter_sparse_attn_indexer",
     ]
 
     def compute_hash(self) -> str:
@@ -870,7 +851,7 @@ class CompilationConfig:
             and "combo_kernels" not in self.inductor_compile_config
             and "benchmark_combo_kernel" not in self.inductor_compile_config
             # (fixme @boyuan) combo kernel does not support cpu yet.
-            and not current_platform.is_cpu()
+            and not False
         ):
             # use horizontal fusion, which is useful for fusing qk-norm and
             # qk-rope when query and key have different shapes.
@@ -1012,7 +993,6 @@ class CompilationConfig:
                 # https://github.com/vllm-project/vllm/issues/33267
                 if not self.use_inductor_graph_partition:
                     self.splitting_ops.append("vllm::unified_kv_cache_update")
-                    self.splitting_ops.append("vllm::unified_mla_kv_cache_update")
 
             elif len(self.splitting_ops) == 0:
                 if (

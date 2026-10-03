@@ -112,39 +112,13 @@ def set_offloader(instance: BaseOffloader) -> None:
 
 
 def create_offloader(offload_config: "OffloadConfig") -> BaseOffloader:
-    """Create an offloader based on the offload configuration.
-
-    Uses the explicit ``offload_backend`` selector.  When set to ``"auto"``,
-    selects prefetch if ``offload_group_size > 0``, UVA if
-    ``cpu_offload_gb > 0``, otherwise noop.
-    """
-    from vllm.model_executor.offloader.prefetch import PrefetchOffloader
-    from vllm.model_executor.offloader.uva import UVAOffloader
-
-    backend = offload_config.offload_backend
-    uva = offload_config.uva
-    prefetch = offload_config.prefetch
-
-    if backend == "auto":
-        if prefetch.offload_group_size > 0:
-            backend = "prefetch"
-        elif uva.cpu_offload_gb > 0:
-            backend = "uva"
-        else:
-            return NoopOffloader()
-
-    if backend == "prefetch":
-        return PrefetchOffloader(
-            group_size=prefetch.offload_group_size,
-            num_in_group=prefetch.offload_num_in_group,
-            prefetch_step=prefetch.offload_prefetch_step,
-            offload_params=prefetch.offload_params,
-            mode="cpu",
+    """Disable GPU weight offloading; native CPU KV offloading is separate."""
+    if (
+        offload_config.offload_backend not in ("auto", "none")
+        or offload_config.uva.cpu_offload_gb > 0
+        or offload_config.prefetch.offload_group_size > 0
+    ):
+        raise ValueError(
+            "P4 does not support GPU weight offloading; use native CPU KV offload"
         )
-    elif backend == "uva":
-        return UVAOffloader(
-            cpu_offload_max_bytes=int(uva.cpu_offload_gb * 1024**3),
-            cpu_offload_params=uva.cpu_offload_params,
-        )
-    else:
-        return NoopOffloader()
+    return NoopOffloader()

@@ -1,16 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import asyncio
 from collections.abc import (
-    AsyncGenerator,
-    Callable,
     Iterable,
-    Mapping,
     MutableSequence,
     Sequence,
 )
-from contextlib import ExitStack, contextmanager, nullcontext
 from typing import (
     TYPE_CHECKING,
     ClassVar,
@@ -21,21 +16,15 @@ from typing import (
     runtime_checkable,
 )
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
-from transformers.models.whisper.tokenization_whisper import LANGUAGES
 from typing_extensions import Self, TypeIs
 
-from vllm.config import ModelConfig, SpeechToTextConfig
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
 from vllm.logger import init_logger
 from vllm.model_executor.layers.mamba.mamba_utils import MambaStateCopyFunc
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.tasks import ScoreType
-from vllm.utils.collection_utils import common_prefix
 from vllm.utils.func_utils import supports_kw
 
 from .interfaces_base import VllmModel
@@ -43,8 +32,8 @@ from .interfaces_base import VllmModel
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.model_executor.models.utils import WeightsMapper
-    from vllm.multimodal.inputs import MultiModalFeatureSpec
-    from vllm.multimodal.registry import _ProcessorFactories
+    from vllm.inputs.legacy_wire import MultiModalFeatureSpec
+    from typing import Any as _ProcessorFactories
     from vllm.sequence import IntermediateTensors
 else:
     VllmConfig = object
@@ -65,486 +54,60 @@ The output embeddings must be one of the following formats:
 """
 
 
-def _require_is_multimodal(is_multimodal: Tensor | None) -> Tensor:
-    """
-    A helper function to be used in the context of
-    [vllm.model_executor.models.interfaces.SupportsMultiModal.embed_input_ids][]
-    to provide a better error message.
-    """
-    if is_multimodal is None:
-        raise ValueError(
-            "`embed_input_ids` now requires `is_multimodal` arg, "
-            "please update your model runner according to "
-            "https://github.com/vllm-project/vllm/pull/16229."
-        )
-
-    return is_multimodal
-
-
 # Cache results of `SupportsMultiModal.get_language_model`
 _language_model_by_module = dict[nn.Module, VllmModel]()
 
 
 @runtime_checkable
 class SupportsMultiModal(Protocol):
-    """The interface required for all multi-modal models."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_multimodal: ClassVar[Literal[True]] = True
-    """
-    A flag that indicates this model supports multi-modal inputs.
-
-    Note:
-        There is no need to redefine this flag if this class is in the
-        MRO of your model class.
-    """
-
-    supports_multimodal_raw_input_only: ClassVar[bool] = False
-    """
-    A flag that indicates this model supports multi-modal inputs and processes
-    them in their raw form and not embeddings.
-    """
-
-    supports_encoder_tp_data: ClassVar[bool] = False
-    """
-    A flag that indicates whether this model supports
-    `multimodal_config.mm_encoder_tp_mode="data"`.
-    """
-
-    requires_raw_input_tokens: ClassVar[bool] = False
-    """
-    A flag that indicates this model processes input id tokens
-    in their raw form and not input embeddings.
-    """
-
-    _processor_factory: ClassVar[_ProcessorFactories]
-    """
-    Set internally by `MultiModalRegistry.register_processor`.
-    """
-
-    _language_model_names: list[str] = []
-    """
-    Set internally by `_mark_language_model`.
-    """
-
-    _tower_model_names: list[str] = []
-    """
-    Set internally by `_mark_tower_model`.
-    """
-
-    _has_oov_mm_tokens: bool = False
-    """
-    In general, this should be set at init time by invoking
-    `configure_mm_token_handling` models & passing all potentially
-    OOV multimodal tokens.
-    """
-
-    @classmethod
-    def get_placeholder_str(cls, modality: str, i: int) -> str | None:
-        """
-        Get the placeholder text for the `i`th `modality` item in the prompt.
-        """
-        ...
-
-    def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
-        """
-        Returns multimodal embeddings generated from multimodal kwargs
-        to be merged with text embeddings.
-
-        Note:
-            The returned multimodal embeddings must be in the same order as
-            the appearances of their corresponding multimodal data item in the
-            input prompt.
-        """
-        ...
-
-    def configure_mm_token_handling(self, vocab_size: int, mm_token_ids: list[int]):
-        """Check if any multimodal tokens are out of vocabulary. If so, we will
-        explicitly mask all multimodal tokens out when computing text embeddings,
-        since the multimodal embeddings will be scattered over the results.
-        """
-        self._has_oov_mm_tokens = any(tok_id >= vocab_size for tok_id in mm_token_ids)
-        logger.info(
-            "Contains out of vocabulary multimodal tokens? %s",
-            self._has_oov_mm_tokens,
-        )
-
-    def get_language_model(self) -> VllmModel:
-        """
-        Returns the underlying language model used for text generation.
-
-        This is typically the `torch.nn.Module` instance responsible for
-        processing the merged multimodal embeddings and producing hidden states
-
-        Returns:
-            torch.nn.Module: The core language model component.
-        """
-        # Cached
-        if self in _language_model_by_module:
-            return _language_model_by_module[self]
-
-        if self._language_model_names:
-            mod = self
-            for attr in common_prefix(
-                [name.split(".") for name in self._language_model_names]
-            ):
-                if attr:
-                    mod = getattr(mod, attr)
-
-            if mod is not self and hasattr(mod, "embed_input_ids"):
-                _language_model_by_module[self] = mod
-                return mod
-
-        # Fallback
-        for mod in self.children():
-            if hasattr(mod, "embed_input_ids"):
-                _language_model_by_module[self] = mod
-                return mod
-
-        raise NotImplementedError(
-            f"No language model found in {type(self).__name__}! "
-            "You should initialize it via `_mark_language_model`."
-        )
-
-    @contextmanager
-    def _mark_language_model(
-        self,
-        vllm_config: VllmConfig,
-        *,
-        targets: type[nn.Module] | tuple[type[nn.Module], ...] | None = None,
-    ):
-        """
-        Mark each child module that was assigned to this model during this context
-        as a language model component.
-
-        Language model components are automatically skipped in `--mm-encoder-only`
-        mode.
-
-        If `targets` is set, instead include descendants that are an instance
-        of `targets`, even if they aren't direct children.
-        """
-        from .utils import StageMissingLayer, collect_children, no_init_weights
-
-        mm_config = vllm_config.model_config.multimodal_config
-
-        with collect_children(self, targets=targets) as children_names:  # noqa: SIM117
-            with (
-                no_init_weights(
-                    self,
-                    lambda mod: StageMissingLayer("language_model", mod),
-                    targets=targets,
-                )
-                if mm_config.mm_encoder_only
-                else nullcontext()
-            ):
-                yield
-
-        self._language_model_names = children_names
-
-    @contextmanager
-    def _mark_tower_model(
-        self,
-        vllm_config: VllmConfig,
-        modalities: set[str] | str,
-        *,
-        targets: type[nn.Module] | tuple[type[nn.Module], ...] | None = None,
-    ):
-        """
-        Mark each child module that was assigned to this model during this context
-        as a tower model component.
-
-        Tower model components are automatically skipped when `--limit-mm-per-prompt`
-        is set to zero for all of their modalities.
-
-        If `targets` is set, instead include descendants that are an instance
-        of `targets`, even if they aren't direct children.
-        """
-        from .utils import StageMissingLayer, collect_children, no_init_weights
-
-        if isinstance(modalities, str):
-            modalities = {modalities}
-
-        if modalities == {"image", "video"}:
-            stage_name = "vision_tower"
-        else:
-            stage_name = "_".join([*modalities, "tower"])
-
-        mm_config = vllm_config.model_config.multimodal_config
-
-        with collect_children(self, targets=targets) as children_names:  # noqa: SIM117
-            with (
-                no_init_weights(
-                    self,
-                    lambda mod: StageMissingLayer(stage_name, mod),
-                    targets=targets,
-                )
-                if all(mm_config.get_limit_per_prompt(m) == 0 for m in modalities)
-                else nullcontext()
-            ):
-                yield
-
-        self._tower_model_names = children_names
-
-    @contextmanager
-    def _mark_composite_model(
-        self,
-        vllm_config: VllmConfig,
-        *,
-        language_targets: type[nn.Module] | tuple[type[nn.Module], ...],
-        tower_targets: dict[str, type[nn.Module] | tuple[type[nn.Module], ...]],
-    ):
-        """
-        Composite wrapper over `_mark_language_model` and
-        `_mark_tower_model` by modality.
-        """
-        with ExitStack() as stack:
-            stack.enter_context(
-                self._mark_language_model(
-                    vllm_config,
-                    targets=language_targets,
-                )
-            )
-
-            for modality, modality_targets in tower_targets.items():
-                stack.enter_context(
-                    self._mark_tower_model(
-                        vllm_config,
-                        modality,
-                        targets=modality_targets,
-                    )
-                )
-
-            yield
-
-    def get_num_mm_encoder_tokens(self, num_image_tokens: int) -> int:
-        """
-        Implement this function to enable LoRA support
-        for the tower module of the multi-modal model.
-        Given the number of image tokens, output the number of
-        multi-modal encoder tokens.
-        """
-        ...
-
-    def get_num_mm_connector_tokens(self, num_vision_tokens: int) -> int:
-        """
-        Implement this function to enable LoRA support
-        for the connector module of the multi-modal model.
-        Given the number of vision tokens, output the number of
-        multi-modal connector tokens.
-        """
-        ...
-
-    @overload
-    def embed_input_ids(self, input_ids: Tensor) -> Tensor: ...
-
-    @overload
-    def embed_input_ids(
-        self,
-        input_ids: Tensor,
-        multimodal_embeddings: MultiModalEmbeddings,
-        *,
-        is_multimodal: torch.Tensor,
-    ) -> Tensor: ...
-
-    def _embed_text_input_ids(
-        self,
-        input_ids: Tensor,
-        embed_input_ids: Callable[[Tensor], Tensor],
-        *,
-        is_multimodal: Tensor | None,
-    ) -> Tensor:
-        if is_multimodal is not None and self._has_oov_mm_tokens:
-            # Force all input IDs to be in vocab; we do this instead of squeezing
-            # to ensure that any external configuration requiring offset tracking,
-            # e.g., LoRA, are applied correctly regardless of whether or not
-            # we have multimodal tokens.
-            in_vocab_ids = input_ids.masked_fill(is_multimodal, 0)
-            return embed_input_ids(in_vocab_ids)
-
-        return embed_input_ids(input_ids)
-
-    def embed_input_ids(
-        self,
-        input_ids: Tensor,
-        multimodal_embeddings: MultiModalEmbeddings | None = None,
-        *,
-        is_multimodal: Tensor | None = None,
-    ) -> Tensor:
-        """
-        Apply token embeddings to `input_ids`.
-
-        If `multimodal_embeddings` is passed, scatter them into
-        `input_ids` according to the mask `is_multimodal`.
-
-        NOTE: If this model has multimodal tokens that are of vocabulary
-        (i.e., self._has_oov_mm_tokens=True), the input_ids will be copied
-        and masked to 0 during the forward pass for the text embeddings.
-        """
-        from .utils import _merge_multimodal_embeddings
-
-        # Get text embeddings first; multimodal embeddings will clobber
-        # any invalid contents in the indices of multimodal embeddings
-        # for the in vocabulary and out of vocabulary case.
-        inputs_embeds = self._embed_text_input_ids(
-            input_ids,
-            self.get_language_model().embed_input_ids,
-            is_multimodal=is_multimodal,
-        )
-
-        if multimodal_embeddings is None or len(multimodal_embeddings) == 0:
-            return inputs_embeds
-
-        return _merge_multimodal_embeddings(
-            inputs_embeds=inputs_embeds,
-            multimodal_embeddings=multimodal_embeddings,
-            is_multimodal=_require_is_multimodal(is_multimodal),
-        )
+    supports_multimodal: ClassVar[bool] = False
 
 
 @runtime_checkable
 class SupportsMultiModalPruning(Protocol):
-    """The interface required for models that support returning both input
-    embeddings and positions. Model may require custom positions for dynamic
-    pruning of multimodal embeddings.
-    """
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_multimodal_pruning: ClassVar[Literal[True]] = True
-
-    def recompute_mrope_positions(
-        self,
-        input_ids: list[int],
-        multimodal_embeddings: MultiModalEmbeddings,
-        mrope_positions: torch.LongTensor,
-        num_computed_tokens: int,
-    ) -> tuple[MultiModalEmbeddings, Tensor, int]:
-        """
-        Update part of input mrope positions (starting with
-        num_computed_tokens index). Original mrope_positions are computed
-        for unpruned sequence and becomes incorrect once pruning occurs,
-        so once we prune media tokens we should reflect this in the
-        mrope_positions before we feed it to LLM.
-
-        Args:
-            input_ids: (N,) All input tokens of the prompt containing
-                entire sequence.
-            multimodal_embeddings: Tuple of multimodal embeddings that
-                fits into the prefill chunk that is being processed.
-            mrope_positions: Existing mrope positions (3, N) for entire
-                sequence
-            num_computed_tokens: A number of computed tokens so far.
-
-        Returns:
-            Tuple of (multimodal_embeddings, mrope_positions,
-                mrope_position_delta).
-        """
-        ...
+    supports_multimodal_pruning: ClassVar[bool] = False
 
 
-@overload
-def supports_multimodal(model: type[object]) -> TypeIs[type[SupportsMultiModal]]: ...
-
-
-@overload
-def supports_multimodal(model: object) -> TypeIs[SupportsMultiModal]: ...
-
-
-def supports_multimodal(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsMultiModal]] | TypeIs[SupportsMultiModal]:
-    return getattr(model, "supports_multimodal", False)
+def supports_multimodal(model: type[object] | object) -> bool:
+    return False
 
 
 def supports_multimodal_raw_input_only(model: type[object] | object) -> bool:
-    return getattr(model, "supports_multimodal_raw_input_only", False)
+    return False
 
 
 def requires_raw_input_tokens(model: type[object] | object) -> bool:
-    return getattr(model, "requires_raw_input_tokens", False)
+    return False
 
 
 def supports_multimodal_encoder_tp_data(model: type[object] | object) -> bool:
-    return getattr(model, "supports_encoder_tp_data", False)
+    return False
 
 
-@overload
-def supports_multimodal_pruning(
-    model: type[object],
-) -> TypeIs[type[SupportsMultiModalPruning]]: ...
-
-
-@overload
-def supports_multimodal_pruning(model: object) -> TypeIs[SupportsMultiModalPruning]: ...
-
-
-def supports_multimodal_pruning(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsMultiModalPruning]] | TypeIs[SupportsMultiModalPruning]:
-    return getattr(model, "supports_multimodal_pruning", False)
+def supports_multimodal_pruning(model: type[object] | object) -> bool:
+    return False
 
 
 @runtime_checkable
 class SupportsScoreTemplate(Protocol):
-    """The interface required for all models that support score template."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_score_template: ClassVar[Literal[True]] = True
-    """
-    A flag that indicates this model supports score template.
-
-    Note:
-        There is no need to redefine this flag if this class is in the
-        MRO of your model class.
-    """
-
-    @classmethod
-    def get_score_template(cls, query: str, document: str) -> str | None:
-        """
-        Generate a full prompt by populating the score template with query and document content.
-        """  # noqa: E501
-        ...
-
-    @classmethod
-    def post_process_tokens(cls, prompt: TokensPrompt) -> None:
-        """
-        Perform architecture-specific manipulations on the input tokens.
-        """
-        ...
+    supports_score_template: ClassVar[bool] = False
 
 
-@overload
-def supports_score_template(
-    model: type[object],
-) -> TypeIs[type[SupportsScoreTemplate]]: ...
-
-
-@overload
-def supports_score_template(model: object) -> TypeIs[SupportsScoreTemplate]: ...
-
-
-def supports_score_template(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsScoreTemplate]] | TypeIs[SupportsScoreTemplate]:
-    return getattr(model, "supports_score_template", False)
+def supports_score_template(model: type[object] | object) -> bool:
+    return False
 
 
 @runtime_checkable
 class SupportsLoRA(Protocol):
-    """The interface required for all models that support LoRA."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_lora: ClassVar[Literal[True]] = True
-    """
-    A flag that indicates this model supports LoRA.
-
-    Note:
-        There is no need to redefine this flag if this class is in the
-        MRO of your model class.
-    """
-    is_3d_moe_weight: ClassVar[bool] = False
-    is_non_gated_moe: ClassVar[bool] = False
-    # The `embedding_module` and `embedding_padding_modules`
-    # are empty by default.
-    embedding_modules: ClassVar[dict[str, str]] = {}
-    packed_modules_mapping: dict[str, list[str]] = {}
-    # Module prefixes to skip during LoRA loading (e.g., ["mtp."] for MTP layers)
-    lora_skip_prefixes: ClassVar[list[str]] = []
+    supports_lora: ClassVar[bool] = False
 
 
 # We can't use runtime_checkable with ClassVar for issubclass checks
@@ -557,50 +120,12 @@ class _SupportsLoRAType(Protocol):
     embedding_modules: dict[str, str]
 
 
-@overload
-def supports_lora(model: type[object]) -> TypeIs[type[SupportsLoRA]]: ...
-
-
-@overload
-def supports_lora(model: object) -> TypeIs[SupportsLoRA]: ...
-
-
-def supports_lora(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsLoRA]] | TypeIs[SupportsLoRA]:
-    result = _supports_lora(model)
-
-    if not result:
-        lora_attrs = (
-            "packed_modules_mapping",
-            "embedding_modules",
-        )
-        missing_attrs = tuple(attr for attr in lora_attrs if not hasattr(model, attr))
-
-        if getattr(model, "supports_lora", False):
-            if missing_attrs:
-                logger.warning(
-                    "The model (%s) sets `supports_lora=True`, "
-                    "but is missing LoRA-specific attributes: %s",
-                    model,
-                    missing_attrs,
-                )
-        else:
-            if not missing_attrs:
-                logger.warning(
-                    "The model (%s) contains all LoRA-specific attributes, "
-                    "but does not set `supports_lora=True`.",
-                    model,
-                )
-
-    return result
+def supports_lora(model: type[object] | object) -> bool:
+    return False
 
 
 def _supports_lora(model: type[object] | object) -> bool:
-    if isinstance(model, type):
-        return isinstance(model, _SupportsLoRAType)
-
-    return isinstance(model, SupportsLoRA)
+    return False
 
 
 @runtime_checkable
@@ -1029,218 +554,24 @@ class SupportsQuant:
 
 @runtime_checkable
 class SupportsRealtime(Protocol):
-    """The interface required for all models that support transcription."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_realtime: ClassVar[Literal[True]] = True
-
-    realtime_max_tokens: ClassVar[int] = 1
-    """Maximum tokens to generate per streaming audio segment.
-    Override in subclasses based on the model's expected output length."""
-
-    @classmethod
-    async def buffer_realtime_audio(
-        cls,
-        audio_stream: AsyncGenerator[np.ndarray, None],
-        input_stream: asyncio.Queue[list[int]],
-        model_config: ModelConfig,
-    ) -> AsyncGenerator[PromptType, None]: ...
+    supports_realtime: ClassVar[bool] = False
 
 
-@overload
-def supports_realtime(
-    model: type[object],
-) -> TypeIs[type[SupportsRealtime]]: ...
-
-
-@overload
-def supports_realtime(model: object) -> TypeIs[SupportsRealtime]: ...
-
-
-def supports_realtime(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsRealtime]] | TypeIs[SupportsRealtime]:
-    return getattr(model, "supports_realtime", False)
+def supports_realtime(model: type[object] | object) -> bool:
+    return False
 
 
 @runtime_checkable
 class SupportsTranscription(Protocol):
-    """The interface required for all models that support transcription."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    # Mapping from ISO639_1 language codes: language names
-    supported_languages: ClassVar[Mapping[str, str]]
-
-    supports_transcription: ClassVar[Literal[True]] = True
-
-    supports_transcription_only: ClassVar[bool] = False
-    """
-    Transcription models can opt out of text generation by setting this to
-    `True`.
-    """
-    supports_segment_timestamp: ClassVar[bool] = False
-    """
-    Enables the segment timestamp option for supported models by setting this to `True`.
-    """
-
-    supports_explicit_language_detection: ClassVar[bool] = False
-    """
-    Transcription models that require an explicit language detection step
-    (e.g. Whisper needs a separate forward pass to predict the language
-    token) should set this to ``True`` and implement
-    :meth:`get_language_detection_prompt` and
-    :meth:`parse_language_detection_output` and
-    :meth:`get_language_token_ids`.
-    """
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        # language codes in supported_languages
-        # that don't exist in the full language map
-        invalid = set(cls.supported_languages) - set(LANGUAGES.keys())
-        if invalid:
-            raise ValueError(
-                f"{cls.__name__}.supported_languages contains invalid "
-                f"language codes: {sorted(invalid)}\n. "
-                f"Valid choices are: {sorted(LANGUAGES.keys())}"
-            )
-
-    @classmethod
-    def get_generation_prompt(
-        cls,
-        audio: np.ndarray,
-        stt_config: SpeechToTextConfig,
-        model_config: ModelConfig,
-        language: str | None,
-        task_type: Literal["transcribe", "translate"],
-        request_prompt: str,
-        to_language: str | None,
-    ) -> PromptType:
-        """Get the prompt for the ASR model.
-        The model has control over the construction, as long as it
-        returns a valid PromptType."""
-        ...
-
-    @classmethod
-    def get_other_languages(cls) -> Mapping[str, str]:
-        # other possible language codes from the whisper map
-        return {k: v for k, v in LANGUAGES.items() if k not in cls.supported_languages}
-
-    @classmethod
-    def validate_language(cls, language: str | None) -> str | None:
-        """
-        Ensure the language specified in the transcription request
-        is a valid ISO 639-1 language code. If the request language is
-        valid, but not natively supported by the model, trigger a
-        warning (but not an exception).
-        """
-        if language is None or language in cls.supported_languages:
-            return language
-        elif language in cls.get_other_languages():
-            logger.warning(
-                "Language %r is not natively supported by %s; "
-                "results may be less accurate. Supported languages: %r",
-                language,
-                cls.__name__,
-                list(cls.supported_languages.keys()),
-            )
-            return language
-        else:
-            raise ValueError(
-                f"Unsupported language: {language!r}.  Must be one of "
-                f"{list(cls.supported_languages.keys())}."
-            )
-
-    @classmethod
-    def get_speech_to_text_config(
-        cls, model_config: ModelConfig, task_type: Literal["transcribe", "translate"]
-    ) -> SpeechToTextConfig:
-        """Get the speech to text config for the ASR model."""
-        ...
-
-    @classmethod
-    def get_num_audio_tokens(
-        cls,
-        audio_duration_s: float,
-        stt_config: SpeechToTextConfig,
-        model_config: ModelConfig,
-    ) -> int | None:
-        """
-        Map from audio duration to number of audio tokens produced by the ASR
-        model, without running a forward pass.
-        This is used for estimating the amount of processing for this audio.
-        """
-        return None
-
-    @classmethod
-    def post_process_output(cls, text: str) -> str:
-        """
-        Post-process the raw model output text.
-
-        Some ASR models output structured formats (e.g., language tags,
-        special tokens) that need to be stripped before returning to the user.
-
-        Args:
-            text: Raw decoded text from the model.
-
-        Returns:
-            Cleaned transcription text.
-        """
-        return text
-
-    @classmethod
-    def get_language_detection_prompt(
-        cls,
-        audio: np.ndarray,
-        stt_config: SpeechToTextConfig,
-    ) -> PromptType:
-        """Return a prompt that triggers language detection.
-
-        Only needs to be implemented when
-        ``supports_explicit_language_detection`` is ``True``.
-        """
-        raise NotImplementedError
-
-    @classmethod
-    def parse_language_detection_output(
-        cls,
-        token_ids: list[int],
-        tokenizer: object,
-    ) -> str:
-        """Parse the detected language from model output token IDs.
-
-        Only needs to be implemented when
-        ``supports_explicit_language_detection`` is ``True``.
-        """
-        raise NotImplementedError
-
-    @classmethod
-    def get_language_token_ids(
-        cls,
-        tokenizer: object,
-    ) -> list[int] | None:
-        """Return token IDs that represent valid language tokens.
-
-        Used to constrain language detection to only produce valid language tokens.
-
-        Only needs to be implemented when
-        ``supports_explicit_language_detection`` is ``True``.
-        """
-        raise NotImplementedError
+    supports_transcription: ClassVar[bool] = False
 
 
-@overload
-def supports_transcription(
-    model: type[object],
-) -> TypeIs[type[SupportsTranscription]]: ...
-
-
-@overload
-def supports_transcription(model: object) -> TypeIs[SupportsTranscription]: ...
-
-
-def supports_transcription(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsTranscription]] | TypeIs[SupportsTranscription]:
-    return getattr(model, "supports_transcription", False)
+def supports_transcription(model: type[object] | object) -> bool:
+    return False
 
 
 @runtime_checkable
@@ -1399,98 +730,21 @@ def supports_eagle3(
 
 @runtime_checkable
 class SupportsMRoPE(Protocol):
-    """The interface required for all models that support M-RoPE."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_mrope: ClassVar[Literal[True]] = True
-    """
-    A flag that indicates this model supports M-RoPE.
-
-    Note:
-        There is no need to redefine this flag if this class is in the
-        MRO of your model class.
-    """
-
-    def get_mrope_input_positions(
-        self,
-        input_tokens: list[int],
-        mm_features: list["MultiModalFeatureSpec"],
-    ) -> tuple[torch.Tensor, int]:
-        """
-        Get M-RoPE input positions and delta value for this specific model.
-
-        This method should be implemented by each model that supports M-RoPE
-        to provide model-specific logic for computing input positions.
-
-        Args:
-            input_tokens: List of input token IDs
-            mm_features: Information about each multi-modal data item
-
-        Returns:
-            Tuple of `(llm_positions, mrope_position_delta)`
-            - llm_positions: Tensor of shape `[3, num_tokens]` with T/H/W positions
-            - mrope_position_delta: Delta for position calculations
-        """
-        ...
+    supports_mrope: ClassVar[bool] = False
 
 
-@overload
-def supports_mrope(model: type[object]) -> TypeIs[type[SupportsMRoPE]]: ...
-
-
-@overload
-def supports_mrope(model: object) -> TypeIs[SupportsMRoPE]: ...
-
-
-def supports_mrope(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsMRoPE]] | TypeIs[SupportsMRoPE]:
-    return isinstance(model, SupportsMRoPE)
+def supports_mrope(model: type[object] | object) -> bool:
+    return False
 
 
 @runtime_checkable
 class SupportsXDRoPE(Protocol):
-    """The interface required for all models that support XD-RoPE."""
+    """Retired feature marker; no execution implementation in P4."""
 
-    supports_xdrope: ClassVar[Literal[True]] = True
-    """
-    A flag that indicates this model supports XD-RoPE.
-
-    Note:
-        There is no need to redefine this flag if this class is in the
-        XDRope of your model class.
-    """
-
-    def get_xdrope_input_positions(
-        self,
-        input_tokens: list[int],
-        mm_features: list["MultiModalFeatureSpec"],
-    ) -> torch.Tensor:
-        """
-        Get XD-RoPE input positions and delta value for this specific model.
-
-        This method should be implemented by each model that supports XD-RoPE
-        to provide model-specific logic for computing input positions.
-
-        Args:
-            input_tokens: List of input token IDs
-            mm_features: Information about each multi-modal data item
-
-        Returns:
-            llm_positions: Tensor of shape `[xdrope_dim, num_tokens]` with
-            4D(P/W/H/T) or 3D(W/H/T) positions.
-        """
-        ...
+    supports_xdrope: ClassVar[bool] = False
 
 
-@overload
-def supports_xdrope(model: type[object]) -> TypeIs[type[SupportsXDRoPE]]: ...
-
-
-@overload
-def supports_xdrope(model: object) -> TypeIs[SupportsXDRoPE]: ...
-
-
-def supports_xdrope(
-    model: type[object] | object,
-) -> TypeIs[type[SupportsXDRoPE]] | TypeIs[SupportsXDRoPE]:
-    return isinstance(model, SupportsXDRoPE)
+def supports_xdrope(model: type[object] | object) -> bool:
+    return False

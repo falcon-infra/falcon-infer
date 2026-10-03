@@ -3,10 +3,10 @@
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import torch
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import NotRequired, TypedDict
 
 if TYPE_CHECKING:
-    from vllm.multimodal.inputs import (
+    from vllm.inputs.legacy_wire import (
         MultiModalDataDict,
         MultiModalEncDecInputs,
         MultiModalInputs,
@@ -320,92 +320,5 @@ SingletonInputs: TypeAlias = DecoderOnlyInputs | MultiModalEncDecInputs
 """The inputs for a single encoder/decoder prompt."""
 
 
-def _validate_enc_inputs(inputs: SingletonInputs) -> EncoderInputs:
-    if inputs["type"] == "embeds":
-        raise ValueError(
-            "Embedding inputs are not supported for encoder-decoder models"
-        )
-
-    if inputs["type"] == "multimodal" and "encoder_prompt_token_ids" not in inputs:
-        raise RuntimeError(
-            "You should register an encoder-decoder multi-modal processor "
-            "for encoder-decoder models."
-        )
-
-    return inputs  # type: ignore[return-value]
-
-
-def _validate_dec_inputs(inputs: SingletonInputs) -> DecoderInputs:
-    if inputs["type"] == "embeds":
-        raise ValueError(
-            "Embedding inputs are not supported for encoder-decoder models"
-        )
-
-    return inputs
-
-
-def _prepare_decoder_input_ids_for_generation(
-    decoder_input_ids: list[int],
-    decoder_start_token_id: int,
-) -> list[int]:
-    """
-    Prepare `decoder_input_ids` for generation with encoder-decoder models,
-    according to `GenerationMixin._prepare_decoder_input_ids_for_generation()`.
-
-    Source:
-    https://github.com/huggingface/transformers/blob/v5.1.0/src/transformers/generation/utils.py
-    """
-    if len(decoder_input_ids) == 0 or decoder_input_ids[0] != decoder_start_token_id:
-        decoder_input_ids = [decoder_start_token_id] + decoder_input_ids
-
-    return decoder_input_ids
-
-
-def build_enc_dec_inputs(
-    encoder_inputs: SingletonInputs,
-    decoder_inputs: SingletonInputs | None,
-    decoder_start_token_id: int,
-) -> EncoderDecoderInputs:
-    enc_inputs = _validate_enc_inputs(encoder_inputs)
-
-    if decoder_inputs is None:
-        dec_inputs: DecoderInputs = enc_inputs
-    else:
-        dec_inputs = _validate_dec_inputs(decoder_inputs)
-
-    enc_inputs_new: EncoderInputs
-    dec_inputs_new: DecoderInputs
-
-    if enc_inputs["type"] == "multimodal":
-        from vllm.multimodal.inputs import mm_inputs
-
-        enc_inputs_new = token_inputs(
-            enc_inputs["encoder_prompt_token_ids"],
-            prompt=enc_inputs.get("encoder_prompt"),
-        )
-        dec_inputs_new = mm_inputs(
-            prompt_token_ids=dec_inputs["prompt_token_ids"],
-            prompt=dec_inputs.get("prompt"),
-            mm_kwargs=enc_inputs["mm_kwargs"],
-            mm_hashes=enc_inputs["mm_hashes"],
-            mm_placeholders=enc_inputs["mm_placeholders"],
-        )
-    elif enc_inputs["type"] == "token":
-        enc_inputs_new = token_inputs(prompt_token_ids=[])
-        dec_inputs_new = dec_inputs
-    else:
-        assert_never(enc_inputs)
-
-    dec_inputs_new["prompt_token_ids"] = _prepare_decoder_input_ids_for_generation(
-        dec_inputs_new["prompt_token_ids"],
-        decoder_start_token_id,
-    )
-
-    if cache_salt := enc_inputs.get("cache_salt"):
-        dec_inputs_new["cache_salt"] = cache_salt
-
-    return EncoderDecoderInputs(
-        type="enc_dec",
-        encoder_prompt=enc_inputs_new,
-        decoder_prompt=dec_inputs_new,
-    )
+def build_enc_dec_inputs(*args, **kwargs):
+    raise ValueError("Ascend P4 does not support encoder-decoder inputs")

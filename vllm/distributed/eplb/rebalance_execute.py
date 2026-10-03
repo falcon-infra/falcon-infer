@@ -157,7 +157,7 @@ def move_to_buffer(
     new_indices: np.ndarray,
     expert_weights: Sequence[torch.Tensor],
     expert_weights_buffers: Sequence[torch.Tensor],
-    cuda_stream: torch.cuda.Stream | None,
+    cuda_stream: torch.npu.Stream | None,
     ep_group: ProcessGroup,
 ) -> MoveToBufferResult:
     """
@@ -359,7 +359,7 @@ def move_to_buffer(
 
     # 4. Execute the P2P operations. The real communication happens here.
     if p2p_ops and cuda_stream is not None:
-        with torch.cuda.stream(cuda_stream):
+        with torch.npu.stream(cuda_stream):
             if is_stateless:
                 ep_group.device_communicator.batch_isend_irecv(p2p_ops)
             else:
@@ -472,7 +472,7 @@ async def transfer_layer(
     expert_weights_buffer: Sequence[torch.Tensor],
     ep_group: ProcessGroup,
     is_profile: bool = False,
-    cuda_stream: torch.cuda.Stream | None = None,
+    cuda_stream: torch.npu.Stream | None = None,
     rank_mapping: dict[int, int] | None = None,
 ) -> MoveToBufferResult:
     """

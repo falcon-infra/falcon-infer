@@ -388,9 +388,6 @@ void SFAMlaTiling::NormalCalcFDWorkSpace(const uint32_t actCoreNum)
         accumOutSize = FDParamNums * headDimAlign_;
         logSumExpSize = 2 * FDParamNums * (BYTE_BLOCK / sfaInfo_->blockTypeSize);
         workspaceSize_ += (accumOutSize + logSumExpSize) * sfaInfo_->blockTypeSize;
-        if (sfaInfo_->socVersion == platform_ascendc::SocVersion::ASCEND310P) {
-            workspaceSize_ += static_cast<size_t>(actCoreNum) * 32;
-        }
     }
 }
 

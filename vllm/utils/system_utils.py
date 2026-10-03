@@ -16,7 +16,6 @@ import psutil
 
 import vllm.envs as envs
 from vllm.logger import init_logger
-from vllm.platforms import current_platform
 from vllm.platforms.interface import in_wsl
 from vllm.ray.lazy_utils import is_in_ray_actor
 
@@ -115,12 +114,7 @@ def unique_filepath(fn: Callable[[int], Path]) -> Path:
 def _sync_visible_devices_env_vars():
     """Sync HIP/CUDA visibility env vars before spawning (ROCm only)."""
 
-    if not current_platform.is_rocm():
-        return
-
-    from vllm.platforms.rocm import _sync_hip_cuda_env_vars
-
-    _sync_hip_cuda_env_vars()
+    return
 
 
 def _maybe_force_spawn():

@@ -460,18 +460,6 @@ at::Tensor npu_dsa_staged_sharded_vector_dedup_meta(
     return selected_count;
 }
 
-at::Tensor bgmv_expand_meta(at::Tensor &x, at::Tensor &weight, at::Tensor &indices, at::Tensor &y,
-                       int64_t slice_offset, int64_t slice_size) {
-    at::Tensor y_out = at::empty_like(y);
-    return y_out;
-}
-
-at::Tensor sgmv_expand_meta(at::Tensor &x, at::Tensor &weight, at::Tensor &lora_indices, at::Tensor &seq_len,
-                       at::Tensor &y, int64_t slice_offset, int64_t slice_size) {
-    at::Tensor y_out = at::empty_like(y);
-    return y_out;
-}
-
 std::tuple<at::Tensor &, at::Tensor &, at::Tensor &, at::Tensor &, at::Tensor &> mla_preprocess(
     const at::Tensor &hiddenState,
     const at::Tensor &wdqkv,
@@ -827,32 +815,7 @@ std::tuple<at::Tensor,at::Tensor, at::Tensor> npu_add_rms_norm_bias_meta(
     return std::tuple<at::Tensor, at::Tensor, at::Tensor>(y, rstd, x);
 }
 
-std::tuple<at::Tensor, at::Tensor> npu_gemma_rms_norm_meta(
-    const at::Tensor& x,
-    const at::Tensor& gamma,
-    double epsilon)
-{
-    int64_t dim_x = x.dim();
-    int64_t dim_gamma = gamma.dim();
-    int64_t diff = dim_x - dim_gamma;
-    c10::SymDimVector new_shape;
-    at::Tensor rstd;
-    if (diff > 0) {
-        new_shape.reserve(dim_x);
-        auto x_sizes = x.sym_sizes();
-        for (int64_t i = 0; i < diff; ++i) {
-            new_shape.push_back(x_sizes[i]);
-        }
-        for (int64_t i = 0; i < dim_gamma; ++i) {
-            new_shape.push_back(c10::SymInt(1));
-        }
-    } else {
-        new_shape.assign(dim_x, c10::SymInt(1));
-    }
-    rstd = at::empty_symint(new_shape, x.options().dtype(at::kFloat));
-    at::Tensor y = at::empty_symint(x.sym_sizes(), x.options());
-    return std::tuple<at::Tensor, at::Tensor>(y, rstd);
-}
+
 
 void transpose_kv_cache_by_block_meta(
     const at::TensorList &k_cache,
@@ -894,24 +857,6 @@ npu_copy_and_expand_eagle_inputs_meta(
             out_new_token_indices, out_hidden_state_mapping};
 }
 
-at::Tensor npu_causal_conv1d_custom_meta(
-    const at::Tensor& x,
-    const at::Tensor& weight,
-    const at::Tensor& conv_state,
-    const c10::optional<at::Tensor>& bias_opt,
-    at::IntArrayRef query_start_loc_opt,
-    at::IntArrayRef cache_indices_opt,
-    at::IntArrayRef initial_state_mode_opt,
-    at::IntArrayRef num_accepted_tokens_opt,
-    int64_t  activation_mode,
-    int64_t  pad_slot_id,
-    int64_t  run_mode)
-{
-
-    at::Tensor output = at::empty_symint(x.sym_sizes(), x.options());
-    return output;
-}
-  
 std::vector<at::Tensor> moe_grouped_matmul_meta(
     at::Tensor x,
     at::Tensor weight,
@@ -985,8 +930,6 @@ namespace {
 // Register the meta implementations of the custom kernels for symbolic tracing, this will also
 // the custom kernel been captured into aclgraph
 TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
-    //Gemma rmsnorm meta implementation
-    ops.impl("npu_gemma_rms_norm", &vllm_ascend::meta::npu_gemma_rms_norm_meta);
     // Masked input and mask meta implementation
     ops.impl("get_masked_input_and_mask", &vllm_ascend::meta::get_masked_input_and_mask_meta);
     // Prepare compact DSA sparse indices and optional LMCache payload.
@@ -1041,10 +984,6 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl(
         "npu_dsa_resident_sorted_finalize_debug_",
         &vllm_ascend::meta::npu_dsa_resident_sorted_finalize_debug_meta);
-    // Bgmv expand
-    ops.impl("bgmv_expand", &vllm_ascend::meta::bgmv_expand_meta);
-    // Sgmv expand
-    ops.impl("sgmv_expand", &vllm_ascend::meta::sgmv_expand_meta);
     // MLA preprocess
     ops.impl("mla_preprocess", &vllm_ascend::meta::mla_preprocess);
     // grouped_matmul_swiglu_quant meta implementation
@@ -1073,8 +1012,6 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("transpose_kv_cache_by_block", &vllm_ascend::meta::transpose_kv_cache_by_block_meta);
     // CopyAndExpandEagleInputs
     ops.impl("npu_copy_and_expand_eagle_inputs", &vllm_ascend::meta::npu_copy_and_expand_eagle_inputs_meta);
-    // causal_conv1d_fn
-    ops.impl("npu_causal_conv1d_custom", &vllm_ascend::meta::npu_causal_conv1d_custom_meta);
     // moe_grouped_matmul
     ops.impl("moe_grouped_matmul", &vllm_ascend::meta::moe_grouped_matmul_meta);
     // Lightning indexer quant

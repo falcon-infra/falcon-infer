@@ -96,7 +96,7 @@ class OutlinesBackend(StructuredOutputBackend):
             (max_num_seqs, (self.vocab_size + 31) // 32),
             -1,
             dtype=torch.int32,
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=torch.npu.is_available(),
         )
 
     def destroy(self):

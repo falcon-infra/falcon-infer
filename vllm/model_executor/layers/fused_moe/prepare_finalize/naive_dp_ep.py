@@ -10,7 +10,6 @@ from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
     TopKWeightAndReduceDelegate,
 )
 from vllm.model_executor.layers.fused_moe.utils import moe_kernel_quantize_input
-from vllm.utils.flashinfer import nvfp4_block_scale_interleave
 
 
 def _quantize_and_setup_dispatch(
@@ -56,13 +55,10 @@ def _unwrap_scale_and_prepare_for_moe(
     quant_config: FusedMoEQuantConfig,
 ) -> torch.Tensor:
     assert scales is not None and len(scales) == 1
+    if quant_config.quant_dtype is not None:
+        raise ValueError("Ascend quantized MoE uses the native preparation path")
     a1q_scale = scales[0]
     # Apply swizzling after a2a if the MoE kernel needs it.
-    if quant_config.quant_dtype == "nvfp4" and quant_config.is_nvfp4_scale_swizzled:
-        assert a1q_scale is not None
-        if a1q_scale.element_size() == 1:
-            a1q_scale = a1q_scale.view(torch.uint8)
-        a1q_scale = nvfp4_block_scale_interleave(a1q_scale)
 
     return a1q_scale
 

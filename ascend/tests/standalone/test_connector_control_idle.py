@@ -15,9 +15,13 @@ WORKSPACE = ROOT.parents[1]
 
 def method(file, name):
     tree = ast.parse(file.read_text(encoding="utf-8"))
-    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+    node = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name
+    )
     node.decorator_list = []
-    prefix = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
+    prefix = ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0
+    )
     ns = {}
     exec(
         compile(
@@ -31,11 +35,15 @@ def method(file, name):
 
 
 def test_active_scheduling_never_queries_connector_control():
-    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
+    has_requests = method(
+        ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests"
+    )
     obj = NS(
         has_unfinished_requests=lambda: True,
         has_finished_requests=lambda: pytest.fail("active path consulted cleanup"),
-        connector=NS(has_pending_control=lambda: pytest.fail("active path queried connector")),
+        connector=NS(
+            has_pending_control=lambda: pytest.fail("active path queried connector")
+        ),
     )
     for _ in range(100):
         assert has_requests(obj)
@@ -55,7 +63,9 @@ def test_idle_work_follows_the_actual_multi_connector_release_queue():
         root / "vllm/vllm/distributed/kv_transfer/ascend/ascend_multi_connector.py",
         "has_pending_control",
     )
-    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
+    has_requests = method(
+        ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests"
+    )
     impl = NS(_checkpoint_restore_releases=[("r", 1, 7)])
     impl.has_pending_control = lambda: impl_pending(impl)
     child = NS(_lmcache_engine=impl)
@@ -73,7 +83,9 @@ def test_idle_work_follows_the_actual_multi_connector_release_queue():
 
 
 def test_idle_scheduler_without_connector_remains_idle():
-    has_requests = method(ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests")
+    has_requests = method(
+        ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", "has_requests"
+    )
     assert not has_requests(
         NS(
             connector=None,
@@ -91,7 +103,10 @@ def scheduler_type(request):
         (vllm / "interface.py", {"SchedulerInterface"}),
         (vllm / "scheduler.py", {"Scheduler"}),
         (vllm / "async_scheduler.py", {"AsyncScheduler"}),
-        (ROOT / "../vllm/v1/core/sched/recompute_scheduler.py", {"RecomputeScheduler", "AsyncRecomputeScheduler"}),
+        (
+            ROOT / "../vllm/v1/core/sched/recompute_scheduler.py",
+            {"RecomputeScheduler", "AsyncRecomputeScheduler"},
+        ),
     ]
     nodes = []
     for path, names in sources:
@@ -101,31 +116,56 @@ def scheduler_type(request):
                     n
                     for n in node.body
                     if getattr(n, "name", None)
-                    in {"has_requests", "_preempt_request", "reset_prefix_cache", "_update_waiting_for_remote_kv"}
-                    or (isinstance(n, ast.Assign) and any(
-                        isinstance(t, ast.Name) and t.id == "supports_checkpoint_restore_retry"
-                        for t in n.targets
-                    ))
+                    in {
+                        "has_requests",
+                        "_preempt_request",
+                        "reset_prefix_cache",
+                        "_update_waiting_for_remote_kv",
+                    }
+                    or (
+                        isinstance(n, ast.Assign)
+                        and any(
+                            isinstance(t, ast.Name)
+                            and t.id == "supports_checkpoint_restore_retry"
+                            for t in n.targets
+                        )
+                    )
                 ] or [ast.Pass()]
                 nodes.append(node)
-    prefix = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
+    prefix = ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0
+    )
     ns = dict(
-        ABC=object, abstractmethod=abstractmethod, RequestStatus=NS(RUNNING="running", PREEMPTED="preempted"), time=time
+        ABC=object,
+        abstractmethod=abstractmethod,
+        RequestStatus=NS(RUNNING="running", PREEMPTED="preempted"),
+        time=time,
     )
     exec(
-        compile(ast.fix_missing_locations(ast.Module(body=[prefix, *nodes], type_ignores=[])), "scheduler_mro", "exec"),
+        compile(
+            ast.fix_missing_locations(
+                ast.Module(body=[prefix, *nodes], type_ignores=[])
+            ),
+            "scheduler_mro",
+            "exec",
+        ),
         ns,
     )
     cls = ns[request.param]
     assert cls.has_requests is ns["RecomputeScheduler"].has_requests
     assert cls._preempt_request is ns["RecomputeScheduler"]._preempt_request
-    assert cls._update_waiting_for_remote_kv is ns["RecomputeScheduler"]._update_waiting_for_remote_kv
+    assert (
+        cls._update_waiting_for_remote_kv
+        is ns["RecomputeScheduler"]._update_waiting_for_remote_kv
+    )
     assert cls.supports_checkpoint_restore_retry is True
     return cls
 
 
 @pytest.mark.parametrize("unfinished,finished", [(True, False), (False, True)])
-def test_both_ascend_schedulers_short_circuit_before_connector_access(scheduler_type, unfinished, finished):
+def test_both_ascend_schedulers_short_circuit_before_connector_access(
+    scheduler_type, unfinished, finished
+):
     scheduler = scheduler_type()
     scheduler.has_unfinished_requests = lambda: unfinished
     scheduler.has_finished_requests = lambda: finished
@@ -148,10 +188,16 @@ def test_both_ascend_schedulers_dispatch_and_drain_idle_control(scheduler_type):
 
 @pytest.mark.parametrize("forced_reset", [False, True])
 @pytest.mark.parametrize("old_proof", [None, (1, 15, 14)])
-def test_proof_is_lazy_and_cleared_before_base_preemption(scheduler_type, forced_reset, old_proof):
+def test_proof_is_lazy_and_cleared_before_base_preemption(
+    scheduler_type, forced_reset, old_proof
+):
     scheduler = scheduler_type()
     request = NS(
-        status="running", num_computed_tokens=15, num_preemptions=1, spec_token_ids=[-1], num_output_placeholders=2
+        status="running",
+        num_computed_tokens=15,
+        num_preemptions=1,
+        spec_token_ids=[-1],
+        num_output_placeholders=2,
     )
     if old_proof is not None:
         request.kv_resume_checkpoint = old_proof
@@ -177,7 +223,8 @@ def test_proof_is_lazy_and_cleared_before_base_preemption(scheduler_type, forced
         assert request.discard_latest_async_tokens is True
     else:
         scheduler._preempt_request(request, 1.0)
-    assert calls == ["free", "encoder"] and waiting == [request]
+    # P4 has no multimodal encoder cache; KV preemption still frees and queues.
+    assert calls == ["free"] and waiting == [request]
     assert request.status == "preempted" and request.num_computed_tokens == 0
     assert request.num_preemptions == 2 and request.spec_token_ids == []
 
@@ -196,6 +243,10 @@ def test_base_scheduler_no_longer_handles_checkpoint_controls():
     obj = NS(
         has_unfinished_requests=lambda: False,
         has_finished_requests=lambda: False,
-        connector=NS(has_pending_control=lambda: pytest.fail("base scheduler queried checkpoint control")),
+        connector=NS(
+            has_pending_control=lambda: pytest.fail(
+                "base scheduler queried checkpoint control"
+            )
+        ),
     )
     assert not has_requests(obj)

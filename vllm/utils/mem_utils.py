@@ -5,7 +5,6 @@ import gc
 import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from functools import cache
 
 import psutil
 import torch
@@ -22,18 +21,6 @@ def format_mib(b: int) -> str:
 
 def format_gib(b: int) -> str:
     return f"{round(b / GiB_bytes, 2)}"
-
-
-@cache
-def get_max_shared_memory_bytes(gpu: int = 0) -> int:
-    """Returns the maximum shared memory per thread block in bytes."""
-    from vllm import _custom_ops as ops
-
-    max_shared_mem = ops.get_max_shared_memory_per_block_device_attribute(gpu)
-    # value 0 will cause MAX_SEQ_LEN become negative and test_attention.py
-    # will fail
-    assert max_shared_mem > 0, "max_shared_mem cannot be zero"
-    return int(max_shared_mem)
 
 
 def get_cpu_memory() -> int:
@@ -103,23 +90,7 @@ class MemorySnapshot:
 
         self.free_memory, self.total_memory = current_platform.mem_get_info(device)
         shared_sysmem_device_mem_sms = ((8, 7), (11, 0), (12, 1))  # Orin, Thor, Spark
-        if (
-            current_platform.is_cuda()
-            and current_platform.get_device_capability(device.index)
-            in shared_sysmem_device_mem_sms
-        ):
-            # On UMA (Orin, Thor and Spark) platform,
-            # where both CPU and GPU rely on system memory,
-            # the cudaMemGetInfo function shows the amount of free system memory
-            # rather than what’s actually available.
-            # In the case,
-            # torch.cuda.mem_get_info() only reports "free" memory,
-            # which can be lower than what is actually
-            # available due to not including cache memory.
-            # There’s also a comprehensive reference page
-            # that explains how you can compute the proper value yourself.
-            # https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/#estimating-total-allocatable-device-memory-on-an-integrated-gpu-device
-            self.free_memory = psutil.virtual_memory().available
+        pass  # Unsupported P4 branch removed.
 
         self.cuda_memory = self.total_memory - self.free_memory
 
@@ -283,4 +254,4 @@ def memory_profiling(
 
 def _memory_backend():
     """torch.accelerator does not delegate all memory APIs to PrivateUse1."""
-    return torch.npu if current_platform.is_npu() else torch.accelerator
+    return torch.npu if True else torch.accelerator

@@ -44,8 +44,6 @@ from vllm.model_executor.layers.ascend.fused_moe.moe_runtime_args import (
 )
 from vllm.platforms.ascend_device.device_op import DeviceOperator
 from vllm.utils.ascend import (
-    AscendDeviceType,
-    get_ascend_device_type,
     is_hierarchical_communication_enabled,
 )
 
@@ -99,11 +97,8 @@ class TokenDispatcherWithMC2(MoETokenDispatcher[MoEMC2CombineMetadata]):
         self.ep_rank_id = get_mc2_group().rank_in_group
         self.ep_world_size = get_mc2_group().world_size
         self.enable_dispatch_v2 = hasattr(torch_npu, "npu_moe_distribute_dispatch_v2")
-        self.need_extra_args = get_ascend_device_type() in [
-            AscendDeviceType.A3,
-            AscendDeviceType.A5,
-        ]
-        self.a5_need_extra_args = get_ascend_device_type() == AscendDeviceType.A5
+        self.need_extra_args = False
+        self.a5_need_extra_args = False
         # NOTE: When in A2, setting the environment variables HCCL_INTRA_PCIE_ENABLE=1 and
         # HCCL_INTRA_ROCE_ENABLE=0 can reduce cross-machine communication traffic and significantly
         # improve communication performance.
@@ -159,11 +154,7 @@ class TokenDispatcherWithMC2(MoETokenDispatcher[MoEMC2CombineMetadata]):
         if comm_quant_mode is not None:
             quant_mode = comm_quant_mode
         elif token_dispatch_input.quant.dispatch_with_quant:
-            quant_mode = (
-                4
-                if self.a5_need_extra_args and token_dispatch_input.quant.is_mxfp
-                else 2
-            )
+            quant_mode = 2
         else:
             quant_mode = 0
         self.moe_expert_num = len(expert_map) + global_redundant_expert_num
@@ -184,24 +175,8 @@ class TokenDispatcherWithMC2(MoETokenDispatcher[MoEMC2CombineMetadata]):
             "ep_world_size": self.ep_world_size,
             "ep_rank_id": self.ep_rank_id,
         }
-        if self.need_extra_args:
-            stage1_kwargs.update(
-                {
-                    "group_tp": self.moe_all_to_all_group_name,
-                    "tp_world_size": 1,
-                    "tp_rank_id": 0,
-                }
-            )
-        if self.a5_need_extra_args and token_dispatch_input.quant.is_mxfp:
-            y_dtype = torch.float8_e4m3fn
-            if (
-                token_dispatch_input.quant.mxfp is not None
-                and token_dispatch_input.quant.mxfp.act_quant_type is not None
-            ):
-                y_dtype = token_dispatch_input.quant.mxfp.act_quant_type
-            stage1_kwargs.update(
-                {"tp_world_size": 1, "tp_rank_id": 0, "y_dtype": y_dtype}
-            )
+        pass  # Unsupported P4 branch removed.
+        pass  # Unsupported P4 branch removed.
         if self.need_expert_scale or self.a5_need_extra_args:
             stage1_kwargs.update(
                 {
@@ -294,15 +269,7 @@ class TokenDispatcherWithMC2(MoETokenDispatcher[MoEMC2CombineMetadata]):
         else:
             stage3_kwargs["expand_idx"] = assist_info_for_combine
 
-        if self.need_extra_args:
-            stage3_kwargs.update(
-                {
-                    "tp_send_counts": tp_recv_counts,
-                    "group_tp": self.moe_all_to_all_group_name,
-                    "tp_world_size": 1,
-                    "tp_rank_id": 0,
-                }
-            )
+        pass  # Unsupported P4 branch removed.
         if self.need_comm_alg:
             stage3_kwargs.update({"comm_alg": "hierarchy"})
 

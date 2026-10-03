@@ -32,8 +32,6 @@ import torch
 from torch import nn
 from transformers import DeepseekV2Config, DeepseekV3Config
 
-import vllm._custom_ops as ops
-from vllm._aiter_ops import rocm_aiter_ops
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, ParallelConfig, VllmConfig, get_current_vllm_config
 from vllm.distributed import (
@@ -63,11 +61,7 @@ from vllm.model_executor.layers.linear import (
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.mla import MLAModules, MultiHeadLatentAttentionWrapper
 from vllm.model_executor.layers.quantization import QuantizationConfig
-from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-    per_token_group_quant_fp8,
-)
 from vllm.model_executor.layers.rotary_embedding import get_rope
-from vllm.model_executor.layers.sparse_attn_indexer import SparseAttnIndexer
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
     VocabParallelEmbedding,
@@ -82,7 +76,6 @@ from vllm.model_executor.models.utils import (
 )
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
-from vllm.utils.torch_utils import direct_register_custom_op
 from vllm.v1.attention.backend import AttentionBackend
 from vllm.v1.attention.backends.mla.indexer import (
     DeepseekV32IndexerBackend,
@@ -291,10 +284,8 @@ class DeepseekV2MoE(nn.Module):
             self.physical_expert_start + self.n_local_physical_experts
         )
 
-        self.is_rocm_aiter_moe_enabled = rocm_aiter_ops.is_fused_moe_enabled()
-        self.is_fusion_moe_shared_experts_enabled = (
-            rocm_aiter_ops.is_fusion_moe_shared_experts_enabled()
-        )
+        self.is_rocm_aiter_moe_enabled = False
+        self.is_fusion_moe_shared_experts_enabled = False
         if config.n_shared_experts is None or self.is_fusion_moe_shared_experts_enabled:
             self.shared_experts = None
         else:
@@ -327,16 +318,12 @@ class DeepseekV2MoE(nn.Module):
             scoring_func=getattr(config, "scoring_func", "softmax"),
             # we do scaling outside, set factor to 1.0 to avoid double mul
             # aiter applies routed_scaling_factor internally
-            routed_scaling_factor=1.0
-            if not self.is_rocm_aiter_moe_enabled
-            else self.routed_scaling_factor,
+            routed_scaling_factor=(1.0),
             e_score_correction_bias=self.gate.e_score_correction_bias,
             enable_eplb=self.enable_eplb,
             num_redundant_experts=self.n_redundant_experts,
             is_sequence_parallel=self.is_sequence_parallel,
-            n_shared_experts=config.n_shared_experts
-            if self.is_fusion_moe_shared_experts_enabled
-            else None,
+            n_shared_experts=(None),
         )
 
         # NOTE(rob): this is a hack until we finish off the PR for
@@ -380,8 +367,7 @@ class DeepseekV2MoE(nn.Module):
         # Fix FP16 overflow
         # See DeepseekV2DecoderLayer for more details.
         if hidden_states.dtype != torch.float16:
-            if not self.is_rocm_aiter_moe_enabled:
-                final_hidden_states *= self.routed_scaling_factor
+            final_hidden_states *= self.routed_scaling_factor
         elif self.shared_experts is not None:
             assert shared_output is not None
             shared_output *= 1.0 / self.routed_scaling_factor
@@ -679,100 +665,9 @@ class Indexer(nn.Module):
         from vllm.v1.attention.backends.mla.indexer import get_max_prefill_buffer_size
 
         self.max_total_seq_len = get_max_prefill_buffer_size(vllm_config)
-        self.indexer_op = SparseAttnIndexer(
-            self.k_cache,
-            self.quant_block_size,
-            self.scale_fmt,
-            self.topk_tokens,
-            self.head_dim,
-            self.max_model_len,
-            self.max_total_seq_len,
-            self.topk_indices_buffer,
-        )
 
-    def forward(
-        self, hidden_states: torch.Tensor, qr: torch.Tensor, positions, rotary_emb
-    ) -> torch.Tensor:
-        q, _ = self.wq_b(qr)
-        q = q.view(-1, self.n_head, self.head_dim)
-        q_pe, q_nope = torch.split(
-            q, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1
-        )
-
-        k, _ = self.wk(hidden_states)
-        k = self.k_norm(k)
-        k_pe, k_nope = torch.split(
-            k, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1
-        )
-
-        q_pe, k_pe = rotary_emb(positions, q_pe, k_pe.unsqueeze(1))
-        # Note: RoPE (NeoX) can introduce extra leading dimensions during compilation
-        # so we need to reshape back to token-flattened shapes
-        q_pe = q_pe.reshape(-1, self.n_head, self.rope_dim)
-        k_pe = k_pe.reshape(-1, 1, self.rope_dim)
-
-        # `rotary_emb` is shape-preserving; `q_pe` is already
-        # [num_tokens, n_head, rope_dim].
-        q = torch.cat([q_pe, q_nope], dim=-1)
-        # `k_pe` is [num_tokens, 1, rope_dim] (MQA).
-        k = torch.cat([k_pe.squeeze(-2), k_nope], dim=-1)
-
-        # we only quant q here since k quant is fused with cache insertion
-        q = q.view(-1, self.head_dim)
-        q_fp8, q_scale = per_token_group_quant_fp8(
-            q,
-            self.quant_block_size,
-            column_major_scales=False,
-            use_ue8m0=self.scale_fmt is not None,
-        )
-        q_fp8 = q_fp8.view(-1, self.n_head, self.head_dim)
-        q_scale = q_scale.view(-1, self.n_head, 1)
-
-        weights, _ = self.weights_proj(hidden_states)
-        weights = (
-            weights.unsqueeze(-1) * q_scale * self.softmax_scale * self.n_head**-0.5
-        )
-        weights = weights.squeeze(-1)
-
-        return self.indexer_op(hidden_states, q_fp8, k, weights)
-
-
-def _min_latency_fused_qkv_a_proj_impl(
-    input_: torch.Tensor,
-    weight: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Dynamically run min-latency gemm if num_tokens <= 16.
-    This must be wrapped in a custom op because our torch.compile integration
-    does not support runtime dispatching on num_tokens.
-    """
-    num_tokens = input_.shape[0]
-    if 0 < num_tokens <= 16:
-        output = torch.empty(
-            num_tokens,
-            weight.shape[0],
-            dtype=torch.bfloat16,
-            device=input_.device,
-        )
-        ops.dsv3_fused_a_gemm(output, input_, weight.T)
-        return output
-    else:
-        return torch.nn.functional.linear(input_, weight)
-
-
-def _min_latency_fused_qkv_a_proj_fake(
-    input_: torch.Tensor,
-    weight: torch.Tensor,
-) -> torch.Tensor:
-    return input_.new_empty(input_.shape[0], weight.shape[0])
-
-
-direct_register_custom_op(
-    op_name="min_latency_fused_qkv_a_proj",
-    op_func=_min_latency_fused_qkv_a_proj_impl,
-    mutates_args=[],
-    fake_impl=_min_latency_fused_qkv_a_proj_fake,
-)
+    def forward(self, *args, **kwargs):
+        raise RuntimeError("GLM DSA indexing is executed by the native AscendSFAImpl")
 
 
 class DeepSeekV2FusedQkvAProjLinear(MergedColumnParallelLinear):
@@ -799,7 +694,7 @@ class DeepSeekV2FusedQkvAProjLinear(MergedColumnParallelLinear):
             and self.weight.dtype == torch.bfloat16
             and self.weight.shape[0] == 2112
             and self.weight.shape[1] == 7168
-            and current_platform.is_cuda()
+            and False
             and (
                 current_platform.is_device_capability(90)
                 or current_platform.is_device_capability_family(100)
@@ -810,16 +705,7 @@ class DeepSeekV2FusedQkvAProjLinear(MergedColumnParallelLinear):
         self,
         input_,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.nn.Parameter | None]:
-        if self._use_min_latency_gemm:
-            output = torch.ops.vllm.min_latency_fused_qkv_a_proj(input_, self.weight)
-            if not self.return_bias:
-                return output
-            output_bias = self.bias if self.skip_bias_add else None
-            return output, output_bias
-        else:
-            # Fallback to the standard forward method when
-            # the fused A GEMM kernel cannot be used.
-            return super().forward(input_)
+        return super().forward(input_)
 
 
 class DeepseekV2MLAAttention(nn.Module):
@@ -1515,9 +1401,7 @@ class DeepseekV2ForCausalLM(
         )
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        rocm_aiter_moe_shared_expert_enabled = (
-            rocm_aiter_ops.is_fusion_moe_shared_experts_enabled()
-        )
+        rocm_aiter_moe_shared_expert_enabled = False
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("gate_up_proj", "gate_proj", 0),
@@ -1763,14 +1647,6 @@ class DeepseekV2ForCausalLM(
             )
 
         return loaded_params
-
-
-class DeepseekForCausalLM(DeepseekV2ForCausalLM):
-    pass
-
-
-class DeepseekV3ForCausalLM(DeepseekV2ForCausalLM):
-    pass
 
 
 class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):

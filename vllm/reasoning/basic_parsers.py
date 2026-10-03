@@ -12,7 +12,6 @@ from vllm.tokenizers import TokenizerLike
 
 if TYPE_CHECKING:
     from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-    from vllm.entrypoints.openai.responses.protocol import ResponsesRequest
 
 
 class BaseThinkingReasoningParser(ReasoningParser):
@@ -147,7 +146,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
             return DeltaMessage(content=delta_text)
 
     def extract_reasoning(
-        self, model_output: str, request: "ChatCompletionRequest | ResponsesRequest"
+        self, model_output: str, request: "ChatCompletionRequest"
     ) -> tuple[str | None, str | None]:
         """
         Extract reasoning content from the model output.

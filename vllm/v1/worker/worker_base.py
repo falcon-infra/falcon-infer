@@ -10,7 +10,6 @@ import torch.nn as nn
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.tracing import instrument
 from vllm.utils.import_utils import resolve_obj_by_qualname
 from vllm.utils.system_utils import update_environment_variables
@@ -288,12 +287,7 @@ class WorkerWrapperBase:
 
             self.mm_receiver_cache = None
         else:
-            self.mm_receiver_cache = (
-                MULTIMODAL_REGISTRY.worker_receiver_cache_from_config(
-                    vllm_config,
-                    shared_worker_lock,
-                )
-            )
+            self.mm_receiver_cache = None
 
         with set_current_vllm_config(self.vllm_config):
             # To make vLLM config available during worker initialization

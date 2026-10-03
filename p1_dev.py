@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Paired P3 intranet materials, build and isolated-install entry point.
+"""Paired P4 intranet materials, build and isolated-install entry point.
 
 No automatic downloads or dependency installation. Use --dry-run to print pip
 commands without compiling, installing or creating directories.
@@ -33,7 +33,7 @@ from packaging.requirements import Requirement
 import p1_build as builder
 
 ROOT = Path(__file__).resolve().parent
-VERSIONS = {"vllm": "0.18.0+ascend.p3", "lmcache": "0.4.3+ascend.p3"}
+VERSIONS = {"vllm": "0.18.0+ascend.p4", "lmcache": "0.4.3+ascend.p4"}
 
 
 def project() -> tuple[str, str]:
@@ -149,7 +149,7 @@ def doctor(*, building: bool = True) -> dict:
         if not passed:
             errors.append(f"Missing/mismatched {raw}: {installed}")
     if sys.version_info[:2] != (3, 11) or platform.machine() != "aarch64":
-        errors.append("P1 candidate requires Python 3.11 / aarch64")
+        errors.append("P4 candidate requires Python 3.11 / aarch64")
     if building:
         for command in ("cmake", "g++", "gcc", "make", "bash"):
             if shutil.which(command) is None:
@@ -177,7 +177,7 @@ def check_install_target(isolated: bool) -> None:
     """Require dedicated-environment confirmation; reject old four-pack installs."""
     if not isolated:
         raise ValueError(
-            "Pass --isolated-env only in a dedicated P3 container/interpreter"
+            "Pass --isolated-env only in a dedicated P4 container/interpreter"
         )
     for name in ("vllm-ascend", "lmcache-ascend", "vllm", "lmcache"):
         try:
@@ -215,7 +215,7 @@ def wheel_info(path: Path) -> dict:
             for name in names
         ):
             raise ValueError(
-                "P3 wheel contains a retired plugin namespace or patch archive"
+                "P4 wheel contains a retired plugin namespace or patch archive"
             )
         meta = BytesParser().parsebytes(wheel.read(metas[0]))
         if meta["Name"].lower() != primary or meta["Version"] != version:
@@ -400,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--isolated-env",
                 action="store_true",
-                help="confirm dedicated P3 environment, not a serving baseline",
+                help="confirm dedicated P4 environment, not a serving baseline",
             )
         if action == "install":
             command.add_argument("--wheel", required=True, type=Path)

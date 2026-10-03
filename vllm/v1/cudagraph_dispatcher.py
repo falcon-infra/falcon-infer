@@ -7,7 +7,6 @@ from itertools import product
 from vllm.config import CUDAGraphMode, VllmConfig
 from vllm.forward_context import BatchDescriptor
 from vllm.logger import init_logger
-from vllm.lora.utils import get_captured_lora_counts
 
 logger = init_logger(__name__)
 
@@ -60,11 +59,7 @@ class CudagraphDispatcher:
         )
 
         self.keys_initialized = False
-        self.specialize_lora_count = (
-            self.vllm_config.lora_config.specialize_active_lora
-            if self.vllm_config.lora_config is not None
-            else False
-        )
+        self.specialize_lora_count = False
         # Default cudagraph_mode to NONE until initialize_cudagraph_keys is called
         self.cudagraph_mode = CUDAGraphMode.NONE
 
@@ -105,25 +100,7 @@ class CudagraphDispatcher:
                         )
 
     def _get_lora_cases(self) -> list[int]:
-        """
-        Returns list of has_lora values for CUDA graph capture.
-        This is the single source of truth for LoRA capture cases.
-        """
-        lora_config = self.vllm_config.lora_config
-        if lora_config is None:
-            # No LoRA configured - single case with no LoRA
-            return [0]
-
-        # LoRA is enabled - capture graphs based on cudagraph_specialize_lora
-        if self.compilation_config.cudagraph_specialize_lora:
-            captured_counts = get_captured_lora_counts(
-                lora_config.max_loras, self.specialize_lora_count
-            )
-            # Specialize: capture separate graphs for with and without LoRA
-            return [0] + captured_counts
-        else:
-            # No specialization: only capture graphs with LoRA active
-            return [lora_config.max_loras + 1]
+        return [0]  # Only the non-LoRA capture case exists in P4.
 
     def _create_padded_batch_descriptor(
         self,

@@ -55,10 +55,7 @@ class UnquantizedEmbeddingMethod(QuantizeMethodBase):
         set_weight_attrs(weight, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if current_platform.is_cpu():
-            from vllm.model_executor.layers.utils import dispatch_cpu_unquantized_gemm
-
-            dispatch_cpu_unquantized_gemm(layer, remove_weight=False)
+        pass  # Unsupported P4 branch removed.
 
     def apply(
         self,
@@ -482,9 +479,6 @@ class VocabParallelEmbedding(CustomOp):
         # Reduce across all the model parallel GPUs.
         output = tensor_model_parallel_all_reduce(output_parallel)
         return output
-
-    def forward_cuda(self, input_):
-        return self.forward_native(input_)
 
     def extra_repr(self) -> str:
         s = f"num_embeddings={self.num_embeddings_per_partition}"

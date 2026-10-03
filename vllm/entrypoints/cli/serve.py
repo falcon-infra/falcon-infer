@@ -30,8 +30,8 @@ from vllm.v1.utils import APIServerProcessManager, wait_for_completion_or_failur
 
 logger = init_logger(__name__)
 
-DESCRIPTION = """Launch a local OpenAI-compatible API server to serve LLM
-completions via HTTP. Defaults to Qwen/Qwen3-0.6B if no model is specified.
+DESCRIPTION = """Launch a local OpenAI-compatible API server for GLM-5.2 text
+completions on Ascend910B3. An explicit approved checkpoint is required.
 
 Search by using: `--help=<ConfigGroup>` to explore options by section (e.g.,
 --help=ModelConfig, --help=Frontend)

@@ -95,12 +95,8 @@ try:
             # We can remove this API after it is fixed in compiled graph.
             assert self.worker is not None, "Worker is not initialized"
             if not self.compiled_dag_cuda_device_set:
-                if current_platform.is_tpu():
-                    # Not needed
-                    pass
-                else:
-                    assert self.worker.device is not None
-                    current_platform.set_device(self.worker.device)
+                assert self.worker.device is not None
+                current_platform.set_device(self.worker.device)
 
                 self.compiled_dag_cuda_device_set = True
 
@@ -128,18 +124,7 @@ try:
                 scheduler_output, intermediate_tensors
             )
             if self._is_intermediate_tensors(output):
-                if (
-                    self.worker.model_runner.supports_mm_inputs
-                    and get_pp_group().is_first_rank
-                ):
-                    # Strip mm_features before Ray forwards it to the next PP Stage.
-                    # PP Stage>0 only needs the intermediate tensors,
-                    # not preprocessed multimodal data.
-
-                    # scheduled_new_reqs is a required field of SchedulerOutput,
-                    # so accessing it directly will raise AttributeError if missing.
-                    for req in scheduler_output.scheduled_new_reqs:
-                        req.mm_features = []
+                pass  # Unsupported P4 branch removed.
                 return scheduler_output, grammar_output, output
 
             if isinstance(output, AsyncModelRunnerOutput):
@@ -368,40 +353,11 @@ def initialize_ray_cluster(
     from vllm.platforms import current_platform
 
     # Prevalidate GPU requirements before Ray processing
-    if current_platform.is_cuda() and parallel_config.world_size > 1:
-        from vllm.utils.torch_utils import cuda_device_count_stateless
-
-        available_gpus = cuda_device_count_stateless()
-        if parallel_config.world_size > available_gpus:
-            logger.warning(
-                "Tensor parallel size (%d) exceeds available GPUs (%d). "
-                "This may result in Ray placement group allocation failures. "
-                "Consider reducing tensor_parallel_size to %d or less, "
-                "or ensure your Ray cluster has %d GPUs available.",
-                parallel_config.world_size,
-                available_gpus,
-                available_gpus,
-                parallel_config.world_size,
-            )
+    pass  # Unsupported P4 branch removed.
 
     if ray.is_initialized():
         logger.info("Ray is already initialized. Skipping Ray initialization.")
-    elif current_platform.is_rocm() or current_platform.is_xpu():
-        # Try to connect existing ray instance and create a new one if not found
-        try:
-            ray.init("auto")
-        except ConnectionError:
-            logger.warning(
-                "No existing RAY instance detected. "
-                "A new instance will be launched with current node resources."
-            )
-            ray.init(
-                address=ray_address,
-                num_gpus=parallel_config.world_size,
-                runtime_env=parallel_config.ray_runtime_env,
-            )
-    else:
-        ray.init(address=ray_address, runtime_env=parallel_config.ray_runtime_env)
+    ray.init(address=ray_address, runtime_env=parallel_config.ray_runtime_env)
 
     device_str = current_platform.ray_device_key
     if not device_str:

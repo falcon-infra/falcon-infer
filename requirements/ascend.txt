@@ -1,6 +1,5 @@
-# P1 candidate: reuse the approved intranet environment; no implicit upgrades.
-# Transitional non-device dependencies remain until the P4 import-closure trim.
-# OpenCV stays on the Ascend baseline while shared media imports still exist.
+# P4 Ascend910B3 candidate; reuse the approved intranet environment.
+# Removed media/other-model direct dependencies; do not uninstall shared packages.
 regex
 cachetools
 psutil
@@ -15,7 +14,6 @@ aiohttp >= 3.13.3
 openai >= 1.99.1, < 2.25.0
 pydantic >= 2.12.0
 prometheus_client >= 0.18.0
-pillow
 prometheus-fastapi-instrumentator >= 7.0.0
 tiktoken >= 0.6.0
 lm-format-enforcer == 0.11.3
@@ -28,8 +26,6 @@ filelock >= 3.16.1
 partial-json-parser
 pyzmq >= 25.0.0
 msgspec
-gguf >= 0.17.0
-mistral_common[image] >= 1.10.0
 pyyaml
 six>=1.16.0; python_version > '3.11'
 setuptools>=77.0.3,<81.0.0; python_version > '3.11'
@@ -44,10 +40,7 @@ pybase64
 cbor2
 ijson
 setproctitle
-openai-harmony >= 0.0.3
 anthropic >= 0.71.0
-model-hosting-container-standards >= 0.1.13, < 1.0.0
-mcp
 opentelemetry-sdk >= 1.27.0
 opentelemetry-api >= 1.27.0
 opentelemetry-exporter-otlp >= 1.27.0
@@ -55,13 +48,10 @@ opentelemetry-semantic-conventions-ai >= 0.4.1
 numpy==1.26.4
 transformers==5.2.0
 fastapi[standard]>=0.115.0,<0.124.0
-opencv-python-headless==4.11.0.86
 xgrammar>=0.1.32,<1.0.0
 torch==2.9.0
 torch-npu==2.9.0.post2
 triton-ascend==3.2.0.dev20260322
-torchvision==0.24.0
-torchaudio==2.9.0
 decorator
 packaging
 scipy
@@ -69,4 +59,3 @@ pandas
 msgpack
 quart
 numba
-arctic-inference==0.1.1

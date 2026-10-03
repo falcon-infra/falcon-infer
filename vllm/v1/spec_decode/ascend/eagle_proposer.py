@@ -47,7 +47,6 @@ from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import supports_multimodal
 from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
-from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
 from vllm.triton_utils import HAS_TRITON, triton
 from vllm.utils.ascend import (
     enable_sp,
@@ -275,21 +274,9 @@ class SpecDecodeBaseProposer(EagleProposer):
 
         self._runnable = self._run_merged_draft
         self.is_multimodal_model = self.vllm_config.model_config.is_multimodal_model
-        if self.uses_mrope:
-            self.mrope_positions = torch.zeros(
-                (3, self.max_num_tokens + 1), dtype=torch.int32, device=device
-            )
-        elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
-            self.xdrope_positions = torch.zeros(
-                (self.uses_xdrope_dim, self.max_num_tokens + 1),
-                dtype=torch.int32,
-                device=device,
-            )
-        else:
-            # RoPE need (max_num_tokens,)
-            self.positions = torch.zeros(
-                self.max_num_tokens, dtype=torch.int32, device=device
-            )
+        self.positions = torch.zeros(
+            self.max_num_tokens, dtype=torch.int32, device=device
+        )
 
         self.token_arange_np = np.arange(self.max_num_tokens + 1)
 
@@ -351,29 +338,7 @@ class SpecDecodeBaseProposer(EagleProposer):
                 [name for name in self.attn_layer_names]
             )
 
-        if supports_multimodal(model):
-            # handle multimodality
-            if self.get_model_name(model) in [
-                "Qwen2_5_VLForConditionalGeneration",
-                "Qwen3VLForConditionalGeneration",
-                "Qwen3VLMoeForConditionalGeneration",
-                "Qwen3_5ForConditionalGeneration",
-                "Qwen3_5MoeForConditionalGeneration",
-            ]:
-                self.model.config.image_token_index = model.config.image_token_id
-            elif self.get_model_name(model) == "PixtralForConditionalGeneration":
-                self.model.config.image_token_index = (
-                    model.config.vision_config.image_token_id
-                )
-            elif self.get_model_name(model) == "KimiK25ForConditionalGeneration":
-                self.model.config.image_token_index = (
-                    model.config.media_placeholder_token_id
-                )
-            else:
-                self.model.config.image_token_index = model.config.image_token_index
-            target_language_model = model.get_language_model()
-        else:
-            target_language_model = model
+        target_language_model = model
 
         # share embed_tokens with the target model if needed
         self._maybe_share_embeddings(target_language_model)
@@ -459,12 +424,7 @@ class SpecDecodeBaseProposer(EagleProposer):
     def _maybe_share_lm_head(self, model: nn.Module) -> None:
         # some model definition do not define lm_head explicitly
         # and reuse embed_tokens for lm_head, e.g., CohereForCausalLM
-        if self.method == "eagle" and hasattr(model, "lm_head"):
-            logger.info("Loading EAGLE LM head weights from the target model.")
-            if supports_multimodal(model):
-                self.model.lm_head = model.get_language_model().lm_head
-            else:
-                self.model.lm_head = model.lm_head
+        pass  # Unsupported P4 branch removed.
 
         if self.method == "mtp" and self.vllm_config.model_config.is_deepseek_mla:
             for _, layer_module in self.model.model.layers.items():
@@ -1237,7 +1197,7 @@ class SpecDecodeBaseProposer(EagleProposer):
         indexer_block_ids = indexer_block_table.gather(
             dim=1, index=block_numbers.view(-1, 1)
         ).view(-1)
-        position_values = clamped_positions[0] if self.uses_mrope else clamped_positions
+        position_values = clamped_positions
         indexer_slot_mapping = (
             indexer_block_ids * block_size + position_values % block_size
         )
@@ -1394,17 +1354,7 @@ class SpecDecodeBaseProposer(EagleProposer):
         if is_profile:
             batch_size = min(batch_size, self.runner.max_num_reqs)
 
-        if self.supports_mm_inputs:
-            mm_embeds, is_mm_embed = (None, None)
-            inputs_embeds = self.model.embed_input_ids(
-                self.input_ids[:num_tokens],
-                multimodal_embeddings=mm_embeds,
-                is_multimodal=is_mm_embed,
-            )
-            self.inputs_embeds[:num_tokens] = inputs_embeds
-            inputs_embeds = self.inputs_embeds[:num_tokens]
-        else:
-            inputs_embeds = None
+        inputs_embeds = None
 
         with set_ascend_forward_context(
             multi_steps_attn_metadata[0] if multi_steps_attn_metadata else None,
@@ -1472,13 +1422,6 @@ class SpecDecodeBaseProposer(EagleProposer):
 
         if token_indices_to_sample is None:
             token_indices_to_sample = common_attn_metadata.query_start_loc[1:] - 1
-
-        if self.method == "eagle3":
-            assert isinstance(self.get_model(), Eagle3LlamaForCausalLM)
-            target_hidden_states = self.model.combine_hidden_states(
-                target_hidden_states
-            )
-            assert target_hidden_states.shape[-1] == self.hidden_size
 
         num_tokens, token_indices_to_sample, common_attn_metadata, long_seq_args = (
             self.set_inputs_first_pass(
@@ -1579,22 +1522,9 @@ class SpecDecodeBaseProposer(EagleProposer):
                 :num_reqs_padded
             ]
 
-        if self.supports_mm_inputs:
-            mm_embeds, is_mm_embed = mm_embed_inputs or (None, None)
-            inputs_embeds = self.model.embed_input_ids(
-                self.input_ids[:num_tokens],
-                multimodal_embeddings=mm_embeds,
-                is_multimodal=is_mm_embed,
-            )
-            self.inputs_embeds[:num_tokens] = inputs_embeds
-            inputs_embeds = self.inputs_embeds[:num_input_tokens]
-        else:
-            inputs_embeds = None
+        inputs_embeds = None
 
-        if self.uses_mrope:
-            used_update_positions = self.mrope_positions[:, token_indices_to_sample]
-        else:
-            used_update_positions = self.positions[token_indices_to_sample]
+        used_update_positions = self.positions[token_indices_to_sample]
 
         if use_staged_mtp_draft_graph:
             common_attn_metadata = self._bind_staged_mtp_metadata_arena(
@@ -1956,10 +1886,7 @@ class SpecDecodeBaseProposer(EagleProposer):
             device=self.device,
         )
         draft_token_ids_tensor[0] = draft_token_ids
-        if self.uses_mrope:
-            positions = self.mrope_positions[:, token_indices_to_sample]
-        else:
-            positions = self.positions[token_indices_to_sample]
+        positions = self.positions[token_indices_to_sample]
         hidden_states = hidden_states[token_indices_to_sample]
         token_indices_to_sample = self.arange[:batch_size]
 
@@ -1991,35 +1918,17 @@ class SpecDecodeBaseProposer(EagleProposer):
             # but adjust the position ids and slot mappings to avoid the
             # out-of-range access during the model execution. The draft tokens
             # generated with this adjustment should be ignored.
-            if self.uses_mrope:
-                exceeds_max_model_len = (
-                    positions[0] >= self.vllm_config.model_config.max_model_len
-                )
-                # Mask out the position ids that exceed the max model length.
-                # Otherwise, we may get out-of-range error in RoPE.
-                clamped_positions = torch.where(
-                    exceeds_max_model_len.unsqueeze(0),
-                    torch.zeros_like(positions),
-                    positions,
-                )
-            else:
-                exceeds_max_model_len = (
-                    positions >= self.vllm_config.model_config.max_model_len
-                )
-                clamped_positions = torch.where(exceeds_max_model_len, 0, positions)
+            exceeds_max_model_len = (
+                positions >= self.vllm_config.model_config.max_model_len
+            )
+            clamped_positions = torch.where(exceeds_max_model_len, 0, positions)
 
             # copy inputs to buffer for cudagraph
             self.input_ids[:batch_size] = input_ids
             self._set_positions(batch_size, clamped_positions)
             self.hidden_states[:batch_size] = hidden_states
-            if self.supports_mm_inputs:
-                self.inputs_embeds[:batch_size] = self.model.embed_input_ids(input_ids)
-
-                input_ids = self.input_ids[:input_batch_size]
-                inputs_embeds = self.inputs_embeds[:input_batch_size]
-            else:
-                input_ids = self.input_ids[:input_batch_size]
-                inputs_embeds = None
+            input_ids = self.input_ids[:input_batch_size]
+            inputs_embeds = None
 
             # Run the model.
 
@@ -2223,8 +2132,7 @@ class SpecDecodeBaseProposer(EagleProposer):
                     cad.query_start_loc_cpu[-num_prefill_reqs:] = query_start_loc_p
 
             # copy inputs to buffer for cudagraph
-            if self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim == 0:
-                target_positions = target_positions[0]
+            pass  # Unsupported P4 branch removed.
 
             self._set_positions(num_tokens, target_positions)
             self.hidden_states[:num_tokens] = target_hidden_states
@@ -2422,20 +2330,8 @@ class SpecDecodeBaseProposer(EagleProposer):
         # but adjust the position ids and slot mappings to avoid the
         # out-of-range access during the model execution. The draft tokens
         # generated with this adjustment should be ignored.
-        if self.uses_mrope:
-            exceeds_max_model_len = used_update_positions[0] >= self.max_model_len
-            # Mask out the position ids that exceed the max model length.
-            # Otherwise, we may get out-of-range error in RoPE.
-            clamped_positions = torch.where(
-                exceeds_max_model_len.unsqueeze(0),
-                torch.zeros_like(used_update_positions),
-                used_update_positions,
-            )
-        else:
-            exceeds_max_model_len = used_update_positions >= self.max_model_len
-            clamped_positions = torch.where(
-                exceeds_max_model_len, 0, used_update_positions
-            )
+        exceeds_max_model_len = used_update_positions >= self.max_model_len
+        clamped_positions = torch.where(exceeds_max_model_len, 0, used_update_positions)
 
         # For data integrity when async scheduling, we shouldn't use in place
         # operations in case they are modified in next step's `prepare_input`
@@ -2456,10 +2352,7 @@ class SpecDecodeBaseProposer(EagleProposer):
         )
         common_attn_metadata.seq_lens_cpu[:batch_size].masked_fill_(exceeds_mask, 1)
         common_attn_metadata.num_computed_tokens_cpu[:batch_size] += 1
-        if self.uses_mrope:
-            common_attn_metadata.positions[:batch_size].copy_(clamped_positions[0])
-        else:
-            common_attn_metadata.positions[:batch_size].copy_(clamped_positions)
+        common_attn_metadata.positions[:batch_size].copy_(clamped_positions)
 
         if self.pcp_size * self.dcp_size > 1:
             if common_attn_metadata.indexer_block_table_tensor is not None:
@@ -2489,20 +2382,12 @@ class SpecDecodeBaseProposer(EagleProposer):
             block_size = self.kernel_block_size
 
             # Compute the slot mapping.
-            if self.uses_mrope:
-                block_numbers = clamped_positions[0] // block_size
-            else:
-                block_numbers = clamped_positions // block_size
+            block_numbers = clamped_positions // block_size
             block_ids = old_common_metadata.block_table_tensor.gather(
                 dim=1, index=block_numbers.view(-1, 1)
             )
             block_ids = block_ids.view(-1)
-            if self.uses_mrope:
-                slot_mapping = (
-                    block_ids * block_size + clamped_positions[0] % block_size
-                )
-            else:
-                slot_mapping = block_ids * block_size + clamped_positions % block_size
+            slot_mapping = block_ids * block_size + clamped_positions % block_size
 
             # Mask out the slot mappings that exceed the max model length.
             # Otherwise, the KV cache will be inadvertently updated with the
@@ -3030,8 +2915,7 @@ class SpecDecodeBaseProposer(EagleProposer):
         hidden_states: torch.Tensor,
         positions: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.is_multimodal_model and _EXTRA_CTX.flash_comm_v1_enabled:
-            return hidden_states, positions
+        pass  # Unsupported P4 branch removed.
         if self.method == "mtp":
             if _EXTRA_CTX.flash_comm_v1_enabled:
                 hidden_states = torch.ops.vllm.maybe_pad_and_reduce(hidden_states)

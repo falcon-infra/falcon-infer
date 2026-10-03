@@ -7,7 +7,6 @@ from .data import ProcessorInputs, SingletonInputs
 def split_enc_dec_inputs(
     inputs: ProcessorInputs,
 ) -> tuple[SingletonInputs | None, SingletonInputs]:
-    if inputs["type"] == "enc_dec":
-        return inputs["encoder_prompt"], inputs["decoder_prompt"]
+    pass  # Unsupported P4 branch removed.
 
     return None, inputs

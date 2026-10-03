@@ -257,7 +257,6 @@ class NPUPlatform(Platform):
             check_kv_extra_config,
             enable_sp,
             get_ascend_device_type,
-            is_310p,
             is_moe_model,
             refresh_block_size,
             staged_sfa_graph_configured,
@@ -479,25 +478,14 @@ class NPUPlatform(Platform):
             # TODO: this is a tricky way to disable `use_sequence_parallel_moe` in vllm.
             if not vllm_config.compilation_config.pass_config.enable_sp:
                 parallel_config.all2all_backend = "flashinfer_all2allv"
-            if is_310p():
-                parallel_config.worker_cls = (
-                    "vllm.platforms.ascend_310p.worker_310p.NPUWorker310"
-                )
-            elif ascend_config.xlite_graph_config.enabled:
-                logger.info(
-                    "openEuler Xlite enabled. See: https://atomgit.com/openeuler/GVirt/tree/master/xlite"
-                )
-                parallel_config.worker_cls = (
-                    "vllm.compilation.xlite.xlite_worker.XliteWorker"
-                )
-            else:
-                parallel_config.worker_cls = "vllm.v1.worker.npu_worker.NPUWorker"
+            if ascend_config.xlite_graph_config.enabled:
+                raise ValueError("Ascend P4 does not support Xlite")
+            parallel_config.worker_cls = "vllm.v1.worker.npu_worker.NPUWorker"
 
         refresh_block_size(vllm_config)
 
-        # Activate custom ops for v1, except on 310P
-        if get_ascend_device_type() != AscendDeviceType._310P:
-            compilation_config.custom_ops = ["all"]
+        # Activate custom ops for the 910B3 runtime.
+        compilation_config.custom_ops = ["all"]
 
         if ascend_config.recompute_scheduler_enable:
             from vllm.v1.core.mc2_recovery import decoder_recovery_budget
@@ -651,7 +639,6 @@ class NPUPlatform(Platform):
     def get_attn_backend_cls(
         cls, selected_backend, attn_selector_config, num_heads: int | None = None
     ):
-        from vllm.utils.ascend import is_310p
 
         key = (attn_selector_config.use_mla, attn_selector_config.use_sparse)
 
@@ -663,24 +650,11 @@ class NPUPlatform(Platform):
             ): "vllm.v1.attention.backends.ascend.attention_v1.AscendAttentionBackend",
             (True, True): "vllm.v1.attention.backends.ascend.sfa_v1.AscendSFABackend",
         }
-        backend_map_310 = {
-            (
-                False,
-                False,
-            ): "vllm.platforms.ascend_310p.attention.attention_v1.AscendAttentionBackend310",
-            # TODO If MLA/SFA is supported in the future, consider implementing the logic described in these comments.
-            # (True, False): "...AscendMLABackend310",
-            # (True, True):  "...AscendSFABackend310",
-        }
-
-        if is_310p():
-            return backend_map_310.get(key, backend_map_310[(False, False)])
-
         return backend_map[key]
 
     @classmethod
     def get_punica_wrapper(cls) -> str:
-        return "vllm.lora.ascend.punica_npu.PunicaWrapperNPU"
+        raise ValueError("Ascend P4 does not support LoRA")
 
     @classmethod
     def get_current_memory_usage(

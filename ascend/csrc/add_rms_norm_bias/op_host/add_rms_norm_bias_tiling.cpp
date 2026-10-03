@@ -276,9 +276,9 @@ static void DetermineModeParameters(
         ubFactor = tiling->get_nullptr_beta() == 1 ? ((dataType == ge::DT_FLOAT) ? UB_FACTOR_B32_CUTD : UB_FACTOR_B16_CUTD) : ((dataType == ge::DT_FLOAT) ? UB_FACTOR_B32_CUTD_WITH_BETA : UB_FACTOR_B16_CUTD_WITH_BETA);
         uint32_t colTileNum = CeilDiv(numCol, ubFactor);
         ubFactor = CeilDiv(numCol, colTileNum * dataPerBlock) * dataPerBlock;
-    } else if (blockFactor == 1 && addRmsNormBiasSocVersion != platform_ascendc::SocVersion::ASCEND310P) {
+    } else if (blockFactor == 1) {
         modeKey = MODE_SINGLE_N;
-    } else if (((tiling->get_nullptr_beta() == 1 && numColAlign <= SMALL_REDUCE_NUM) || (tiling->get_nullptr_beta() == 0 && numColAlign <= SMALL_REDUCE_NUM_WITH_BETA)) && addRmsNormBiasSocVersion != platform_ascendc::SocVersion::ASCEND310P) {
+    } else if (((tiling->get_nullptr_beta() == 1 && numColAlign <= SMALL_REDUCE_NUM) || (tiling->get_nullptr_beta() == 0 && numColAlign <= SMALL_REDUCE_NUM_WITH_BETA))) {
         modeKey = MODE_MERGE_N;
         uint64_t numColAlignWeight = tiling->get_nullptr_beta() == 1 ? ((dtypKey == DTYPE_KEY_FP32) ? FP32_WEIGHT : OTHER_WEIGHT) : ((dtypKey == DTYPE_KEY_FP32) ? FP32_WEIGHT_WITH_BETA : OTHER_WEIGHT_WITH_BETA);
         rowFactor = static_cast<uint32_t>(ubSize) /

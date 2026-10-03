@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from collections.abc import Callable
-from functools import partial
 
 import torch
 
-from vllm import _custom_ops as ops
 from vllm import envs as envs
-from vllm._aiter_ops import rocm_aiter_ops
 from vllm.distributed.eplb.eplb_state import EplbLayerState
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.batch_invariant import (
@@ -17,9 +14,6 @@ from vllm.model_executor.layers.fused_moe.config import (
     RoutingMethodType,
     get_routing_method_type,
 )
-from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
-    rocm_aiter_grouped_topk,
-)
 from vllm.model_executor.layers.fused_moe.router.base_router import BaseRouter
 from vllm.model_executor.layers.fused_moe.router.fused_topk_bias_router import (
     fused_topk_bias,
@@ -27,52 +21,6 @@ from vllm.model_executor.layers.fused_moe.router.fused_topk_bias_router import (
 from vllm.model_executor.layers.fused_moe.router.fused_topk_router import fused_topk
 from vllm.model_executor.utils import maybe_disable_graph_partition
 from vllm.platforms import current_platform
-
-
-def fused_grouped_topk(
-    hidden_states: torch.Tensor,
-    gating_output: torch.Tensor,
-    topk: int,
-    renormalize: bool,
-    e_score_correction_bias: torch.Tensor,
-    num_expert_group: int = 0,
-    topk_group: int = 0,
-    scoring_func: str = "softmax",
-    routed_scaling_factor: float = 1.0,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    assert hidden_states.size(0) == gating_output.size(0), "Number of tokens mismatch"
-
-    if scoring_func == "sigmoid":
-        # Fully fused kernel path for sigmoid
-        topk_values, topk_indices = ops.grouped_topk(
-            gating_output,  # raw logits
-            num_expert_group,
-            topk_group,
-            topk,
-            renormalize,
-            routed_scaling_factor,
-            e_score_correction_bias,
-            1,  # scoring_func=1 for sigmoid
-        )
-    elif scoring_func == "softmax":
-        # Apply softmax in Python, then use fused kernel
-        # TODO: Add support for softmax in kernel
-        scores = torch.softmax(gating_output, dim=-1)
-        topk_values, topk_indices = ops.grouped_topk(
-            scores,  # pre-computed scores
-            num_expert_group,
-            topk_group,
-            topk,
-            renormalize,
-            routed_scaling_factor,
-            e_score_correction_bias,
-            0,  # scoring_func=0 (no activation, scores already computed)
-        )
-    else:
-        raise ValueError(f"Unsupported scoring function: {scoring_func}")
-
-    # Fused kernel outputs float32 values and int32 indices directly
-    return topk_values, topk_indices
 
 
 # This is used by the Deepseek-V2 and Deepseek-V3 model
@@ -92,24 +40,7 @@ def grouped_topk(
     routed_scaling_factor: float = 1.0,
     e_score_correction_bias: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if (
-        envs.VLLM_USE_FUSED_MOE_GROUPED_TOPK
-        and current_platform.is_cuda()
-        and num_expert_group <= 32
-        and topk <= 32
-        and e_score_correction_bias is not None
-    ):
-        return fused_grouped_topk(
-            hidden_states=hidden_states,
-            gating_output=gating_output,
-            topk=topk,
-            renormalize=renormalize,
-            e_score_correction_bias=e_score_correction_bias,
-            num_expert_group=num_expert_group,
-            topk_group=topk_group,
-            scoring_func=scoring_func,
-            routed_scaling_factor=routed_scaling_factor,
-        )
+    pass  # Unsupported P4 branch removed.
 
     assert hidden_states.size(0) == gating_output.size(0), "Number of tokens mismatch"
 
@@ -210,42 +141,6 @@ class GroupedTopk(CustomOp):
             e_score_correction_bias,
         )
 
-    def forward_cuda(
-        self,
-        hidden_states: torch.Tensor,
-        gating_output: torch.Tensor,
-        e_score_correction_bias: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.forward_native(
-            hidden_states, gating_output, e_score_correction_bias
-        )
-
-    def forward_hip(
-        self,
-        hidden_states: torch.Tensor,
-        gating_output: torch.Tensor,
-        e_score_correction_bias: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if rocm_aiter_ops.is_fused_moe_enabled():
-            if not rocm_aiter_ops.is_fusion_moe_shared_experts_enabled():
-                assert self.num_fused_shared_experts == 0
-            return rocm_aiter_grouped_topk(
-                hidden_states,
-                gating_output,
-                self.topk,
-                self.renormalize,
-                self.num_expert_group,
-                self.topk_group,
-                self.scoring_func,
-                self.routed_scaling_factor,
-                e_score_correction_bias,
-                self.num_fused_shared_experts,
-            )
-        else:
-            return self.forward_native(
-                hidden_states, gating_output, e_score_correction_bias
-            )
-
 
 class GroupedTopKRouter(BaseRouter):
     """Router using grouped top-k routing (e.g., DeepSeekV2/V3)."""
@@ -328,15 +223,7 @@ class GroupedTopKRouter(BaseRouter):
             return topk_weights, topk_ids
 
         # Select grouped_topk implementation
-        if rocm_aiter_ops.is_fused_moe_enabled():
-            if not rocm_aiter_ops.is_fusion_moe_shared_experts_enabled():
-                assert self.num_fused_shared_experts == 0
-            grouped_topk_impl = partial(
-                rocm_aiter_grouped_topk,
-                num_fused_shared_experts=self.num_fused_shared_experts,
-            )
-        else:
-            grouped_topk_impl = grouped_topk
+        grouped_topk_impl = grouped_topk
 
         topk_weights, topk_ids = grouped_topk_impl(
             hidden_states=hidden_states,

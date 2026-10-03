@@ -112,11 +112,13 @@ def apply_moe_activation(
 
     # Activations with gated multiplication (gate × activation(up))
     if activation == MoEActivation.SILU:
-        torch.ops._C.silu_and_mul(output, input)
+        gate, up = input.chunk(2, dim=-1)
+        output.copy_(F.silu(gate) * up)
     elif activation == MoEActivation.GELU:
-        torch.ops._C.gelu_and_mul(output, input)
+        gate, up = input.chunk(2, dim=-1)
+        output.copy_(F.gelu(gate) * up)
     elif activation == MoEActivation.SWIGLUOAI:
-        torch.ops._C.swigluoai_and_mul(output, input)
+        raise ValueError("SWIGLUOAI is not part of the GLM-5.2 profile")
     elif activation == MoEActivation.SWIGLUSTEP:
         from vllm.model_executor.layers.activation import swiglustep_and_mul_triton
 

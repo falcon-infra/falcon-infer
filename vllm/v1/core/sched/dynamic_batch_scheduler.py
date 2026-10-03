@@ -22,7 +22,6 @@ import pandas as pd
 from vllm.config import VllmConfig
 from vllm.distributed.kv_events import KVEventBatch
 from vllm.logger import logger
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks
 from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput
 from vllm.v1.core.sched.request_queue import SchedulingPolicy, create_request_queue
@@ -133,7 +132,7 @@ class SchedulerDynamicBatch(Scheduler):
         kv_cache_config: KVCacheConfig,
         structured_output_manager: StructuredOutputManager,
         block_size: int | None = None,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+        mm_registry: None = None,
         include_finished_set: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -222,17 +221,7 @@ class SchedulerDynamicBatch(Scheduler):
             # Schedule encoder inputs.
             encoder_inputs_to_schedule = None
             new_encoder_compute_budget = encoder_compute_budget
-            if request.has_encoder_inputs:
-                (
-                    encoder_inputs_to_schedule,
-                    num_new_tokens,
-                    new_encoder_compute_budget,
-                ) = self._try_schedule_encoder_inputs(
-                    request,
-                    request.num_computed_tokens,
-                    num_new_tokens,
-                    encoder_compute_budget,
-                )
+            pass  # Unsupported P4 branch removed.
 
             if num_new_tokens == 0:
                 # The request cannot be scheduled because one of the following
@@ -270,7 +259,6 @@ class SchedulerDynamicBatch(Scheduler):
                         preempted_req = self.running.pop()
 
                     self.kv_cache_manager.free(preempted_req)
-                    self.encoder_cache_manager.free(preempted_req)
                     preempted_req.status = RequestStatus.PREEMPTED
                     preempted_req.num_computed_tokens = 0
                     if self.log_stats:
@@ -312,24 +300,11 @@ class SchedulerDynamicBatch(Scheduler):
                     )
 
             # Encoder-related.
-            if encoder_inputs_to_schedule:
-                scheduled_encoder_inputs[request.request_id] = (
-                    encoder_inputs_to_schedule
-                )
-                # Allocate the encoder cache.
-                for i in encoder_inputs_to_schedule:
-                    self.encoder_cache_manager.allocate(request, i)
-                encoder_compute_budget = new_encoder_compute_budget
+            pass  # Unsupported P4 branch removed.
 
         # Record the LoRAs in scheduled_running_reqs
         scheduled_loras: set[int] = set()
-        if self.lora_config:
-            scheduled_loras = set(
-                req.lora_request.lora_int_id
-                for req in scheduled_running_reqs
-                if req.lora_request and req.lora_request.lora_int_id > 0
-            )
-            assert len(scheduled_loras) <= self.lora_config.max_loras
+        pass  # Unsupported P4 branch removed.
 
         # Use a temporary RequestQueue to collect requests that need to be
         # skipped and put back at the head of the waiting queue later
@@ -370,18 +345,7 @@ class SchedulerDynamicBatch(Scheduler):
 
                 # Check that adding the request still respects the max_loras
                 # constraint.
-                if (
-                    self.lora_config
-                    and request.lora_request
-                    and (
-                        len(scheduled_loras) == self.lora_config.max_loras
-                        and request.lora_request.lora_int_id not in scheduled_loras
-                    )
-                ):
-                    # Scheduling would exceed max_loras, skip.
-                    self.waiting.pop_request()
-                    skipped_waiting_requests.prepend_request(request)
-                    continue
+                pass  # Unsupported P4 branch removed.
 
                 num_external_computed_tokens = 0
                 load_kv_async = False
@@ -469,21 +433,7 @@ class SchedulerDynamicBatch(Scheduler):
                     assert num_new_tokens > 0
 
                     # Schedule encoder inputs.
-                    if request.has_encoder_inputs:
-                        (
-                            encoder_inputs_to_schedule,
-                            num_new_tokens,
-                            new_encoder_compute_budget,
-                            _,
-                        ) = self._try_schedule_encoder_inputs(
-                            request,
-                            num_computed_tokens,
-                            num_new_tokens,
-                            encoder_compute_budget,
-                        )
-                        if num_new_tokens == 0:
-                            # The request cannot be scheduled.
-                            break
+                    pass  # Unsupported P4 branch removed.
 
                 # Handles an edge case when P/D Disaggregation
                 # is used with Spec Decoding where an
@@ -495,16 +445,7 @@ class SchedulerDynamicBatch(Scheduler):
                 )
 
                 # Determine if we need to allocate cross-attention blocks.
-                if self.is_encoder_decoder and request.has_encoder_inputs:
-                    # TODO(russellb): For Whisper, we know that the input is
-                    # always padded to the maximum length. If we support other
-                    # encoder-decoder models, this will need to be updated if we
-                    # want to only allocate what is needed.
-                    num_encoder_tokens = (
-                        self.scheduler_config.max_num_encoder_input_tokens
-                    )
-                else:
-                    num_encoder_tokens = 0
+                num_encoder_tokens = 0
 
                 new_blocks = self.kv_cache_manager.allocate_slots(
                     request,
@@ -557,8 +498,7 @@ class SchedulerDynamicBatch(Scheduler):
                 else:
                     raise RuntimeError(f"Invalid request status: {request.status}")
 
-                if self.lora_config and request.lora_request:
-                    scheduled_loras.add(request.lora_request.lora_int_id)
+                pass  # Unsupported P4 branch removed.
                 req_to_new_blocks[request.request_id] = (
                     self.kv_cache_manager.get_blocks(request.request_id)
                 )
@@ -570,14 +510,7 @@ class SchedulerDynamicBatch(Scheduler):
                 if request.num_cached_tokens < 0:
                     request.num_cached_tokens = num_computed_tokens
                 # Encoder-related.
-                if encoder_inputs_to_schedule:
-                    scheduled_encoder_inputs[request.request_id] = (
-                        encoder_inputs_to_schedule
-                    )
-                    # Allocate the encoder cache.
-                    for i in encoder_inputs_to_schedule:
-                        self.encoder_cache_manager.allocate(request, i)
-                    encoder_compute_budget = new_encoder_compute_budget
+                pass  # Unsupported P4 branch removed.
 
         # Put back any skipped requests at the head of the waiting queue
         if skipped_waiting_requests:
@@ -632,7 +565,7 @@ class SchedulerDynamicBatch(Scheduler):
             # It contains the request IDs that are finished in between
             # the previous and the current steps.
             finished_req_ids=self.finished_req_ids,
-            free_encoder_mm_hashes=self.encoder_cache_manager.get_freed_mm_hashes(),
+            free_encoder_mm_hashes=[],
         )
 
         # NOTE(Kuntai): this function is designed for multiple purposes:

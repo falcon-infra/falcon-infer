@@ -47,7 +47,8 @@ def stub(name, **attrs):
 class NativeContracts(unittest.TestCase):
     def test_all_layer_targets_exist_and_tables_are_immutable(self):
         registry = load("vllm/model_executor/layers/ascend/registry.py")
-        for entries in (registry.NPU_LAYERS, registry.NPU_310P_LAYERS):
+        self.assertFalse(hasattr(registry, "NPU_310P_LAYERS"))
+        for entries in (registry.NPU_LAYERS,):
             for name, (module, cls) in entries.items():
                 with self.subTest(layer=name):
                     declarations = source(module.replace(".", "/") + ".py")
@@ -246,17 +247,21 @@ class NativeContracts(unittest.TestCase):
         before = set(sys.modules)
         execute(
             registrations,
-            {"KVConnectorFactory": SimpleNamespace(register_connector=register)},
+            {
+                **vars(load("vllm/inference_profile.py")),
+                "KVConnectorFactory": SimpleNamespace(register_connector=register),
+            },
         )
         self.assertEqual(set(sys.modules), before)
         self.assertEqual(
-            entries["MultiConnector"],
-            (
-                "vllm.distributed.kv_transfer.ascend.ascend_multi_connector",
-                "AscendMultiConnector",
-            ),
+            entries,
+            {
+                "LMCacheConnectorV1": (
+                    "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector",
+                    "LMCacheConnectorV1",
+                )
+            },
         )
-        self.assertIn("LMCacheAscendConnector", entries)
 
 
 if __name__ == "__main__":

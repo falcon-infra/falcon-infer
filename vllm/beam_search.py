@@ -4,10 +4,9 @@
 from dataclasses import dataclass
 
 from vllm.inputs import EncoderDecoderInputs, TokenInputs, token_inputs
-from vllm.inputs.data import DecoderInputs
 from vllm.logprobs import Logprob
 from vllm.lora.request import LoRARequest
-from vllm.multimodal.inputs import MultiModalInputs, mm_inputs
+from vllm.inputs.legacy_wire import MultiModalInputs
 
 
 @dataclass
@@ -30,67 +29,13 @@ class BeamSearchSequence:
     stop_reason: int | str | None = None
 
     def get_prompt(self):
-        prompt = self.orig_prompt
+        from vllm.inference_profile import validate_text_prompt
 
-        if prompt["type"] == "enc_dec":
-            return self._build_encoder_decoder_inputs(prompt)
-
-        # Handle decoder-only inputs
-        prompt_text = prompt.get("prompt")
-        cache_salt = prompt.get("cache_salt")
-
-        if prompt["type"] == "token":
-            return token_inputs(
-                self.tokens,
-                prompt=prompt_text,
-                cache_salt=cache_salt,
-            )
-
-        return mm_inputs(
-            prompt_token_ids=self.tokens,
-            mm_kwargs=prompt["mm_kwargs"],
-            mm_hashes=prompt["mm_hashes"],
-            mm_placeholders=prompt["mm_placeholders"],
-            prompt=prompt_text,
-            cache_salt=cache_salt,
-        )
-
-    def _build_encoder_decoder_inputs(
-        self, prompt: EncoderDecoderInputs
-    ) -> EncoderDecoderInputs:
-        """Rebuild the encoder-decoder inputs with the current beam search
-        sequence's tokens.
-
-        FIXME (alex) - the encoder multimodal cache is not properly wired up
-        yet, which means that currently we are running the encoder on every
-        new beam because num_computed_tokens is 0 on each new request. This
-        will be fixed once the cache is correctly implemented.
-        """
-        dec_prompt = prompt["decoder_prompt"]
-
-        # Rebuild decoder prompt with updated tokens,
-        # but keep everything else the same.
-        new_dec_prompt: DecoderInputs
-        if dec_prompt["type"] == "multimodal":
-            new_dec_prompt = mm_inputs(
-                self.tokens,
-                mm_kwargs=dec_prompt["mm_kwargs"],
-                mm_hashes=dec_prompt["mm_hashes"],
-                mm_placeholders=dec_prompt["mm_placeholders"],
-                prompt=dec_prompt.get("prompt"),
-                cache_salt=dec_prompt.get("cache_salt"),
-            )
-        else:
-            new_dec_prompt = token_inputs(
-                self.tokens,
-                prompt=dec_prompt.get("prompt"),
-                cache_salt=dec_prompt.get("cache_salt"),
-            )
-
-        return EncoderDecoderInputs(
-            type="enc_dec",
-            encoder_prompt=prompt["encoder_prompt"],
-            decoder_prompt=new_dec_prompt,
+        validate_text_prompt(self.orig_prompt)
+        return token_inputs(
+            self.tokens,
+            prompt=self.orig_prompt.get("prompt"),
+            cache_salt=self.orig_prompt.get("cache_salt"),
         )
 
 
@@ -112,9 +57,7 @@ class BeamSearchInstance:
         logprobs: list[dict[int, Logprob]] | None = None,
         **kwargs,
     ):
-        decoder_prompt = (
-            prompt if prompt["type"] != "enc_dec" else prompt["decoder_prompt"]
-        )
+        decoder_prompt = prompt
         initial_tokens = decoder_prompt["prompt_token_ids"]
 
         self.beams: list[BeamSearchSequence] = [

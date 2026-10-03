@@ -9,8 +9,7 @@ import torch
 from torch.nn.parameter import UninitializedParameter
 
 import vllm.envs as envs
-from vllm._aiter_ops import rocm_aiter_ops
-from vllm.config import VllmConfig, get_current_vllm_config
+from vllm.config import get_current_vllm_config
 from vllm.config.parallel import ExpertPlacementStrategy
 from vllm.distributed import (
     get_dp_group,
@@ -33,9 +32,6 @@ from vllm.model_executor.layers.fused_moe.fused_moe_method_base import (
 from vllm.model_executor.layers.fused_moe.fused_moe_modular_method import (
     FusedMoEModularMethod,
 )
-from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
-    init_aiter_topK_meta_data,
-)
 from vllm.model_executor.layers.fused_moe.router.router_factory import (
     create_fused_moe_router,
 )
@@ -51,8 +47,6 @@ from vllm.model_executor.layers.fused_moe.utils import (
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig,
 )
-from vllm.platforms import current_platform
-from vllm.utils.math_utils import round_up
 
 logger = init_logger(__name__)
 
@@ -247,26 +241,6 @@ def maybe_roundup_hidden_size(
     )
 
     # we are padding globally so EP buffer allocation works
-    if model_type == "gpt_oss" and is_mxfp4_quant:
-        from vllm.model_executor.layers.quantization.mxfp4 import (
-            Mxfp4Backend,
-            get_mxfp4_backend,
-        )
-
-        current_mxfp4_backend = get_mxfp4_backend(is_lora_enabled)
-
-        if (
-            current_mxfp4_backend == Mxfp4Backend.SM90_FI_MXFP4_BF16
-            or current_mxfp4_backend == Mxfp4Backend.SM100_FI_MXFP4_MXFP8_CUTLASS
-        ):
-            hidden_size = round_up(hidden_size, 128)
-        elif (
-            current_platform.is_rocm()
-            or current_mxfp4_backend == Mxfp4Backend.SM100_FI_MXFP4_MXFP8_TRTLLM
-            or current_mxfp4_backend == Mxfp4Backend.SM100_FI_MXFP4_BF16
-            or current_mxfp4_backend == Mxfp4Backend.MARLIN
-        ):
-            hidden_size = round_up(hidden_size, 256)
 
     return hidden_size
 
@@ -400,12 +374,8 @@ class FusedMoE(CustomOp):
         # ROCm aiter shared experts fusion
         # AITER only supports gated activations (silu/gelu), so disable it
         # for non-gated MoE (is_act_and_mul=False)
-        self.rocm_aiter_fmoe_enabled = (
-            rocm_aiter_ops.is_fused_moe_enabled() and is_act_and_mul
-        )
-        self.aiter_fmoe_shared_expert_enabled = (
-            rocm_aiter_ops.is_fusion_moe_shared_experts_enabled() and is_act_and_mul
-        )
+        self.rocm_aiter_fmoe_enabled = False and is_act_and_mul
+        self.aiter_fmoe_shared_expert_enabled = False and is_act_and_mul
 
         self.num_fused_shared_experts = (
             n_shared_experts
@@ -475,13 +445,7 @@ class FusedMoE(CustomOp):
 
         self.top_k = top_k
 
-        self._init_aiter_shared_experts_topK_buffer(
-            vllm_config=vllm_config, dp_size=dp_size_
-        )
-        if self.use_ep and self.rocm_aiter_fmoe_enabled:
-            assert self.expert_mask is None or torch.all(
-                (expert_mask == 0) | (expert_mask == 1)
-            ), "Aiter Fused MoE kernel only supports expert_map with 0 and 1s."
+        pass  # Unsupported P4 branch removed.
 
         assert intermediate_size % self.tp_size == 0
         self.intermediate_size_per_partition = intermediate_size // self.tp_size
@@ -593,7 +557,7 @@ class FusedMoE(CustomOp):
         # for heuristic purposes, so it must be initialized first.
         self.quant_method: FusedMoEMethodBase = _get_quant_method()
 
-        if not self.moe_config.is_act_and_mul and not current_platform.is_cuda_alike():
+        if not self.moe_config.is_act_and_mul and not False:
             raise NotImplementedError(
                 "is_act_and_mul=False is supported only for CUDA and ROCm for now"
             )
@@ -836,11 +800,7 @@ class FusedMoE(CustomOp):
             self.register_buffer("_expert_map", expert_map)
             self.register_buffer("expert_mask", expert_mask)
             self._maybe_init_expert_routing_tables()
-            if self.aiter_fmoe_shared_expert_enabled:
-                self._init_aiter_shared_experts_topK_buffer(
-                    vllm_config=get_current_vllm_config(),
-                    dp_size=get_dp_group().world_size,
-                )
+            pass  # Unsupported P4 branch removed.
 
     def _load_per_tensor_weight_scale(
         self,
@@ -1017,23 +977,6 @@ class FusedMoE(CustomOp):
         if self._expert_map is None:
             return expert_id
         return self._expert_map[expert_id].item()
-
-    def _init_aiter_shared_experts_topK_buffer(
-        self, vllm_config: VllmConfig, dp_size: int
-    ):
-        if self.num_fused_shared_experts > 0:
-            init_aiter_topK_meta_data(
-                n_routed_experts=self.global_num_experts,
-                n_shared_experts=self.num_fused_shared_experts,
-                top_k=self.top_k,
-                tp_rank=self.ep_rank if self.use_ep else self.tp_rank,
-                tp_size=self.ep_size if self.use_ep else self.tp_size,
-                shared_experts_score=1.0,
-                max_num_tokens=vllm_config.scheduler_config.max_num_batched_tokens
-                * dp_size,
-                is_EP=self.use_ep,
-            )
-        self.local_num_experts += self.num_fused_shared_experts
 
     @overload
     def weight_loader(
@@ -1514,13 +1457,6 @@ class FusedMoE(CustomOp):
         return (
             self._expert_map if not self.rocm_aiter_fmoe_enabled else self.expert_mask
         )
-
-    def forward_cuda(
-        self,
-        hidden_states: torch.Tensor,
-        router_logits: torch.Tensor,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        return self.forward_native(hidden_states, router_logits)
 
     @classmethod
     def make_expert_params_mapping(

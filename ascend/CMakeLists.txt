@@ -29,6 +29,9 @@ endif()
 
 set(RUN_MODE "npu" CACHE STRING "cpu/sim/npu")
 set(SOC_VERSION ${SOC_VERSION})
+if(NOT SOC_VERSION STREQUAL "ascend910b3")
+    message(FATAL_ERROR "P4 supports only SOC_VERSION=ascend910b3")
+endif()
 message(STATUS "Detected SOC version: ${SOC_VERSION}")
 
 if (NOT CMAKE_BUILD_TYPE)
@@ -61,53 +64,16 @@ set(VLLM_ASCEND_CUSTOM_OP
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_kernel/batch_matmul_transpose_kernel.cpp
 )
 
-set(VLLM_ASCEND_CUSTOM_OP_EXCLUDE_310P
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/bgmv_expand.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/bgmv_shrink.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/sgmv_expand.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/sgmv_shrink.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/prepare_sparse_indices.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/prepare_sparse_indices_legacy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/prepare_sparse_indices_staged.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/resident_sorted_cache.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/resident_sorted_cache_coordinated.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/mla_preprocess/op_kernel/mla_preprocess_kernel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_kernel/batch_matmul_transpose_kernel.cpp
-)
-
-set(VLLM_ASCEND_CUSTOM_OP_EXCLUDE_ASCEND950
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/mla_preprocess/op_kernel/mla_preprocess_kernel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_kernel/batch_matmul_transpose_kernel.cpp
-)
-
-if(SOC_VERSION MATCHES "ascend310p.*")
-    message(STATUS "310P hardware detected: disabling MLAPO operators")
-    message(STATUS "310P hardware detected: excluding batch_matmul_transpose operators")
-    list(REMOVE_ITEM VLLM_ASCEND_CUSTOM_OP ${VLLM_ASCEND_CUSTOM_OP_EXCLUDE_310P})
-endif()
-
-if(SOC_VERSION MATCHES "ascend950")
-    message(STATUS "A5 hardware detected: disabling MLAPO operators")
-    message(STATUS "A5 hardware detected: excluding batch_matmul_transpose operators")
-    list(REMOVE_ITEM VLLM_ASCEND_CUSTOM_OP ${VLLM_ASCEND_CUSTOM_OP_EXCLUDE_ASCEND950})
-endif()
-
 ascendc_library(vllm_ascend_kernels SHARED
     ${VLLM_ASCEND_CUSTOM_OP}
 )
 
 message("TORCH_NPU_PATH is ${TORCH_NPU_PATH}")
 
-if(SOC_VERSION MATCHES "ascend310p.*")
-    file(GLOB VLLM_ASCEND_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/aclnn_torch_adapter/*.cpp)
-else()
-    file(GLOB VLLM_ASCEND_SRC
+file(GLOB VLLM_ASCEND_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/aclnn_torch_adapter/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_host/tiling/tiling_data.cpp)
-endif()
 
 include_directories(
   ${pybind11_INCLUDE_DIRS}

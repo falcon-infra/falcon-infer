@@ -23,7 +23,6 @@ from vllm.entrypoints.openai.engine.protocol import (
     GenerationError,
     StreamOptions,
 )
-from vllm.entrypoints.openai.models.protocol import LoRAModulePath
 from vllm.logger import current_formatter_type, init_logger
 from vllm.platforms import current_platform
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -244,27 +243,6 @@ def should_include_usage(
     else:
         include_usage, include_continuous_usage = enable_force_include_usage, False
     return include_usage, include_continuous_usage
-
-
-def process_lora_modules(
-    args_lora_modules: list[LoRAModulePath], default_mm_loras: dict[str, str] | None
-) -> list[LoRAModulePath]:
-    from vllm.entrypoints.openai.models.serving import LoRAModulePath
-
-    lora_modules = args_lora_modules
-    if default_mm_loras:
-        default_mm_lora_paths = [
-            LoRAModulePath(
-                name=modality,
-                path=lora_path,
-            )
-            for modality, lora_path in default_mm_loras.items()
-        ]
-        if args_lora_modules is None:
-            lora_modules = default_mm_lora_paths
-        else:
-            lora_modules += default_mm_lora_paths
-    return lora_modules
 
 
 def sanitize_message(message: str) -> str:

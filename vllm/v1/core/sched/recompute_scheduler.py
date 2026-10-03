@@ -22,7 +22,6 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from vllm.distributed.ec_transfer.ec_connector.base import ECConnectorMetadata
 from vllm.distributed.kv_events import KVEventBatch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata
 from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorStats
@@ -246,19 +245,7 @@ class RecomputeScheduler(Scheduler):
             encoder_inputs_to_schedule = None
             external_load_encoder_input: list[int] = []
             new_encoder_compute_budget = encoder_compute_budget
-            if request.has_encoder_inputs:
-                (
-                    encoder_inputs_to_schedule,
-                    num_new_tokens,
-                    new_encoder_compute_budget,
-                    external_load_encoder_input,
-                ) = self._try_schedule_encoder_inputs(
-                    request,
-                    request.num_computed_tokens,
-                    num_new_tokens,
-                    encoder_compute_budget,
-                    shift_computed_tokens=1 if self.use_eagle else 0,
-                )
+            pass  # Unsupported P4 branch removed.
 
             if self.need_mamba_block_aligned_split:
                 num_new_tokens = self._mamba_block_aligned_split(
@@ -334,14 +321,7 @@ class RecomputeScheduler(Scheduler):
                                 preempted_encoder_inputs = scheduled_encoder_inputs.pop(
                                     preempted_req_id, None
                                 )
-                                if preempted_encoder_inputs:
-                                    # Restore encoder compute budget if the preempted
-                                    # request had encoder inputs scheduled in this step.
-                                    num_embeds_to_restore = sum(
-                                        preempted_req.get_num_encoder_embeds(i)
-                                        for i in preempted_encoder_inputs
-                                    )
-                                    encoder_compute_budget += num_embeds_to_restore
+                                pass  # Unsupported P4 branch removed.
                                 req_index -= 1
                         else:
                             preempted_req = self.running.pop()
@@ -410,29 +390,15 @@ class RecomputeScheduler(Scheduler):
                 request.spec_token_ids = []
 
             # Encoder-related.
-            if encoder_inputs_to_schedule:
-                scheduled_encoder_inputs[request_id] = encoder_inputs_to_schedule
-                # Allocate the encoder cache.
-                for i in encoder_inputs_to_schedule:
-                    self.encoder_cache_manager.allocate(request, i)
-                    if self.ec_connector is not None:
-                        self.ec_connector.update_state_after_alloc(request, i)
-                encoder_compute_budget = new_encoder_compute_budget
+            pass  # Unsupported P4 branch removed.
             if external_load_encoder_input:
                 for i in external_load_encoder_input:
-                    self.encoder_cache_manager.allocate(request, i)
-                    if self.ec_connector is not None:
-                        self.ec_connector.update_state_after_alloc(request, i)
+                    pass  # No encoder state in the text-only profile.
+                    pass  # Unsupported P4 branch removed.
 
         # Record the LoRAs in scheduled_running_reqs
         scheduled_loras: set[int] = set()
-        if self.lora_config:
-            scheduled_loras = set(
-                req.lora_request.lora_int_id
-                for req in scheduled_running_reqs
-                if req.lora_request and req.lora_request.lora_int_id > 0
-            )
-            assert len(scheduled_loras) <= self.lora_config.max_loras
+        pass  # Unsupported P4 branch removed.
 
         # Next, schedule the WAITING requests.
         if (
@@ -467,18 +433,7 @@ class RecomputeScheduler(Scheduler):
 
                 # Check that adding the request still respects the max_loras
                 # constraint.
-                if (
-                    self.lora_config
-                    and request.lora_request
-                    and (
-                        len(scheduled_loras) == self.lora_config.max_loras
-                        and request.lora_request.lora_int_id not in scheduled_loras
-                    )
-                ):
-                    # Scheduling would exceed max_loras, skip.
-                    request_queue.pop_request()
-                    step_skipped_waiting.prepend_request(request)
-                    continue
+                pass  # Unsupported P4 branch removed.
 
                 num_external_computed_tokens = 0
                 load_kv_async = False
@@ -591,22 +546,7 @@ class RecomputeScheduler(Scheduler):
                     assert num_new_tokens > 0
 
                     # Schedule encoder inputs.
-                    if request.has_encoder_inputs:
-                        (
-                            encoder_inputs_to_schedule,
-                            num_new_tokens,
-                            new_encoder_compute_budget,
-                            external_load_encoder_input,
-                        ) = self._try_schedule_encoder_inputs(
-                            request,
-                            num_computed_tokens,
-                            num_new_tokens,
-                            encoder_compute_budget,
-                            shift_computed_tokens=1 if self.use_eagle else 0,
-                        )
-                        if num_new_tokens == 0:
-                            # The request cannot be scheduled.
-                            break
+                    pass  # Unsupported P4 branch removed.
 
                 if self.need_mamba_block_aligned_split:
                     num_new_tokens = self._mamba_block_aligned_split(
@@ -629,15 +569,7 @@ class RecomputeScheduler(Scheduler):
 
                 # Determine if we need to allocate cross-attention blocks.
                 num_encoder_tokens = 0
-                if (
-                    self.is_encoder_decoder
-                    and request.has_encoder_inputs
-                    and encoder_inputs_to_schedule
-                ):
-                    num_encoder_tokens = sum(
-                        request.get_num_encoder_embeds(i)
-                        for i in encoder_inputs_to_schedule
-                    )
+                pass  # Unsupported P4 branch removed.
 
                 new_blocks = self.kv_cache_manager.allocate_slots(
                     request,
@@ -656,8 +588,7 @@ class RecomputeScheduler(Scheduler):
 
                     # NOTE: we need to untouch the request from the encode cache
                     # manager
-                    if request.has_encoder_inputs:
-                        self.encoder_cache_manager.free(request)
+                    pass  # Unsupported P4 branch removed.
                     break
 
                 # KVTransfer: the connector uses this info to determine
@@ -751,8 +682,7 @@ class RecomputeScheduler(Scheduler):
                 else:
                     raise RuntimeError(f"Invalid request status: {request.status}")
 
-                if self.lora_config and request.lora_request:
-                    scheduled_loras.add(request.lora_request.lora_int_id)
+                pass  # Unsupported P4 branch removed.
                 req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(
                     request_id
                 )
@@ -764,20 +694,12 @@ class RecomputeScheduler(Scheduler):
                 if request.num_cached_tokens < 0:
                     request.num_cached_tokens = num_computed_tokens
                 # Encoder-related.
-                if encoder_inputs_to_schedule:
-                    scheduled_encoder_inputs[request_id] = encoder_inputs_to_schedule
-                    # Allocate the encoder cache.
-                    for i in encoder_inputs_to_schedule:
-                        self.encoder_cache_manager.allocate(request, i)
-                        if self.ec_connector is not None:
-                            self.ec_connector.update_state_after_alloc(request, i)
-                    encoder_compute_budget = new_encoder_compute_budget
+                pass  # Unsupported P4 branch removed.
                 # Allocate for external load encoder cache
                 if external_load_encoder_input:
                     for i in external_load_encoder_input:
-                        self.encoder_cache_manager.allocate(request, i)
-                        if self.ec_connector is not None:
-                            self.ec_connector.update_state_after_alloc(request, i)
+                        pass  # No encoder state in the text-only profile.
+                        pass  # Unsupported P4 branch removed.
 
             # re-queue requests skipped in this pass ahead of older skipped items.
             if step_skipped_waiting:
@@ -859,7 +781,7 @@ class RecomputeScheduler(Scheduler):
             # It contains the request IDs that are finished in between
             # the previous and the current steps.
             finished_req_ids=self.finished_req_ids,
-            free_encoder_mm_hashes=self.encoder_cache_manager.get_freed_mm_hashes(),
+            free_encoder_mm_hashes=[],
             new_block_ids_to_zero=new_block_ids_to_zero,
             recomputed_reqs=recomputed_reqs,
         )
@@ -891,11 +813,7 @@ class RecomputeScheduler(Scheduler):
                 )
 
         # Build the connector meta for ECConnector
-        if self.ec_connector is not None:
-            ec_meta: ECConnectorMetadata = self.ec_connector.build_connector_meta(
-                scheduler_output
-            )
-            scheduler_output.ec_connector_metadata = ec_meta
+        pass  # Unsupported P4 branch removed.
 
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)

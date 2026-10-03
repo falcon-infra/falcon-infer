@@ -12,7 +12,6 @@ from vllm.reasoning import ReasoningParser
 
 if TYPE_CHECKING:
     from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-    from vllm.entrypoints.openai.responses.protocol import ResponsesRequest
 
 logger = init_logger(__name__)
 
@@ -61,7 +60,7 @@ class IdentityReasoningParser(ReasoningParser):
         return None
 
     def extract_reasoning(
-        self, model_output: str, request: "ChatCompletionRequest | ResponsesRequest"
+        self, model_output: str, request: "ChatCompletionRequest"
     ) -> tuple[str | None, str | None]:
         # No reasoning separation: return None for reasoning,
         # and full model_output as content

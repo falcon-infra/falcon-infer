@@ -80,8 +80,7 @@ class RayDistributedExecutor(Executor):
         self.forward_dag: ray.dag.CompiledDAG | None = None
 
         # For TPU or XPU, avoid compiling NVIDIA's NCCL
-        if current_platform.is_tpu() or current_platform.is_xpu():
-            os.environ["VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE"] = "shm"
+        pass  # Unsupported P4 branch removed.
 
         assert self.uses_ray
         initialize_ray_cluster(self.parallel_config)

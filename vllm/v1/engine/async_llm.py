@@ -14,18 +14,13 @@ import torch
 import vllm.envs as envs
 from vllm import TokensPrompt
 from vllm.config import VllmConfig
-from vllm.distributed.weight_transfer.base import (
-    WeightTransferInitRequest,
-    WeightTransferUpdateRequest,
-)
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.protocol import EngineClient, StreamingInput
 from vllm.entrypoints.serve.elastic_ep.middleware import set_scaling_elastic_ep
 from vllm.inputs import ProcessorInputs, PromptType
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
-from vllm.outputs import STREAM_FINISHED, PoolingRequestOutput, RequestOutput
+from vllm.outputs import STREAM_FINISHED, RequestOutput
 from vllm.plugins.io_processors import get_io_processor
 from vllm.pooling_params import PoolingParams
 from vllm.renderers import renderer_from_config
@@ -77,7 +72,7 @@ class AsyncLLM(EngineClient):
         executor_class: type[Executor],
         log_stats: bool,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+        mm_registry: None = None,
         use_cached_outputs: bool = False,
         log_requests: bool = True,
         start_engine_loop: bool = True,
@@ -774,89 +769,6 @@ class AsyncLLM(EngineClient):
         """Return whether the engine is currently paused."""
         return await self.engine_core.is_scheduler_paused_async()
 
-    async def encode(
-        self,
-        prompt: PromptType | ProcessorInputs,
-        pooling_params: PoolingParams,
-        request_id: str,
-        lora_request: LoRARequest | None = None,
-        trace_headers: Mapping[str, str] | None = None,
-        priority: int = 0,
-        tokenization_kwargs: dict[str, Any] | None = None,
-        reasoning_ended: bool | None = None,
-    ) -> AsyncGenerator[PoolingRequestOutput, None]:
-        """
-        Main function called by the API server to kick off a request
-            * 1) Making an AsyncStream corresponding to the Request.
-            * 2) Processing the Input.
-            * 3) Adding the Request to the EngineCore (separate process).
-
-        A separate output_handler loop runs in a background AsyncIO task,
-        pulling outputs from EngineCore and putting them into the
-        per-request AsyncStream.
-
-        The caller of generate() iterates the returned AsyncGenerator,
-        returning the RequestOutput back to the caller.
-        """
-
-        q: RequestOutputCollector | None = None
-        try:
-            q = await self.add_request(
-                request_id,
-                prompt,
-                pooling_params,
-                lora_request=lora_request,
-                tokenization_kwargs=tokenization_kwargs,
-                trace_headers=trace_headers,
-                priority=priority,
-                reasoning_ended=reasoning_ended,
-            )
-
-            # The output_handler task pushes items into the queue.
-            # This task pulls from the queue and yields to caller.
-            finished = False
-            while not finished:
-                # Note: drain queue without await if possible (avoids
-                # task switching under load which helps performance).
-                out = q.get_nowait() or await q.get()
-                assert isinstance(out, PoolingRequestOutput)
-                # Note: both OutputProcessor and EngineCore handle their
-                # own request cleanup based on finished.
-                finished = out.finished
-                yield out
-
-        # If the request is disconnected by the client, generate()
-        # is cancelled. So, we abort the request if we end up here.
-        except asyncio.CancelledError:
-            if q is not None:
-                await self.abort(q.request_id, internal=True)
-            if self.log_requests:
-                logger.info("Request %s aborted.", request_id)
-            raise
-
-        # Engine is dead. Do not abort since we shut down.
-        except EngineDeadError:
-            if self.log_requests:
-                logger.info("Request %s failed (engine dead).", request_id)
-            raise
-
-        # Request validation error.
-        except ValueError:
-            if self.log_requests:
-                logger.info("Request %s failed (bad request).", request_id)
-            raise
-
-        # Unexpected error in the generate() task (possibly recoverable).
-        except Exception as e:
-            if q is not None:
-                await self.abort(q.request_id, internal=True)
-            if self.log_requests:
-                logger.info("Request %s failed.", request_id)
-            raise EngineGenerateError() from e
-        finally:
-            if q is not None:
-                q.close()
-
     @property
     def tokenizer(self) -> TokenizerLike | None:
         return self.renderer.tokenizer
@@ -1029,44 +941,3 @@ class AsyncLLM(EngineClient):
     @property
     def dead_error(self) -> BaseException:
         return EngineDeadError()
-
-    async def init_weight_transfer_engine(
-        self, request: WeightTransferInitRequest
-    ) -> None:
-        """
-        Initialize weight transfer for RL training.
-
-        Args:
-            request: Weight transfer initialization request with backend-specific info
-        """
-        from vllm.distributed.weight_transfer.base import (
-            WeightTransferInitRequest,
-        )
-
-        if isinstance(request, WeightTransferInitRequest):
-            init_info_dict = request.init_info
-        else:
-            raise TypeError(f"Expected WeightTransferInitRequest, got {type(request)}")
-
-        await self.collective_rpc(
-            "init_weight_transfer_engine", kwargs={"init_info": init_info_dict}
-        )
-
-    async def update_weights(self, request: WeightTransferUpdateRequest) -> None:
-        """
-        Batched weight update for RL training.
-
-        Args:
-            request: Weight update request with backend-specific update info
-        """
-
-        if isinstance(request, WeightTransferUpdateRequest):
-            update_info_dict = request.update_info
-        else:
-            raise TypeError(
-                f"Expected WeightTransferUpdateRequest, got {type(request)}"
-            )
-
-        await self.collective_rpc(
-            "update_weights", kwargs={"update_info": update_info_dict}
-        )

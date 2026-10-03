@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Optional
 import torch
 
 from vllm.config import VllmConfig, get_layers_from_vllm_config
-from vllm.distributed.ec_transfer import get_ec_transfer, has_ec_transfer
 from vllm.distributed.kv_transfer.ascend.kv_pool.cpu_offload.metadata import (
     MetadataServer,
     MetadataServerProc,
@@ -26,7 +25,6 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
 from vllm.distributed.parallel_state import get_pp_group, get_tp_group
 from vllm.logger import logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
-from vllm.model_executor.layers.mamba.abstract import MambaBase
 from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheSpec
@@ -475,8 +473,6 @@ def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
         KVCacheSpec: A dictionary mapping layer names to their KV cache
         format. Layers that do not need KV cache are not included.
     """
-    if has_ec_transfer() and get_ec_transfer().is_producer:
-        return {}
 
     use_sparse = hasattr(vllm_config.model_config.hf_config, "index_topk")
     if vllm_config.cache_config.cache_dtype == "auto":
@@ -486,9 +482,6 @@ def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
 
     kv_cache_spec: dict[str, KVCacheSpec] = {}
     attn_layers = get_layers_from_vllm_config(vllm_config, AttentionLayerBase)
-    # NOTE: Must process Attention/MLAAttention before MambaBase to maintain
-    # ordering expected by graph parameter update logic in attention backends.
-    mamba_layers: dict[str, MambaBase] = {}
     for layer_name, attn_module in attn_layers.items():
         if isinstance(attn_module, Attention):
             if spec := attn_module.get_kv_cache_spec(vllm_config):
@@ -506,16 +499,6 @@ def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
                     dtype=kv_cache_dtype,
                 )
             elif spec := attn_module.get_kv_cache_spec(vllm_config):
-                kv_cache_spec[layer_name] = spec
-
-        elif isinstance(attn_module, MambaBase):
-            mamba_layers[layer_name] = attn_module
-
-    if len(mamba_layers) > 0:
-        if vllm_config.cache_config.enable_prefix_caching:
-            raise NotImplementedError("Prefix caching is not supported for Mamba yet.")
-        for layer_name, mamba_module in mamba_layers.items():
-            if spec := mamba_module.get_kv_cache_spec(vllm_config):
                 kv_cache_spec[layer_name] = spec
 
     return kv_cache_spec

@@ -12,7 +12,6 @@ from vllm.tasks import GenerationTask
 from vllm.v1.core.sched.output import NewRequestData
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.npu.v2.common.input_batch import InputBatch
-from vllm.v1.worker.npu.v2.common.mm.encoder_cache import EncoderCache
 from vllm.v1.worker.npu.v2.common.states import RequestState
 from vllm.v1.worker.utils import AttentionGroup
 
@@ -23,7 +22,7 @@ class ModelState(ABC):
         self,
         vllm_config: VllmConfig,
         model: nn.Module,
-        encoder_cache: EncoderCache | None,
+        encoder_cache: None,
         device: torch.device,
     ) -> None:
         raise NotImplementedError

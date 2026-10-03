@@ -9,13 +9,12 @@ purposes.
 import argparse
 import json
 import ssl
-from collections.abc import Sequence
 from dataclasses import field
 from typing import Any, Literal
 
 import vllm.envs as envs
 from vllm.config import config
-from vllm.engine.arg_utils import AsyncEngineArgs, optional_type
+from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.chat_utils import (
     ChatTemplateContentFormatOption,
     validate_chat_template,
@@ -24,46 +23,11 @@ from vllm.entrypoints.constants import (
     H11_MAX_HEADER_COUNT_DEFAULT,
     H11_MAX_INCOMPLETE_EVENT_SIZE_DEFAULT,
 )
-from vllm.entrypoints.openai.models.protocol import LoRAModulePath
 from vllm.logger import init_logger
 from vllm.tool_parsers import ToolParserManager
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 logger = init_logger(__name__)
-
-
-class LoRAParserAction(argparse.Action):
-    def __call__(
-        self,
-        parser: argparse.ArgumentParser,
-        namespace: argparse.Namespace,
-        values: str | Sequence[str] | None,
-        option_string: str | None = None,
-    ):
-        if values is None:
-            values = []
-        if isinstance(values, str):
-            raise TypeError("Expected values to be a list")
-
-        lora_list: list[LoRAModulePath] = []
-        for item in values:
-            if item in [None, ""]:  # Skip if item is None or empty string
-                continue
-            if "=" in item and "," not in item:  # Old format: name=path
-                name, path = item.split("=")
-                lora_list.append(LoRAModulePath(name, path))
-            else:  # Assume JSON format
-                try:
-                    lora_dict = json.loads(item)
-                    lora = LoRAModulePath(**lora_dict)
-                    lora_list.append(lora)
-                except json.JSONDecodeError:
-                    parser.error(f"Invalid JSON format for --lora-modules: {item}")
-                except TypeError as e:
-                    parser.error(
-                        f"Invalid fields for --lora-modules: {item} - {str(e)}"
-                    )
-        setattr(namespace, self.dest, lora_list)
 
 
 @config
@@ -75,11 +39,6 @@ class BaseFrontendArgs:
     the subclasses.
     """
 
-    lora_modules: list[LoRAModulePath] | None = None
-    """LoRA modules configurations in either 'name=path' format or JSON format
-    or JSON list format. Example (old format): `'name=path'` Example (new
-    format): `{\"name\": \"name\", \"path\": \"lora_path\",
-    \"base_model_name\": \"id\"}`"""
     chat_template: str | None = None
     """The file path to the chat template, or the template in single-line form
     for the specified model."""
@@ -98,7 +57,7 @@ class BaseFrontendArgs:
     These will be merged with request-level chat_template_kwargs,
     with request values taking precedence. Useful for setting default
     behavior for reasoning models. Example: '{"enable_thinking": false}'
-    to disable thinking mode by default for Qwen3/DeepSeek models."""
+    when supported by the approved GLM checkpoint chat template."""
     response_role: str = "assistant"
     """The role name to return if `request.add_generation_prompt=true`."""
     return_tokens_as_token_ids: bool = False
@@ -123,13 +82,6 @@ class BaseFrontendArgs:
     """Special the tool parser plugin write to parse the model-generated tool
     into OpenAI API format, the name register in this plugin can be used in
     `--tool-call-parser`."""
-    tool_server: str | None = None
-    """Comma-separated list of host:port pairs (IPv4, IPv6, or hostname).
-    Examples: 127.0.0.1:8000, [::1]:8000, localhost:1234. Or `demo` for
-    built-in demo tools (browser and Python code interpreter). WARNING:
-    The `demo` Python tool executes model-generated code in Docker without
-    network isolation by default. See the security guide for more
-    information."""
     log_config_file: str | None = envs.VLLM_LOGGING_CONFIG_PATH
     """Path to logging config JSON file for both vllm and uvicorn"""
     max_log_len: int | None = None
@@ -172,11 +124,6 @@ class BaseFrontendArgs:
         """
         # Special case: default_chat_template_kwargs needs json.loads type
         frontend_kwargs["default_chat_template_kwargs"]["type"] = json.loads
-
-        # Special case: LoRA modules need custom parser action and
-        # optional_type(str)
-        frontend_kwargs["lora_modules"]["type"] = optional_type(str)
-        frontend_kwargs["lora_modules"]["action"] = LoRAParserAction
 
         # Special case: Tool call parser shows built-in options.
         valid_tool_parsers = list(ToolParserManager.list_registered())

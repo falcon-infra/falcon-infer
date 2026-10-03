@@ -5,26 +5,6 @@ from math import prod
 
 import torch
 
-from vllm import _custom_ops as ops
-from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-    per_token_group_quant_fp8,
-)
-from vllm.model_executor.layers.quantization.utils.int8_utils import (
-    per_token_group_quant_int8,
-    per_token_quant_int8,
-)
-from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
-    quant_dequant_mxfp4,
-)
-from vllm.model_executor.layers.quantization.utils.mxfp6_utils import (
-    quant_dequant_mxfp6,
-)
-from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
-    mxfp8_e4m3_quantize,
-)
-from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
-    per_tensor_dequantize,
-)
 from vllm.triton_utils import tl, triton
 from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import is_torch_equal_or_newer
@@ -113,130 +93,6 @@ def _resize_cache(x: torch.Tensor, v: tuple[int, ...]) -> torch.Tensor:
     return x.flatten()[: prod(v)].view(*v)
 
 
-def _nvfp4_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    is_sf_swizzled_layout: bool,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    return ops.scaled_fp4_quant(A, A_scale, is_sf_swizzled_layout=is_sf_swizzled_layout)
-
-
-def _fp8_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token: bool,
-    block_shape: list[int] | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Perform fp8 quantization on the inputs.  If a block_shape
-    is provided, the output will be blocked.
-    """
-    if block_shape is None:
-        # TODO(luka): use QuantFP8 custom op
-        #  https://github.com/vllm-project/vllm/issues/20711
-        A, A_scale = ops.scaled_fp8_quant(
-            A, A_scale, use_per_token_if_dynamic=per_act_token
-        )
-    else:
-        assert not per_act_token
-        assert len(block_shape) == 2
-        _, block_k = block_shape[0], block_shape[1]
-        A, A_scale = per_token_group_quant_fp8(A, block_k)
-        assert cdiv(A.size(-1), block_k) == A_scale.size(-1)
-
-    return A, A_scale
-
-
-def _int8_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token: bool,
-    block_shape: list[int] | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Perform int8 quantization on the inputs.  If a block_shape
-    is provided, the output will be blocked.
-    """
-
-    # If weights are per-channel (per_channel_quant=True), then
-    # activations apply per-token quantization. Otherwise, assume
-    # activation tensor-wise fp8/int8 quantization, dynamic or static
-    if block_shape is None:
-        assert per_act_token, "int8 quantization only supports block or channel-wise"
-        A, A_scale = per_token_quant_int8(A)
-    else:
-        assert not per_act_token
-        assert len(block_shape) == 2
-        _, block_k = block_shape[0], block_shape[1]
-        A, A_scale = per_token_group_quant_int8(A, block_k)
-        assert cdiv(A.size(-1), block_k) == A_scale.size(-1)
-
-    return A, A_scale
-
-
-def _mxfp4_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token_quant: bool,
-    block_shape: list[int] | None = None,
-) -> tuple[torch.Tensor, None]:
-    assert block_shape is None
-    # TODO: native mxfp4 is currently not integrated in vllm,
-    # so simulating even on devices supporting this data type natively.
-    # Once integrated, `current_platform.supports_mx()` should be used to
-    # control quantize+dequantize, or simply quantize here down to mxfp4.
-    A = quant_dequant_mxfp4(A)
-
-    return A, None
-
-
-def _mxfp8_e4m3_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token_quant: bool,
-    block_shape: list[int] | None = None,
-    is_sf_swizzled_layout: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    assert A_scale is None
-    assert not per_act_token_quant
-    assert block_shape is None
-    return mxfp8_e4m3_quantize(A, is_sf_swizzled_layout)
-
-
-def _mxfp6_e3m2_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token_quant: bool,
-    block_shape: list[int] | None = None,
-) -> tuple[torch.Tensor, None]:
-    assert block_shape is None
-
-    # TODO: native mxfp6 is currently not integrated in vllm,
-    # so simulating even on devices supporting this data type natively.
-    # Eventually, there should be a check based on
-    # `current_platform.supports_mx()` here.
-    A = quant_dequant_mxfp6(A, quant_dtype="fp6_e3m2")
-
-    return A, None
-
-
-def _mxfp6_e2m3_quantize(
-    A: torch.Tensor,
-    A_scale: torch.Tensor | None,
-    per_act_token_quant: bool,
-    block_shape: list[int] | None = None,
-) -> tuple[torch.Tensor, None]:
-    assert block_shape is None
-
-    # TODO: native mxfp6 is currently not integrated in vllm,
-    # so simulating even on devices supporting this data type natively.
-    # Eventually, there should be a check based on
-    # `current_platform.supports_mx()` here.
-    A = quant_dequant_mxfp6(A, quant_dtype="fp6_e2m3")
-
-    return A, None
-
-
 def moe_kernel_quantize_input(
     A: torch.Tensor,
     A_scale: torch.Tensor | None,
@@ -247,48 +103,11 @@ def moe_kernel_quantize_input(
     ocp_mx_scheme: str | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     # Handle OCP MX scheme that requires QDQ (quantize-dequantize) for emulation
-    if ocp_mx_scheme is not None:
-        if ocp_mx_scheme in {"w_mxfp4", "w_mxfp4_a_mxfp4"}:
-            pass  # No QDQ needed for these schemes
-        elif ocp_mx_scheme.endswith("a_fp8"):
-            # Perform QDQ (quantize and dequantize) on activation for emulation
-            # purpose, because there is no native kernel for weight in ocp_mx_scheme
-            # and activation in FP8. The implementation is based on existing
-            # non-emulation ops.
-            qA, qA_scale = ops.scaled_fp8_quant(
-                A, A_scale, use_per_token_if_dynamic=False
-            )
-            A = per_tensor_dequantize(qA, qA_scale).to(A.dtype)
-            # After QDQ, we don't need further quantization
-            return A, None
-        # else: For other schemes (e.g., *_a_mxfp6_e3m2, *_a_mxfp6_e2m3),
-        # weights are already dequantized, and we proceed with normal
-        # activation quantization below.
-
-    if quant_dtype == torch.float8_e4m3fn:
-        return _fp8_quantize(A, A_scale, per_act_token_quant, block_shape)
-    elif quant_dtype == torch.int8:
-        return _int8_quantize(A, A_scale, per_act_token_quant, block_shape)
-    elif quant_dtype == "nvfp4":
-        return _nvfp4_quantize(A, A_scale, is_sf_swizzled_layout=is_fp4_scale_swizzled)
-    elif quant_dtype == "mxfp4":
-        return _mxfp4_quantize(A, A_scale, per_act_token_quant, block_shape)
-    elif quant_dtype == "mxfp8":
-        # TODO: `quant_dtype == "mxfp8"` is ambiguous,
-        # should be fp8_e4m3. OCP MX also defines `fp8_e5m2`.
-        return _mxfp8_e4m3_quantize(
-            A,
-            A_scale,
-            per_act_token_quant,
-            block_shape,
-            is_sf_swizzled_layout=is_fp4_scale_swizzled,
+    if quant_dtype is not None or ocp_mx_scheme is not None:
+        raise ValueError(
+            "Quantized MoE input is owned by the native Ascend quantization method"
         )
-    elif quant_dtype == "mxfp6_e3m2":
-        return _mxfp6_e3m2_quantize(A, A_scale, per_act_token_quant, block_shape)
-    elif quant_dtype == "mxfp6_e2m3":
-        return _mxfp6_e2m3_quantize(A, A_scale, per_act_token_quant, block_shape)
-    else:
-        return A, A_scale
+    return A, A_scale
 
 
 def normalize_scales_shape(scales: torch.Tensor | None) -> torch.Tensor | None:

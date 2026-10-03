@@ -364,10 +364,6 @@ def select_moe_comm_method(
     2. Without expert parallel, fall back to all-gather.
     3. On A2 with expert parallel, pick MC2 when tokens fit the MC2 capacity
        and the DP size is large enough; otherwise use all-gather.
-    4. On A3 with expert parallel, prefer fused MC2 when using w8a8_dynamic
-       quantization with small EP size, no dynamic_eplb, and not in MTP
-       mode; otherwise use MC2 within capacity or all-to-all.
-    5. On 310P, always use all-gather.
 
     Args:
         num_tokens (int): The number of tokens in the current batch.
@@ -411,45 +407,6 @@ def select_moe_comm_method(
         else:
             moe_comm_type = MoECommType.ALLGATHER
 
-    elif soc_version in {AscendDeviceType.A3}:
-        # TODO: drop the EP-size guard when dispatch_ffn_combine supports larger EP sizes
-        # TODO: drop speculative method guard when dispatch_gmm_combine_decode supports w16a16
-        fused_mc2_enable = envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2
-        dispatch_ffn_combine_enable = get_ep_group().world_size <= 32 and (
-            not is_draft_model
-        )
-        if num_tokens <= mc2_tokens_capacity:
-            fused_decode_enable = fused_mc2_enable
-            if envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 1:
-                fused_decode_enable = fused_mc2_enable and dispatch_ffn_combine_enable
-            elif envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 2:
-                fused_decode_enable = (
-                    fused_mc2_enable
-                    and speculative_enable_dispatch_gmm_combine_decode(vllm_config)
-                    and quant_type == "w8a8_dynamic"
-                )
-            moe_comm_type = (
-                MoECommType.FUSED_MC2 if fused_decode_enable else MoECommType.MC2
-            )
-        else:
-            fused_prefill_enable = fused_mc2_enable
-            if envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 1:
-                fused_prefill_enable = fused_mc2_enable and dispatch_ffn_combine_enable
-            elif envs_ascend.VLLM_ASCEND_ENABLE_FUSED_MC2 == 2:
-                fused_prefill_enable = False
-            moe_comm_type = (
-                MoECommType.FUSED_MC2 if fused_prefill_enable else MoECommType.ALLTOALL
-            )
-    elif soc_version in {AscendDeviceType._310P}:
-        moe_comm_type = MoECommType.ALLGATHER
-    elif soc_version in {AscendDeviceType.A5}:
-        if (
-            num_tokens <= mc2_tokens_capacity
-            and vllm_config.parallel_config.world_size_across_dp > 1
-        ):
-            moe_comm_type = MoECommType.MC2
-        else:
-            moe_comm_type = MoECommType.ALLTOALL
     else:
         raise ValueError(f"Unsupported soc_version: {soc_version}")
     return moe_comm_type

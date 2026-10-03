@@ -11,9 +11,6 @@ from vllm.v1.core.sched.output import NewRequestData
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.npu.v2.common.attn_utils import build_attn_metadata
 from vllm.v1.worker.npu.v2.common.input_batch import InputBatch
-from vllm.v1.worker.npu.v2.common.mm.encoder_cache import EncoderCache
-from vllm.v1.worker.npu.v2.common.mm.encoder_runner import EncoderRunner
-from vllm.v1.worker.npu.v2.common.mm.rope import get_rope_state
 from vllm.v1.worker.npu.v2.common.model_states.interface import ModelState
 from vllm.v1.worker.npu.v2.common.states import RequestState
 from vllm.v1.worker.utils import AttentionGroup
@@ -24,7 +21,7 @@ class DefaultModelState(ModelState):
         self,
         vllm_config: VllmConfig,
         model: nn.Module,
-        encoder_cache: EncoderCache | None,
+        encoder_cache: None,
         device: torch.device,
     ):
         self.vllm_config = vllm_config
@@ -40,26 +37,9 @@ class DefaultModelState(ModelState):
         self.inputs_embeds_size = self.model_config.get_inputs_embeds_size()
         self.dtype = self.model_config.dtype
 
-        if self.supports_mm_inputs:
-            assert encoder_cache is not None
-            self.encoder_cache = encoder_cache
-            self.encoder_runner = EncoderRunner(
-                model=self.model,
-                max_num_tokens=self.max_num_tokens,
-                hidden_size=self.inputs_embeds_size,
-                encoder_cache=encoder_cache,
-                dtype=self.dtype,
-                device=self.device,
-            )
+        pass  # Unsupported P4 branch removed.
 
-        self.rope_state = get_rope_state(
-            self.model_config,
-            model,
-            max_num_reqs=self.max_num_reqs,
-            max_num_tokens=self.max_num_tokens,
-            max_model_len=self.max_model_len,
-            device=self.device,
-        )
+        self.rope_state = None  # GLM uses ordinary 1-D text positions.
 
     def add_request(self, req_index: int, new_req_data: NewRequestData) -> None:
         if self.rope_state is not None:
@@ -74,37 +54,6 @@ class DefaultModelState(ModelState):
     def apply_staged_writes(self) -> None:
         if self.rope_state is not None:
             self.rope_state.apply_staged_writes()
-
-    def get_mm_embeddings(
-        self,
-        scheduled_encoder_inputs: dict[str, list[int]],
-        input_batch: InputBatch,
-        req_states: RequestState,
-    ) -> torch.Tensor:
-        mm_hashes, mm_kwargs = self.encoder_runner.prepare_mm_inputs(
-            scheduled_encoder_inputs
-        )
-        if mm_kwargs:
-            # Execute the multimodal encoder.
-            encoder_outputs = self.encoder_runner.execute_mm_encoder(mm_kwargs)
-            # Cache the encoder outputs by mm_hash
-            self.encoder_cache.encoder_outputs.update(zip(mm_hashes, encoder_outputs))
-
-        mm_embeds, is_mm_embed = self.encoder_runner.gather_mm_embeddings(
-            input_batch.req_ids,
-            input_batch.num_tokens,
-            input_batch.num_scheduled_tokens,
-            input_batch.query_start_loc_np,
-            req_states.prefill_len.np[input_batch.idx_mapping_np],
-            req_states.num_computed_prefill_tokens[input_batch.idx_mapping_np],
-        )
-        # Use unpadded input_ids to match is_mm_embed size (num_tokens).
-        # input_batch.input_ids may be padded for CUDA graphs.
-        input_ids_unpadded = input_batch.input_ids[: input_batch.num_tokens]
-        inputs_embeds = self.encoder_runner.get_inputs_embeds(
-            input_ids_unpadded, mm_embeds, is_mm_embed
-        )
-        return inputs_embeds[: input_batch.num_tokens_after_padding]
 
     def prepare_inputs(
         self, input_batch: InputBatch, req_states: RequestState
@@ -123,9 +72,7 @@ class DefaultModelState(ModelState):
 
     def prepare_dummy_inputs(self, num_reqs: int, num_tokens: int) -> dict[str, Any]:
         model_inputs = {}
-        if self.supports_mm_inputs:
-            inputs_embeds = self.encoder_runner.inputs_embeds[:num_tokens]
-            model_inputs["inputs_embeds"] = inputs_embeds
+        pass  # Unsupported P4 branch removed.
         if self.rope_state is not None:
             model_inputs["positions"] = self.rope_state.get_positions(num_tokens)
         return model_inputs

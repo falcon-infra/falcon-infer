@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.config.model import AttnTypeStr
     from vllm.config.pooler import SequencePoolingType, TokenPoolingType
-    from vllm.model_executor.layers.pooler import Pooler
+    from typing import Any as Pooler
 else:
     VllmConfig = Any
     Pooler = Any

@@ -5,7 +5,6 @@ from typing import Any, Optional
 import torch
 from torch.distributed import Backend, ProcessGroup
 
-from vllm.distributed.device_communicators.cuda_communicator import CudaCommunicator
 from vllm.distributed.parallel_state import (
     GroupCoordinator,
     TensorMetadata,
@@ -108,16 +107,7 @@ class StatelessGroupCoordinator(GroupCoordinator):
         self.device_group = self_device_group
         self.tcp_store_group = self_tcp_store_group
 
-        if current_platform.is_cuda_alike():
-            self.device = torch.device(f"cuda:{local_rank}")
-        elif current_platform.is_xpu():
-            self.device = torch.device(f"xpu:{local_rank}")
-        elif current_platform.is_npu():
-            self.device = torch.device(f"npu:{local_rank}")
-        elif current_platform.is_out_of_tree():
-            self.device = torch.device(f"{current_platform.device_name}:{local_rank}")
-        else:
-            self.device = torch.device("cpu")
+        self.device = torch.device(f"npu:{local_rank}")
 
         self.use_device_communicator = use_device_communicator
         self.device_communicator = None
@@ -125,22 +115,16 @@ class StatelessGroupCoordinator(GroupCoordinator):
             device_comm_cls = resolve_obj_by_qualname(
                 current_platform.get_device_communicator_cls()
             )
-            assert device_comm_cls == CudaCommunicator
-            self.device_communicator = CudaCommunicator(
+            self.device_communicator = device_comm_cls(
                 cpu_group=self.cpu_group,
                 device=self.device,
                 device_group=self.device_group,
                 unique_name=self.unique_name,
-                global_ranks=self.ranks,
-                global_world_size=global_world_size,
-                tcp_store_group=self.tcp_store_group,
             )
 
         self.mq_broadcaster = None
 
-        self.use_custom_op_call = (
-            current_platform.is_cuda_alike() or current_platform.is_tpu()
-        )
+        self.use_custom_op_call = False or False
         self.use_cpu_custom_send_recv = False
 
     def destroy(self):
@@ -159,7 +143,7 @@ class StatelessGroupCoordinator(GroupCoordinator):
         if self.world_size == 1:
             return input_
 
-        if self.device_communicator and input_.is_cuda:
+        if self.device_communicator and (input_.device.type == "npu"):
             return self.device_communicator.broadcast(input_, src)
         else:
             return self.tcp_store_group.broadcast(input_, src)
@@ -224,7 +208,7 @@ class StatelessGroupCoordinator(GroupCoordinator):
         for tensor in tensor_list:
             if tensor.numel() == 0:
                 continue
-            if self.device_communicator and tensor.is_cuda:
+            if self.device_communicator and (tensor.device.type == "npu"):
                 tensor.copy_(self.device_communicator.broadcast(tensor, src))
             else:
                 tensor.copy_(self.tcp_store_group.broadcast(tensor, src))
@@ -261,7 +245,7 @@ class StatelessGroupCoordinator(GroupCoordinator):
         for tensor in tensor_list:
             if tensor.numel() == 0:
                 continue
-            if self.device_communicator and tensor.is_cuda:
+            if self.device_communicator and (tensor.device.type == "npu"):
                 self.device_communicator.send(tensor, dst)
             else:
                 self.tcp_store_group.send(tensor, dst)
@@ -287,7 +271,7 @@ class StatelessGroupCoordinator(GroupCoordinator):
             if isinstance(value, TensorMetadata):
                 tensor = torch.empty(value.size, dtype=value.dtype, device=value.device)
                 if tensor.numel() > 0:
-                    if self.device_communicator and tensor.is_cuda:
+                    if self.device_communicator and (tensor.device.type == "npu"):
                         tensor = self.device_communicator.recv(
                             tensor.size(), tensor.dtype, src
                         )

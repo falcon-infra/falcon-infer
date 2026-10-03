@@ -26,7 +26,6 @@ if (BUILD_OPEN_PROJECT)
     target_sources(optiling PRIVATE
             moe_gating_top_k_tiling.cpp
             moe_gating_top_k_tiling_base.cpp
-            moe_gating_top_k_tiling_arch35.cpp
     )
 
     target_sources(opsproto PRIVATE

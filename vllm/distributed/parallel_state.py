@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class GraphCaptureContext:
-    stream: torch.cuda.Stream
+    stream: torch.npu.Stream
 
 
 TensorMetadata = namedtuple("TensorMetadata", ["device", "dtype", "size"])
@@ -447,44 +447,16 @@ class GroupCoordinator:
 
         from vllm.platforms import current_platform
 
-        if current_platform.is_npu():
-            stream = (
-                graph_capture_context.stream
-                if graph_capture_context
-                else torch.npu.Stream()
-            )
-            context = graph_capture_context or GraphCaptureContext(stream)
-            stream.wait_stream(torch.npu.current_stream())
-            with torch.npu.stream(stream):
-                yield context
-            return
-        if graph_capture_context is None:
-            stream = torch.cuda.Stream()
-            graph_capture_context = GraphCaptureContext(stream)
-        else:
-            stream = graph_capture_context.stream
-
-        # only cuda uses this function,
-        # so we don't abstract it into the base class
-        maybe_ca_context = nullcontext()
-        from vllm.distributed.device_communicators.cuda_communicator import (
-            CudaCommunicator,
+        stream = (
+            graph_capture_context.stream
+            if graph_capture_context
+            else torch.npu.Stream()
         )
-
-        if self.device_communicator is not None:
-            assert isinstance(self.device_communicator, CudaCommunicator)
-            ca_comm = self.device_communicator.ca_comm
-            if ca_comm is not None:
-                maybe_ca_context = ca_comm.capture()  # type: ignore
-
-        # ensure all initialization operations complete before attempting to
-        # capture the graph on another stream
-        curr_stream = torch.cuda.current_stream()
-        if curr_stream != stream:
-            stream.wait_stream(curr_stream)
-
-        with torch.cuda.stream(stream), maybe_ca_context:
-            yield graph_capture_context
+        context = graph_capture_context or GraphCaptureContext(stream)
+        stream.wait_stream(torch.npu.current_stream())
+        with torch.npu.stream(stream):
+            yield context
+        return
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
         """
@@ -892,8 +864,8 @@ class GroupCoordinator:
             handle = torch.distributed.isend(
                 tensor, dst=self.ranks[dst], group=comm_group
             )
-            if tensor.is_cuda:
-                tensor.record_stream(torch.cuda.current_stream(tensor.device))
+            if tensor.device.type == "npu":
+                tensor.record_stream(torch.npu.current_stream(tensor.device))
             handles.append(handle)
 
         return handles
@@ -1315,17 +1287,13 @@ def graph_capture(device: torch.device):
     """
     from vllm.platforms import current_platform
 
-    if current_platform.is_npu():
-        from vllm.distributed.ascend.parallel_state import (
-            graph_capture as npu_graph_capture,
-        )
+    from vllm.distributed.ascend.parallel_state import (
+        graph_capture as npu_graph_capture,
+    )
 
-        with npu_graph_capture(device) as context:
-            yield context
-        return
-    context = GraphCaptureContext(torch.cuda.Stream(device=device))
-    with get_tp_group().graph_capture(context), get_pp_group().graph_capture(context):
+    with npu_graph_capture(device) as context:
         yield context
+    return
 
 
 logger = init_logger(__name__)
@@ -1949,18 +1917,11 @@ def cleanup_dist_env_and_memory(shutdown_ray: bool = False):
     gc.collect()
     from vllm.platforms import current_platform
 
-    if not current_platform.is_cpu():
-        # Use the cache implementation registered by the active platform.
-        # Out-of-tree platforms such as NPU may not use PyTorch's generic
-        # DeviceAllocator, so torch.accelerator.empty_cache() can fail even
-        # though their platform-specific allocator is valid.
-        current_platform.empty_cache()
-        try:
-            torch._C._host_emptyCache()
-        except AttributeError:
-            logger.warning(
-                "torch._C._host_emptyCache() only available in Pytorch >=2.5"
-            )
+    current_platform.empty_cache()
+    try:
+        torch._C._host_emptyCache()
+    except AttributeError:
+        logger.warning("torch._C._host_emptyCache() only available in Pytorch >=2.5")
 
 
 def in_the_same_node_as(

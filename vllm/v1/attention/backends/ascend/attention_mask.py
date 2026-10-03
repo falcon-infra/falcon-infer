@@ -97,8 +97,7 @@ class AttentionMaskBuilder:
         return self.swa_mask
 
     def get_attention_mask(self, model_config: ModelConfig):
-        if model_config.runner_type == "pooling":
-            return self.get_attn_mask(2048, torch.bool)
+        pass  # Unsupported P4 branch removed.
 
         return self.get_splitfuse_attn_mask()
 

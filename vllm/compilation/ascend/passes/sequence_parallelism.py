@@ -159,61 +159,6 @@ class LastAllReduceRMSNormPattern(_SequenceParallelPatternHelper):
         )
 
 
-class Qwen3VLMiddleAllReduceRMSNormPattern(_SequenceParallelPatternHelper):
-    """For Qwen3-VL middle layers with hidden_states + deepstack_input_embeds add.
-
-    Replaces all_reduce + add + AddRMSNormBias with reduce_scatter +
-    chunk(deepstack_input_embeds) + add + AddRMSNormBias + all_gather.
-    """
-
-    def __init__(self, vllm_config: VllmConfig, eps: float = 1e-6):
-        super().__init__(
-            eps, vllm_config.model_config.dtype, torch.npu.current_device()
-        )
-
-    def get_inputs(self):
-        input = self.empty(8, 16)
-        weight = self.empty(16)
-        residual = self.empty(8, 16)
-        deepstack_input_embeds = self.empty(8, 16)
-        return [input, weight, residual, deepstack_input_embeds]
-
-    def register(self, pm_pass: PatternMatcherPass):
-        def pattern(
-            input: torch.Tensor,
-            weight: torch.Tensor,
-            residual: torch.Tensor,
-            deepstack_input_embeds: torch.Tensor,
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            x = self._all_reduce(input)
-            add_ = x + deepstack_input_embeds
-            result, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
-                add_, residual, weight, None, self.eps
-            )
-
-            return result, residual
-
-        def replacement(
-            input: torch.Tensor,
-            weight: torch.Tensor,
-            residual: torch.Tensor,
-            deepstack_input_embeds: torch.Tensor,
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            reduce_scatter = self._reduce_scatter(input)
-            chunk = deepstack_input_embeds.chunk(self.tp_size)[self.tp_rank]
-            add_ = reduce_scatter + chunk
-            residual = torch.ops.vllm.maybe_chunk_residual(reduce_scatter, residual)
-            result, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
-                add_, residual, weight, None, self.eps
-            )
-            all_gather = self._all_gather(result)
-            return all_gather, residual
-
-        pm.register_replacement(
-            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
-        )
-
-
 class SequenceParallelismPass(VllmInductorPass):
     """Sequence parallelism compilation pass.
 
@@ -233,10 +178,6 @@ class SequenceParallelismPass(VllmInductorPass):
             MiddleAllReduceRMSNormPattern(config, epsilon).register(self.patterns)
 
             LastAllReduceRMSNormPattern(config, epsilon).register(self.patterns)
-
-            Qwen3VLMiddleAllReduceRMSNormPattern(config, epsilon).register(
-                self.patterns
-            )
 
         self.min_tokens = get_sp_min_token_num(config)
 

@@ -15,12 +15,7 @@ __all__ = [
     "_WrappedParser",
 ]
 
-_PARSERS_TO_REGISTER = {
-    "minimax_m2": (  # name
-        "minimax_m2_parser",  # filename
-        "MiniMaxM2Parser",  # class_name
-    ),
-}
+_PARSERS_TO_REGISTER = {}
 
 
 def register_lazy_parsers():

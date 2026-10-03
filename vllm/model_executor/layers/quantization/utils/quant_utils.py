@@ -338,7 +338,6 @@ def get_and_maybe_dequant_weights(
 ):
     """Return layer's unquantized weights in [out, in] layout"""
     from vllm.model_executor.layers.linear import UnquantizedLinearMethod
-    from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
 
     weight = get_attribute_fallback(layer, ["weight", "qweight", "weight_packed"])
 
@@ -349,26 +348,6 @@ def get_and_maybe_dequant_weights(
         return weight.to(out_dtype)
 
     # Simple Fp8 case: rescale with tensor or block weight scales
-    if (
-        isinstance(layer.quant_method, Fp8LinearMethod)
-        and not layer.quant_method.use_marlin
-        # DeepGEMM transforms the scales using `transform_sf_into_required_layout` into
-        # a layout that is not compatible with `scaled_dequantize`.
-        and not layer.quant_method.use_deep_gemm
-    ):
-        weight_scales = get_attribute_fallback(
-            layer, ["weight_scale", "weight_scale_inv"]
-        )
-        dequant_weights = scaled_dequantize(
-            weight,
-            weight_scales,
-            group_shape=layer.weight_block_size,
-            out_dtype=out_dtype,
-        )
-        # per-tensor scaling stores weights in [in, out] layout
-        if not layer.quant_method.block_quant:
-            dequant_weights = dequant_weights.T
-        return dequant_weights
 
     # NOTE: Most generic base case
     # - Call the layer with identity matrix which returns unquantized weights.
