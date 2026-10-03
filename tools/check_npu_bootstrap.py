@@ -21,10 +21,10 @@ import subprocess
 import sys
 import tomllib
 import traceback
+from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 ORDERS = (
@@ -42,6 +42,7 @@ IDENTITY_FILES = (
     "utils/ascend.py",
     "config/__init__.py",
     "config/compilation.py",
+    "config/kv_transfer.py",
     "v1/worker/utils.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="
@@ -157,6 +158,34 @@ def check_order(order: str) -> dict:
         "vllm_path": str(package),
         "source_sha256": fingerprints,
     }
+    if order == "config":
+        from vllm.config.kv_transfer import KVTransferConfig
+        from vllm.distributed.kv_transfer.kv_connector.factory import KVConnectorFactory
+
+        transfer = KVTransferConfig(
+            kv_connector="LMCacheAscendConnectorV1Dynamic",
+            kv_connector_module_path=(
+                "lmcache_ascend.integration.vllm.lmcache_ascend_connector_v1"
+            ),
+            kv_role="kv_both",
+            kv_buffer_device="npu",
+        )
+        if (
+            transfer.kv_connector != "LMCacheConnectorV1"
+            or transfer.kv_connector_module_path is not None
+        ):
+            raise RuntimeError("Retired P3 LMCache launch fields were not migrated")
+        connector_cls = KVConnectorFactory.get_connector_class(transfer)
+        owner = f"{connector_cls.__module__}.{connector_cls.__name__}"
+        if owner != (
+            "vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector."
+            "LMCacheConnectorV1"
+        ):
+            raise RuntimeError(f"Unexpected native LMCache connector: {owner}")
+        result["lmcache_config_migration"] = {
+            "connector": owner,
+            "instance_created": False,
+        }
     if order == "kv_cache_bind":
         from vllm.v1.worker.utils import bind_kv_cache
 
@@ -273,7 +302,9 @@ def main() -> int:
         checks.append(result)
         print(f"{order}: {'PASS' if result['passed'] else 'FAIL'}", flush=True)
     report = {
-        "scope": "installed_cold_import_KV_binding_and_optional_class_inspection_not_inference",
+        "scope": (
+            "installed_cold_import_KV_binding_and_optional_class_inspection_not_inference"
+        ),
         "python": sys.executable,
         "optional_plugins_disabled": True,
         "checks": checks,
