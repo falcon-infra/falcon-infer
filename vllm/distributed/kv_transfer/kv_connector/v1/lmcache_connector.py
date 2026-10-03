@@ -338,6 +338,11 @@ class LMCacheConnectorV1(KVConnectorBase_V1, SupportsHMA):
             connector_output (KVConnectorOutput): the worker-side
                 connectors output.
         """
+        # Completion/control updates are independent of optional KV events.
+        # In particular, finished_recving releases the DSA cold-load slot and
+        # marks the request ready for sparse resume in the LMCache adapter.
+        self._lmcache_engine.update_connector_output(connector_output)
+
         # Get the KV events
         kv_cache_events = connector_output.kv_cache_events
         if not kv_cache_events or not isinstance(kv_cache_events, LMCacheKVEvents):

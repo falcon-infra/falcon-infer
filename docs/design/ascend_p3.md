@@ -49,5 +49,24 @@ environment needs the updated files and a restart of its test processes, not a
 native rebuild. P2-to-P3 upgrades still require both packages to be reinstalled;
 ordinary wheel installations need a newly built P3 wheel.
 
+The subsequent 2026-10-03 completion repair forwards every worker
+`KVConnectorOutput` to the paired adapter before the optional KV-event branch.
+Disabling KV events must not discard receive completions, invalid-block reports
+or decode-window saves. This releases the direct-HBM cold-load admission slot
+and allows validated cold loads to acquire their sparse-resume markers. Event
+aggregation and error propagation are retained; no scheduler limits or MTP
+parameters are changed. Real MTP acceptance/output correctness still requires
+paired inference validation.
+
+On each P3 test container, run `tools/check_npu_bootstrap.py --inspect-glm
+--check-lmcache --output <fresh-directory>` outside the source checkout. The
+eighth check exercises installed connector/adapter methods on isolated host
+state without invoking their initializers or creating a live cache engine.
+It covers two successful cold loads without retiring the first request and an
+invalid-block rejection, with KV events disabled. The installed formal connector
+is also compared against the checkout by content. The LMCache check is opt-in;
+the default no-KV checks keep LMCache optional. This existing-Python-file repair
+has the same editable/no-native-rebuild boundary as the configuration repair.
+
 Workspace instructions and paired commits are under `design/p3/`.
 P4 broad model/device pruning is not part of this source delivery.
