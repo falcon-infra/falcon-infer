@@ -6,7 +6,10 @@ from dataclasses import field
 from typing import Any, Literal, get_args
 
 from vllm.config.utils import config
+from vllm.logger import init_logger
 from vllm.utils.hashing import safe_hash
+
+logger = init_logger(__name__)
 
 KVProducer = Literal["kv_producer", "kv_both"]
 KVConsumer = Literal["kv_consumer", "kv_both"]
@@ -104,6 +107,52 @@ class KVTransferConfig:
             raise ValueError(
                 "Please specify kv_role when kv_connector "
                 f"is set, supported roles are {get_args(KVRole)}"
+            )
+
+        self._normalize_lmcache_connector()
+
+    def _normalize_lmcache_connector(self) -> None:
+        """Migrate the known P1/P2 launch fields without importing retired code."""
+        if self.kv_connector is None:
+            return
+        module_path = self.kv_connector_module_path
+        legacy_module = "lmcache_ascend.integration.vllm.lmcache_ascend_connector_v1"
+        if self.kv_connector == "LMCacheAscendConnectorV1Dynamic" and module_path in (
+            None,
+            legacy_module,
+        ):
+            # P3's formal connector owns the same Ascend lifecycle. Normalize
+            # before factory lookup so scheduler and workers share one identity.
+            # An explicit custom module is not redirected by class name alone.
+            self.kv_connector = "LMCacheConnectorV1"
+            self.kv_connector_module_path = None
+            logger.warning(
+                "P3 migrated retired LMCache connector configuration to "
+                "kv_connector='LMCacheConnectorV1', kv_connector_module_path=None. "
+                "Update the launch configuration; do not install lmcache-ascend."
+            )
+        elif module_path and (
+            module_path == "lmcache_ascend" or module_path.startswith("lmcache_ascend.")
+        ):
+            raise ValueError(
+                "P3 removed the lmcache_ascend package. Set "
+                "kv_connector='LMCacheConnectorV1' and remove "
+                "kv_connector_module_path, or use LMCacheConnectorV1Dynamic from "
+                "lmcache.integration.vllm.lmcache_connector_v1. "
+                "Preserve the other KV transfer fields."
+            )
+
+        native_lmcache = self.kv_connector in (
+            "LMCacheConnectorV1",
+            "LMCacheAscendConnector",
+        ) or (
+            self.kv_connector == "LMCacheConnectorV1Dynamic"
+            and self.kv_connector_module_path
+            == "lmcache.integration.vllm.lmcache_connector_v1"
+        )
+        if native_lmcache and self.get_from_extra_config("use_native", False):
+            raise ValueError(
+                "P3 requires use_native=false and the paired lmcache package"
             )
 
     @property
