@@ -129,7 +129,7 @@ class DefaultModelLoader(BaseModelLoader):
         ):
             use_safetensors = True
             allow_patterns = ["*.safetensors"]
-        if load_format == "pt":
+        elif load_format == "pt":
             allow_patterns = ["*.pt"]
         elif load_format == "npcache":
             allow_patterns = ["*.bin"]

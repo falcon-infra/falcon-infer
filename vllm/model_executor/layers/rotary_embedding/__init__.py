@@ -73,7 +73,7 @@ def get_rope(
             is_neox_style,
             dtype,
         )
-    if scaling_type == "linear":
+    elif scaling_type == "linear":
         scaling_factor = rope_parameters["factor"]
         rotary_emb = LinearScalingRotaryEmbedding(
             head_size,
@@ -84,7 +84,7 @@ def get_rope(
             scaling_factor,
             dtype,
         )
-    if scaling_type == "yarn":
+    elif scaling_type == "yarn":
         scaling_factor = rope_parameters["factor"]
         original_max_position = rope_parameters["original_max_position_embeddings"]
         extra_kwargs = {
@@ -137,6 +137,7 @@ def get_rope(
             dtype,
             **extra_kwargs,
         )
-    raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
+    else:
+        raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
     _ROPE_DICT[key] = rotary_emb
     return rotary_emb
