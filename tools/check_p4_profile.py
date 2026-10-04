@@ -7,8 +7,8 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 try:
     from check_p4_exports import check
@@ -17,7 +17,7 @@ except ModuleNotFoundError as exc:
         raise
     from check_python_exports import check
 
-VERSIONS = {"vllm": "0.18.0+ascend.p4", "lmcache": "0.4.3+ascend.p4"}
+VERSIONS = {"vllm": "0.18.0+ascend.layout1", "lmcache": "0.4.3+ascend.layout1"}
 FORBIDDEN_IMPORTS = (
     "vllm_ascend",
     "lmcache_ascend",
@@ -49,7 +49,7 @@ REMOVED = {
         "vllm/_xpu_ops.py",
         "vllm/v1/pool/late_interaction.py",
         "vllm/v1/worker/mamba_utils.py",
-        "ascend/csrc/causal_conv1d",
+        "csrc/causal_conv1d",
         "vllm/model_executor/layers/ascend/triton/layernorm_gated.py",
         "vllm/model_executor/layers/ascend/triton/linearnorm/split_qkv_rmsnorm_mrope.py",
     ),
@@ -58,7 +58,7 @@ REMOVED = {
         "lmcache/integration/sglang",
         "lmcache/v1/compute",
         "lmcache/v1/transfer_channel/nixl_channel.py",
-        "ascend/csrc/mindspore",
+        "csrc/mindspore",
     ),
 }
 

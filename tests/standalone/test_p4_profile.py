@@ -199,8 +199,8 @@ def test_removed_cli_groups_and_native_bindings_are_absent():
     assert "LoRAParserAction" not in frontend
     assert "lora_modules:" not in frontend
     for relative in (
-        "ascend/csrc/torch_binding.cpp",
-        "ascend/csrc/torch_binding_meta.cpp",
+        "csrc/torch_binding.cpp",
+        "csrc/torch_binding_meta.cpp",
     ):
         content = (ROOT / relative).read_text()
         for symbol in (
@@ -216,8 +216,8 @@ def test_removed_cli_groups_and_native_bindings_are_absent():
 
 def test_native_operator_schemas_implementations_and_meta_stay_consistent():
     """Detect dangling bindings before CANN build or torch extension import."""
-    bindings = (ROOT / "ascend/csrc/torch_binding.cpp").read_text()
-    meta = (ROOT / "ascend/csrc/torch_binding_meta.cpp").read_text()
+    bindings = (ROOT / "csrc/torch_binding.cpp").read_text()
+    meta = (ROOT / "csrc/torch_binding_meta.cpp").read_text()
     schemas = re.findall(r'ops\.def\(\s*"(\w+)\(', bindings)
     implementations = re.findall(r'ops\.impl\(\s*"(\w+)"', bindings)
     meta_implementations = re.findall(r'ops\.impl\(\s*"(\w+)"', meta)
@@ -239,7 +239,7 @@ def test_no_other_model_config_rewriters_or_pooling_execution():
     assert cfg["MODELS_CONFIG_MAP"] == {}
     assert not (ROOT / "vllm/v1/pool/late_interaction.py").exists()
     assert not (ROOT / "vllm/v1/worker/mamba_utils.py").exists()
-    assert not any(p.is_file() for p in (ROOT / "ascend/csrc/causal_conv1d").rglob("*"))
+    assert not any(p.is_file() for p in (ROOT / "csrc/causal_conv1d").rglob("*"))
     code = ast.parse((ROOT / "vllm/v1/worker/input_batch.py").read_text())
     assert not {"get_pooling_metadata", "make_lora_inputs"} & {
         n.name for n in ast.walk(code) if isinstance(n, ast.FunctionDef)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Paired P4 intranet materials, build and isolated-install entry point.
+"""Paired native-layout intranet materials, build and isolated-install entry point.
 
 No automatic downloads or dependency installation. Use --dry-run to print pip
 commands without compiling, installing or creating directories.
@@ -33,7 +33,7 @@ from packaging.requirements import Requirement
 import p1_build as builder
 
 ROOT = Path(__file__).resolve().parent
-VERSIONS = {"vllm": "0.18.0+ascend.p4", "lmcache": "0.4.3+ascend.p4"}
+VERSIONS = {"vllm": "0.18.0+ascend.layout1", "lmcache": "0.4.3+ascend.layout1"}
 
 
 def project() -> tuple[str, str]:
@@ -68,8 +68,8 @@ def materials(source: Path) -> dict:
     """
     primary, _ = project()
     relative, commit = builder.MATERIALS[primary]
-    target = ROOT / "ascend" / relative
-    manifest = ROOT / "ascend/submodule-materials.json"
+    target = ROOT / relative
+    manifest = ROOT / "submodule-materials.json"
     if target.is_symlink():
         raise ValueError("Material destination must not be a symlink")
     if manifest.exists():
@@ -177,7 +177,7 @@ def check_install_target(isolated: bool) -> None:
     """Require dedicated-environment confirmation; reject old four-pack installs."""
     if not isolated:
         raise ValueError(
-            "Pass --isolated-env only in a dedicated P4 container/interpreter"
+            "Pass --isolated-env only in a dedicated native-layout environment"
         )
     for name in ("vllm-ascend", "lmcache-ascend", "vllm", "lmcache"):
         try:
@@ -303,19 +303,21 @@ def pip_plan(action: str, output: Path, wheel: Path | None = None) -> list[str]:
 
 def run_logged(command: list[str], output: Path) -> int:
     """Run one explicitly requested pip action and retain complete logs/exit status."""
-    with (output / "command.log").open("x", encoding="utf-8") as log:
-        with subprocess.Popen(
+    with (
+        (output / "command.log").open("x", encoding="utf-8") as log,
+        subprocess.Popen(
             command,
             cwd=output,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-        ) as process:
-            assert process.stdout is not None
-            for line in process.stdout:
-                log.write(line)
-                print(line, end="", flush=True)
-            code = process.wait()
+        ) as process,
+    ):
+        assert process.stdout is not None
+        for line in process.stdout:
+            log.write(line)
+            print(line, end="", flush=True)
+        code = process.wait()
     write_report(output / "command-result.json", {"argv": command, "returncode": code})
     return code
 
@@ -400,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--isolated-env",
                 action="store_true",
-                help="confirm dedicated P4 environment, not a serving baseline",
+                help="confirm a dedicated native-layout environment",
             )
         if action == "install":
             command.add_argument("--wheel", required=True, type=Path)
@@ -432,8 +434,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.action != "build":
             check_install_target(args.isolated_env)
-        if output.is_relative_to(ROOT / "ascend") or output.is_relative_to(
-            ROOT / project()[0]
+        if any(
+            output.is_relative_to(ROOT / name)
+            for name in (project()[0], "csrc", "cmake", "third_party")
         ):
             raise ValueError(
                 "Reports must not be written into package/material directories"

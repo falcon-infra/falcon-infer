@@ -67,7 +67,7 @@ def check_custom_opp_registration(package: Path) -> dict:
             f"Packaged CANN OPP path was not registered first: {vendor}. "
             "Check the P4 native bootstrap and restart in a new process."
         )
-    # This is the layout emitted by ascend/csrc/cmake/func.cmake. A linked
+    # This is the layout emitted by csrc/cmake/func.cmake. A linked
     # op_api .so alone does not establish that kernel metadata was installed.
     config = (
         vendor / "op_impl/ai_core/tbe/kernel/config/ascend910b/binary_info_config.json"

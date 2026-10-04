@@ -1,25 +1,14 @@
 include LICENSE README.md pyproject.toml setup.py p1_build.py p1_dev.py CMakeLists.txt .gitmodules
 include requirements/ascend.txt requirements/build.txt
+include submodule-materials.json
+include docs/design/layout-migration.json
 graft vllm
-graft ascend
-global-exclude __pycache__ *.pyc *.pyo
-global-exclude .git
+graft csrc
+graft cmake
+recursive-include tools check_p4*.py check_npu*.py check_native_layout.py validate_npu_native.py p4_*.py
+global-exclude __pycache__ *.pyc *.pyo .git .git/**
 prune build
 prune dist
-prune ascend/.git
-prune ascend/build
-prune ascend/output
-prune ascend/.deps
-
-prune ascend/legacy_patches
-prune ascend/legacy_plugin
-prune ascend/vllm_ascend
-prune ascend/legacy_tests
-
-prune ascend/tests
-prune ascend/examples
-prune ascend/docs
-prune ascend/tools
-prune ascend/benchmarks
-prune ascend/benchmark
-recursive-include tools check_p4*.py check_npu*.py validate_npu_native.py p4_*.py
+prune csrc/build
+prune csrc/output
+prune csrc/third_party/catlass/.git

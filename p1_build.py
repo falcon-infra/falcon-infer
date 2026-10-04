@@ -30,6 +30,7 @@ from setuptools.command.build import build
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
 from setuptools.command.editable_wheel import editable_wheel
+from setuptools.command.sdist import sdist
 
 ROOT = Path(__file__).resolve().parent
 TORCH_VERSION = "2.9.0"
@@ -65,13 +66,13 @@ def material_inventory(directory: Path) -> dict:
 def verify_materials(primary: str) -> dict:
     """Check every material file, including builds from an sdist without .git."""
     relative, commit = MATERIALS[primary]
-    manifest = ROOT / "ascend/submodule-materials.json"
+    manifest = ROOT / "submodule-materials.json"
     if not manifest.is_file():
         raise RuntimeError("Run python -B p1_dev.py materials --help first")
     expected = json.loads(manifest.read_text())
     if expected.get("commit") != commit or expected.get("path") != relative:
         raise RuntimeError("Submodule material does not match the pinned commit")
-    actual = material_inventory(ROOT / "ascend" / relative)
+    actual = material_inventory(ROOT / relative)
     if not actual or actual != expected.get("files"):
         raise RuntimeError("Submodule payload is missing or changed; do not build")
     return {"path": relative, "commit": commit, "files": len(actual)}
@@ -90,10 +91,9 @@ def resource_namespace(primary: str) -> str:
 
 
 def package_names(primary: str, addon: str) -> list[str]:
-    packages = find_packages(str(ROOT), include=[primary, primary + ".*"])
     if addon != primary:
-        packages += find_packages(str(ROOT / "ascend"), include=[addon, addon + ".*"])
-    return packages
+        raise ValueError("Only the native distribution namespace is supported")
+    return find_packages(str(ROOT), include=[primary, primary + ".*"])
 
 
 def check_environment() -> dict:
@@ -254,8 +254,16 @@ class P1BuildPy(build_py):
         )
 
 
+class P1Sdist(sdist):
+    """Require reproducible pinned native inputs before publishing a source tarball."""
+
+    def run(self) -> None:
+        verify_materials(self.distribution.get_name())
+        super().run()
+
+
 class P1EditableWheel(editable_wheel):
-    """Expose both namespaces and all native resources through a strict link tree."""
+    """Expose the native package and resources through a strict link tree."""
 
     def run(self) -> None:
         """Build a development installation; regular wheels remain the exit gate."""
@@ -310,7 +318,7 @@ class P1BuildExt(build_ext):
         info["submodule"] = verify_materials(primary)
         if primary == "vllm" and metadata.version("triton-ascend") != TRITON_VERSION:
             raise RuntimeError("triton-ascend differs from the approved P4 candidate")
-        native = ROOT / "ascend"
+        native = ROOT
         needed = (
             native / "csrc/third_party/catlass/include"
             if primary == "vllm"
@@ -439,11 +447,7 @@ def setup_arguments(primary: str) -> dict:
     module = "_ascend_C" if primary == "vllm" else "c_ops"
     return {
         "packages": package_names(primary, addon),
-        "package_dir": (
-            {primary: primary}
-            if primary == addon
-            else {primary: primary, addon: f"ascend/{addon}"}
-        ),
+        "package_dir": {primary: primary},
         "install_requires": runtime_requirements(),
         "include_package_data": True,
         "package_data": {
@@ -463,6 +467,7 @@ def setup_arguments(primary: str) -> dict:
         },
         "ext_modules": [Extension(f"{addon}.{module}", sources=[])],
         "cmdclass": {
+            "sdist": P1Sdist,
             "build": P1Build,
             "build_ext": P1BuildExt,
             "build_py": P1BuildPy,
