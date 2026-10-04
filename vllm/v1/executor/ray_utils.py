@@ -357,7 +357,8 @@ def initialize_ray_cluster(
 
     if ray.is_initialized():
         logger.info("Ray is already initialized. Skipping Ray initialization.")
-    ray.init(address=ray_address, runtime_env=parallel_config.ray_runtime_env)
+    else:
+        ray.init(address=ray_address, runtime_env=parallel_config.ray_runtime_env)
 
     device_str = current_platform.ray_device_key
     if not device_str:

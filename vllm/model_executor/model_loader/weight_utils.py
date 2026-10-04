@@ -744,12 +744,13 @@ def safetensors_weights_iterator(
             for name, param in state_dict.items():
                 if not should_skip_weight(name, local_expert_ids):
                     yield name, param
-        with safe_open(st_file, framework="pt") as f:
-            for name in f.keys():  # noqa: SIM118
-                if should_skip_weight(name, local_expert_ids):
-                    continue
-                param = f.get_tensor(name)
-                yield name, param
+        else:
+            with safe_open(st_file, framework="pt") as f:
+                for name in f.keys():  # noqa: SIM118
+                    if should_skip_weight(name, local_expert_ids):
+                        continue
+                    param = f.get_tensor(name)
+                    yield name, param
 
 
 def multi_thread_safetensors_weights_iterator(

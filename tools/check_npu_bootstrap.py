@@ -48,6 +48,10 @@ IDENTITY_FILES = (
     "v1/worker/npu_runner_state.py",
     "v1/worker/npu_model_runner.py",
     "v1/spec_decode/ascend/__init__.py",
+    "model_executor/layers/rotary_embedding/__init__.py",
+    "model_executor/model_loader/default_loader.py",
+    "model_executor/model_loader/weight_utils.py",
+    "v1/executor/ray_utils.py",
     "distributed/kv_transfer/kv_connector/v1/lmcache_connector.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="
