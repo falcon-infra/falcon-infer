@@ -267,12 +267,14 @@ class NPUModelRunnerState(KVConnectorModelRunnerMixin):
         # layers in the draft model.
         if self.speculative_config and get_pp_group().is_last_rank:
             self.drafter: EagleProposer | None
-            if self.speculative_config.use_eagle():
-                self.drafter = EagleProposer(self.vllm_config, self.device, self)
-                pass  # Unsupported P4 branch removed.
-            raise ValueError(
-                f"Unknown speculative decoding method: {self.speculative_config.method}"
-            )
+            if self.speculative_config.method != "mtp":
+                raise ValueError(
+                    "Unknown speculative decoding method: "
+                    f"{self.speculative_config.method}; Ascend P4 supports only MTP"
+                )
+            # GLM MTP reuses the Eagle machinery, but standalone EAGLE methods
+            # remain unsupported. Valid MTP must reach rejection-sampler setup.
+            self.drafter = EagleProposer(self.vllm_config, self.device, self)
             self.rejection_sampler = RejectionSampler(self.sampler)
 
         self.num_spec_tokens = 0

@@ -43,7 +43,11 @@ IDENTITY_FILES = (
     "config/__init__.py",
     "config/compilation.py",
     "config/kv_transfer.py",
+    "config/speculative.py",
     "v1/worker/utils.py",
+    "v1/worker/npu_runner_state.py",
+    "v1/worker/npu_model_runner.py",
+    "v1/spec_decode/ascend/__init__.py",
     "distributed/kv_transfer/kv_connector/v1/lmcache_connector.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="

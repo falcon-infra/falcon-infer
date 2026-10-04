@@ -1680,7 +1680,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         if not self.drafter:
             # Speculative decoding is not enabled.
             draft_token_ids = None
-        if self.speculative_config.use_eagle() or False:
+        elif self.speculative_config.use_eagle():
             common_attn_metadata = spec_decode_common_attn_metadata
             sampled_token_ids = valid_sampled_token_ids
 
