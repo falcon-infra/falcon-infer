@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 name = "vllm"
 authors = [{name = "vLLM Team"}]
 license = "Apache-2.0"
-license-files = ["LICENSE", "ascend/LICENSE"]
+license-files = ["LICENSE"]
 readme = "README.md"
 description = "A high-throughput and memory-efficient inference and serving engine for LLMs"
 classifiers = [
@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 requires-python = ">=3.11,<3.12"
-version = "0.18.0+ascend.p4"
+version = "0.18.0+ascend.layout1"
 dynamic = ["dependencies"]
 
 [project.urls]

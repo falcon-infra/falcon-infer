@@ -37,10 +37,20 @@ function(add_compile_definitions)
   set(P1_ABI_DEFINITION "${ARGV}" PARENT_SCOPE)
 endfunction()
 
-function(add_subdirectory)
-  if(NOT "${ARGV}" STREQUAL "ascend" OR P1_ASCEND_SEEN)
-    message(FATAL_ERROR "Expected exactly one Ascend subdirectory: ${ARGV}")
+function(include path)
+  if("${path}" STREQUAL "${P1_ROOT_ENTRY}")
+    _include("${path}")
+    # Propagate the root settings to the harness scope.
+    foreach(name P1_PROJECT_SEEN P1_PYTHON_SEEN P1_ASCEND_SEEN P1_ABI_DEFINITION
+                 CMAKE_CXX_STANDARD CMAKE_CXX_STANDARD_REQUIRED PYBIND11_FINDPYTHON)
+      set(${name} "${${name}}" PARENT_SCOPE)
+    endforeach()
+    return()
   endif()
+  if(NOT "${path}" MATCHES "/cmake/npu_extensions.cmake$" OR P1_ASCEND_SEEN)
+    message(FATAL_ERROR "Expected exactly one native extension include: ${path}")
+  endif()
+  # Root-entry-only parser test: do not configure compiler/dependencies.
   set(P1_ASCEND_SEEN TRUE PARENT_SCOPE)
 endfunction()
 
@@ -108,7 +118,11 @@ class P1CMakeTests(unittest.TestCase):
     def test_root_entry_has_no_gpu_build_tail(self):
         source = ROOT_ENTRY.read_text(encoding="utf-8")
         self.assertNotRegex(source, r"(?i)CUDA|HIP|ROCM|MARLIN|CUTLASS|VLLM_GPU")
-        self.assertTrue(source.rstrip().endswith("add_subdirectory(ascend)"))
+        self.assertTrue(
+            source.rstrip().endswith(
+                'include("${CMAKE_CURRENT_LIST_DIR}/cmake/npu_extensions.cmake")'
+            )
+        )
 
     def test_parser_rejects_an_unmatched_endif(self):
         malformed = self.directory / "malformed.cmake"

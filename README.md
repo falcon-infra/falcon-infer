@@ -1,23 +1,26 @@
-# vllm — Ascend910B3 / GLM-5.2
+# vllm 原生 Ascend 推理框架
 
-P4 原生推理源码候选，版本 `0.18.0+ascend.p4`。仅支持 GLM-5.2 原生文本生成及
-DSA/MTP、CPU KV 卸载与共享、跨实例缓存、P/D、RemoteFill、checkpoint 和恢复。
-不提供其他厂商/Ascend 型号、多模态、LoRA、pooling 或训练能力。
+当前目录整改分支为 `refactor/native-layout`，输入为不可变标签
+`p4-frozen-20261004`。仅支持 Ascend910B3 和 GLM-5.2 原生文本推理，
+保留 DSA 双组、MTP、CPU KV 缓存、P/D、RemoteFill、checkpoint 和恢复。
+本次不修改推理算法、参数、C8 开关或二进制接口。
 
-配对安装 `vllm==0.18.0+ascend.p4` 与 `lmcache==0.4.3+ascend.p4`。
-冻结 P3 输入为两仓同名标签 `p3-frozen-20261003`；删除的源码可从该标签恢复。
-P4 源码检查不等于 CANN 编译、ABI、910B3 或 2P2D 验收通过。
+配对版本为 `vllm==0.18.0+ascend.layout1` 和
+`lmcache==0.4.3+ascend.layout1`。根目录不再有 `ascend/`：
+Python 实现在 `vllm/`，原生实现和构建配置在
+`csrc/`、`cmake/`，测试、工具和部署示例归入各自的根目录。
+包内按功能划分的 Ascend 后端及已有 ABI 名称保持不变。
 
-请先阅读 [P4 安装与验证指南](docs/design/ascend_p4.md)。历史文件名 `p1_dev.py` 继续使用，
-但已按 P4 更新。切换阶段后必须重建 native 扩展并重新安装两仓 strict editable，
-四个节点的每个容器均需执行。不要复用 P3 `.so`，也不要覆盖正在运行的基线环境。
-构建不隐式联网或升级依赖，内网材料使用审核过的固定版本。
+阅读[目录与安装指南](docs/design/native-layout.md)。
+`p1_dev.py` 名称保留，但须使用当前分支的脚本，重新编译并安装两仓 strict editable。
+四节点每个容器都要核对配对版本；不要复用 P4 的安装链接树或原生制品。
 
 ```bash
-python -B tools/check_p4_profile.py
-python -B tools/check_npu_native.py
+python -B tools/check_native_layout.py --source-only
+python -B tools/run_layout_host_checks.py
 python -B p1_dev.py --help
 ```
 
-上游项目及 Ascend donor 的许可证保留在 `LICENSE`、`ascend/LICENSE`。
-源码中的共享 DeepSeek/Eagle 等命名不代表对其他 checkpoint 的支持。
+以上主机检查不等于 CANN 编译、ABI 或 2P2D 验收通过。
+迁移明细和冻结源码指纹见 `docs/design/layout-migration.json`。
+同文许可证已归并为根 `LICENSE`；各文件的版权声明不变，历史路径可从冻结标签恢复。

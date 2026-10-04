@@ -1,5 +1,15 @@
 # Agent Instructions for vLLM
 
+## Current fork: native repository layout (2026-10-04)
+
+Work on `refactor/native-layout` from immutable `p4-frozen-20261004`.
+The user approved removing the repository-root `ascend/` donor tree. Integrate
+native sources into `csrc/` and `cmake/`, and use one root tests/tools/examples
+tree. Preserve native Python owners, algorithms, ABI names, pinned materials
+and the P4 910B3/GLM-5.2 scope. Do not change frozen P4 or earlier refs. This
+overrides historical branch/plugin instructions below. Host/source checks only;
+native builds and 2P2D acceptance remain in the intranet.
+
 ## Current fork: P4 profile pruning (2026-10-03)
 
 The user authorized freezing P3 and implementing P4. Work on `p4`; the paired

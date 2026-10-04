@@ -45,6 +45,35 @@ with patch.dict(sys.modules, {"p1_build": BUILD}):
 class DevelopmentContracts(unittest.TestCase):
     """Exercise both distribution layouts through their independent helpers."""
 
+    def test_sdist_verifies_root_materials_without_environment_probe(self):
+        command = BUILD.P1Sdist(self.dist)
+        with (
+            patch.object(
+                BUILD, "verify_materials", return_value={"files": 1}
+            ) as verify,
+            patch.object(BUILD.sdist, "run") as run,
+            patch.object(
+                BUILD,
+                "check_environment",
+                side_effect=AssertionError("device/build probe"),
+            ),
+        ):
+            command.run()
+        verify.assert_called_once_with(self.primary)
+        run.assert_called_once()
+
+    def test_sdist_refuses_missing_materials_before_creating_archive(self):
+        command = BUILD.P1Sdist(self.dist)
+        with (
+            patch.object(
+                BUILD, "verify_materials", side_effect=RuntimeError("missing material")
+            ),
+            patch.object(BUILD.sdist, "run") as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "missing material"):
+                command.run()
+        run.assert_not_called()
+
     def setUp(self) -> None:
         """Create only disposable synthetic source/material/artifact files."""
         temporary = tempfile.TemporaryDirectory(prefix="p1-contract-")
@@ -212,7 +241,7 @@ class DevelopmentContracts(unittest.TestCase):
                     DEV.check_install_target(True)
 
     def test_install_accepts_p3_pair_and_rejects_p1_p2_mixtures(self) -> None:
-        versions = {"vllm": "0.18.0+ascend.p4", "lmcache": "0.4.3+ascend.p4"}
+        versions = {"vllm": "0.18.0+ascend.layout1", "lmcache": "0.4.3+ascend.layout1"}
 
         def installed(name: str) -> str:
             if name in versions:
@@ -324,7 +353,7 @@ class DevelopmentContracts(unittest.TestCase):
     ) -> None:
         # Cover both the device-object relink and private ACLNN source paths.
         for relative, _ in BUILD.MATERIALS.values():
-            material = self.root / "ascend" / relative
+            material = self.root / relative
             (material / "include").mkdir(parents=True)
             (material / "CMakeLists.txt").write_text("# fixture")
         cann = self.root / "sdk"
@@ -400,7 +429,7 @@ class DevelopmentContracts(unittest.TestCase):
                         list((Path(directory) / "install" / namespace).glob(pattern))
                     )
         for relative, _ in BUILD.MATERIALS.values():
-            self.assertFalse((self.root / "ascend" / relative / "build").exists())
+            self.assertFalse((self.root / relative / "build").exists())
 
     def test_invalid_job_count_fails_before_native_commands(self) -> None:
         with (
@@ -414,7 +443,7 @@ class DevelopmentContracts(unittest.TestCase):
 
     def test_native_failure_does_not_publish_or_reuse_old_payload(self) -> None:
         relative, _ = BUILD.MATERIALS["lmcache"]
-        material = self.root / "ascend" / relative
+        material = self.root / relative
         material.mkdir(parents=True)
         (material / "CMakeLists.txt").write_text("# fixture")
         ini = self.root / "sdk/aarch64-linux/data/platform_config/Ascend910B3.ini"
@@ -500,7 +529,7 @@ class DevelopmentContracts(unittest.TestCase):
         self.assertEqual(report["commit"], commit)
         self.assertEqual(report["files"], 1)
         self.assertEqual(
-            (self.root / "ascend" / relative / "kernel.cpp").read_text(), "// fixture"
+            (self.root / relative / "kernel.cpp").read_text(), "// fixture"
         )
         self.assertEqual(BUILD.verify_materials(self.primary), report)
 

@@ -1,34 +1,32 @@
-name: P4 source and host contracts
+name: Native layout source and host contracts
 on:
   push:
-    branches: [p4]
+    branches: [refactor/native-layout]
   pull_request:
-    branches: [p4]
+    branches: [refactor/native-layout]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   host:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vllm
     steps:
       - uses: actions/checkout@v4
         with:
+          path: vllm
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: zhangzhaoju/LMCache-dual
+          ref: refactor/native-layout
+          path: LMCache
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Host-only dependencies (no torch or CANN)
-        run: python -m pip install pytest==9.0.2 numpy==1.26.4 msgspec==0.20.0 pyzmq==27.1.0 pydantic==2.12.5 setuptools==79.0.1
-      - run: python -B tools/check_p4_profile.py
-      - run: python -B tools/check_npu_native.py
-      - name: Host contracts (tensor and NPU tests run in the intranet)
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-          PYTHONDONTWRITEBYTECODE: '1'
-          PYTHONPATH: .
-        run: >-
-          python -m pytest -q --noconftest -p no:cacheprovider
-          tests/standalone ascend/tests/standalone
-          --ignore=ascend/tests/standalone/test_cold_resume_native_metadata.py
-          --ignore=ascend/tests/standalone/test_glm52_topk_ownership.py
-          -k 'not production_draft_expansion_can_exceed_target_capacity'
+        run: python -m pip install pytest==9.0.2 numpy==1.26.4 msgspec==0.20.0 pyzmq==27.1.0 pydantic==2.12.5 setuptools==79.0.1 sphinx==7.2.6
+      - run: python -B tools/run_layout_host_checks.py
