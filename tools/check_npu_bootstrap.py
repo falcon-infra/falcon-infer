@@ -39,6 +39,7 @@ IDENTITY_FILES = (
     "platforms/__init__.py",
     "platforms/npu.py",
     "platforms/ascend_constants.py",
+    "model_executor/layers/ascend/__init__.py",
     "utils/ascend.py",
     "config/__init__.py",
     "config/compilation.py",
@@ -55,6 +56,36 @@ IDENTITY_FILES = (
     "distributed/kv_transfer/kv_connector/v1/lmcache_connector.py",
 )
 RESULT_PREFIX = "NPU_BOOTSTRAP_RESULT="
+
+
+def check_custom_opp_registration(package: Path) -> dict:
+    """Check automatic registration without repairing it or loading a kernel."""
+    vendor = package / "_cann_ops_custom/vendors/vllm-ascend"
+    entries = os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep)
+    if not vendor.is_dir() or entries[0] != str(vendor):
+        raise RuntimeError(
+            f"Packaged CANN OPP path was not registered first: {vendor}. "
+            "Check the P4 native bootstrap and restart in a new process."
+        )
+    # This is the layout emitted by ascend/csrc/cmake/func.cmake. A linked
+    # op_api .so alone does not establish that kernel metadata was installed.
+    config = (
+        vendor / "op_impl/ai_core/tbe/kernel/config/ascend910b/binary_info_config.json"
+    )
+    if not config.is_file():
+        raise RuntimeError(
+            f"Missing packaged CANN kernel metadata: {config}. "
+            "Rebuild/reinstall this P4 vLLM package; retain the build log."
+        )
+    raw = config.read_bytes()
+    json.loads(raw)  # Reject a truncated/corrupt metadata file, not its schema.
+    return {
+        "vendor_path": str(vendor),
+        "registered_first": True,
+        "binary_info_config": str(config),
+        "binary_info_sha256": hashlib.sha256(raw).hexdigest(),
+        "scope": "environment_and_metadata_only_not_kernel_execution",
+    }
 
 
 def check_kv_cache_binding(
@@ -233,6 +264,12 @@ def check_order(order: str) -> dict:
         "vllm_path": str(package),
         "source_sha256": fingerprints,
     }
+    # Exercise the normal process startup entry, not a test-only import_kernels
+    # call that could hide a missing registration in the serving worker.
+    from vllm.plugins import load_general_plugins
+
+    load_general_plugins()
+    result["custom_opp"] = check_custom_opp_registration(package)
     if order == "config":
         from vllm.config.kv_transfer import KVTransferConfig
         from vllm.distributed.kv_transfer.kv_connector.factory import KVConnectorFactory

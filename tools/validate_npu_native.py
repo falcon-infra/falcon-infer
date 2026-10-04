@@ -30,6 +30,42 @@ class RetiredImports(importlib.abc.MetaPathFinder):
         return None
 
 
+def check_add_rms_norm_bias(torch, torch_npu) -> list[dict]:
+    """Run a tiny real custom-op check on the explicitly selected idle NPU.
+
+    Compare against the built-in AddRmsNorm plus optional bias. This verifies
+    operator discovery and selected tensor cases, not model accuracy/performance.
+    """
+    cases = []
+    for dtype in (torch.float32, torch.bfloat16):
+        values = torch.arange(256, dtype=torch.float32).reshape(8, 32) / 128 - 1
+        x = values.to(device="npu", dtype=dtype)
+        residual = (values * 0.125).to(device="npu", dtype=dtype)
+        weight = torch.linspace(0.75, 1.25, 32, device="npu", dtype=dtype)
+        for with_bias in (False, True):
+            bias = (
+                torch.full((32,), 0.125, device="npu", dtype=dtype)
+                if with_bias
+                else None
+            )
+            expected, _, expected_residual = torch_npu.npu_add_rms_norm(
+                x, residual, weight, 1e-6
+            )
+            if bias is not None:
+                expected = expected + bias
+            actual, _, actual_residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
+                x, residual, weight, bias, 1e-6
+            )
+            torch.npu.synchronize()
+            tolerance = 2e-2 if dtype == torch.bfloat16 else 1e-4
+            torch.testing.assert_close(
+                actual.cpu(), expected.cpu(), rtol=tolerance, atol=tolerance
+            )
+            torch.testing.assert_close(actual_residual.cpu(), expected_residual.cpu())
+            cases.append({"dtype": str(dtype), "bias": with_bias, "passed": True})
+    return cases
+
+
 def probe(*, device_smoke=False, torchair_abi=False):
     result = {"scope": "installed_import_contracts", "passed": False}
     guard = RetiredImports()
@@ -58,7 +94,22 @@ def probe(*, device_smoke=False, torchair_abi=False):
         if not current_platform.is_npu() or current_platform.is_out_of_tree():
             raise RuntimeError("Native NPU platform was not selected")
         load_general_plugins()
-        current_platform.import_kernels()
+        # Observe the same entry used by serve/LLM/WorkerWrapper. Do not repair
+        # a missing production call here: that hid the initial P4 regression.
+        vendor = (
+            Path(vllm.__file__).absolute().parent
+            / "_cann_ops_custom/vendors/vllm-ascend"
+        )
+        if not vendor.is_dir() or os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(
+            os.pathsep
+        )[0] != str(vendor):
+            raise RuntimeError(
+                f"Normal startup did not register packaged CANN OPP: {vendor}"
+            )
+        result["custom_opp"] = {
+            "vendor_path": str(vendor),
+            "registered_before_native_ops": True,
+        }
 
         # Register actual native operators before importing worker/model owners.
         from vllm.model_executor.layers.ascend import initialize_native_ops
@@ -117,6 +168,7 @@ def probe(*, device_smoke=False, torchair_abi=False):
                 "extension": extension.__file__,
                 "device": torch.npu.get_device_name(0),
                 "stream_event_tensor": "passed",
+                "add_rms_norm_bias": check_add_rms_norm_bias(torch, torch_npu),
             }
 
         result.update(

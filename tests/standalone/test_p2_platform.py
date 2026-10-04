@@ -100,6 +100,14 @@ class NativePlatformTests(unittest.TestCase):
         self.registry = load_file("vllm.platforms", "vllm/platforms/__init__.py")
 
     def component_stubs(self) -> None:
+        # Actual packaged-resource registration is covered by test_p4_custom_opp.
+        self.enterContext(
+            patch.object(
+                type(self.platform),
+                "import_kernels",
+                side_effect=lambda: self.calls.append("custom_opp"),
+            )
+        )
         name = "vllm.utils.ascend_profiling_config"
         sys.modules[name] = module(
             name,
@@ -167,14 +175,14 @@ class NativePlatformTests(unittest.TestCase):
         loader = self.plugin_loader([])
         loader.load_general_plugins()
         loader.load_general_plugins()
-        self.assertEqual(self.calls, ["profiling"])
+        self.assertEqual(self.calls, ["custom_opp", "profiling"])
 
     def test_optional_plugin_filter_does_not_filter_required_components(self) -> None:
         entry = SimpleNamespace(name="optional", value="example:register", load=Mock())
         self.envs.VLLM_PLUGINS = []
         self.plugin_loader([entry]).load_general_plugins()
         entry.load.assert_not_called()
-        self.assertEqual(self.calls, ["profiling"])
+        self.assertEqual(self.calls, ["custom_opp", "profiling"])
 
     def test_optional_plugins_run_after_native_components(self) -> None:
         entry = SimpleNamespace(
@@ -183,7 +191,7 @@ class NativePlatformTests(unittest.TestCase):
             load=lambda: lambda: self.calls.append("optional"),
         )
         self.plugin_loader([entry]).load_general_plugins()
-        self.assertEqual(self.calls, ["profiling", "optional"])
+        self.assertEqual(self.calls, ["custom_opp", "profiling", "optional"])
 
     def test_required_component_failure_stops_loading(self) -> None:
         loader = self.plugin_loader([])

@@ -52,8 +52,6 @@ else:
     VllmConfig = None
     FlexibleArgumentParser = None
 
-_CUSTOM_OP_REGISTERED = False
-
 
 def config_deprecated_logging():
     """Configure deprecated logging format, when used deprecated codes
@@ -101,6 +99,10 @@ class NPUPlatform(Platform):
 
     @classmethod
     def register_builtin_components(cls) -> None:
+        # P4 no longer imports the GPU-oriented vllm._custom_ops module that
+        # used to register this path. Do it before worker/native initialization,
+        # even when all optional plugins are disabled.
+        cls.import_kernels()
         from vllm.utils.ascend_profiling_config import generate_service_profiling_config
 
         generate_service_profiling_config()
@@ -606,34 +608,37 @@ class NPUPlatform(Platform):
 
     @classmethod
     def import_kernels(cls) -> None:
-        # Directly importing _ascend_C prevents ASCEND_RT_VISIBLE_DEVICES
-        # from being applied during runtime initialization, which causes bugs
-        # in the RL module. Therefore, we currently use lazy initialization
-        # to avoid this issue. See https://github.com/vllm-project/vllm-ascend/pull/884.
-        # TODO: when the above issue is fixed, we can uncomment the following lines.
-        # from vllm.utils.ascend import enable_custom_op
-        # enable_custom_op()
-        # set custom ops path
-        global _CUSTOM_OP_REGISTERED
-        if _CUSTOM_OP_REGISTERED:
-            return
-        # Native libraries still live in the packaged Ascend resource directory.
-        # Do not anchor them to this relocated platform or resolve editable links.
+        """Register packaged CANN resources without loading a native library.
+
+        The ACLNN wrapper can load while CANN still cannot discover the kernel
+        metadata. Register the vendor path before initializing device/ops, not
+        only when the first kernel executes. Keep _ascend_C itself lazy so device
+        visibility remains configurable until worker device initialization.
+        """
         import vllm
 
-        CUR_DIR = os.path.dirname(os.path.abspath(vllm.__file__))
-        CUSTOM_OPP_PATH = os.path.join(
-            CUR_DIR, "_cann_ops_custom", "vendors", "vllm-ascend"
+        # Strict editable resources live in the link tree, not alongside the
+        # resolved source __init__.py. Ordinary wheels use the same layout.
+        package_dir = os.path.dirname(os.path.abspath(vllm.__file__))
+        custom_opp_path = os.path.join(
+            package_dir, "_cann_ops_custom", "vendors", "vllm-ascend"
         )
-        if os.path.exists(CUSTOM_OPP_PATH):
-            current_cust_opp_path = os.environ.get("ASCEND_CUSTOM_OPP_PATH", "")
-            if current_cust_opp_path:
-                os.environ["ASCEND_CUSTOM_OPP_PATH"] = (
-                    f"{CUSTOM_OPP_PATH}:{current_cust_opp_path}"
-                )
-            else:
-                os.environ["ASCEND_CUSTOM_OPP_PATH"] = CUSTOM_OPP_PATH
-        _CUSTOM_OP_REGISTERED = True
+        if not os.path.isdir(custom_opp_path):
+            raise RuntimeError(
+                f"Missing packaged CANN custom operators: {custom_opp_path}. "
+                "Rebuild/reinstall this P4 vLLM package in the prepared Ascend "
+                "environment; do not substitute another installation's OPP path."
+            )
+        others = [
+            path
+            for path in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep)
+            if path and path.rstrip(os.sep) != custom_opp_path
+        ]
+        # Idempotent across parent/child processes and repeated initialization;
+        # do not cache a boolean that can outlive a changed environment.
+        os.environ["ASCEND_CUSTOM_OPP_PATH"] = os.pathsep.join(
+            [custom_opp_path, *others]
+        )
 
     @classmethod
     def get_attn_backend_cls(
