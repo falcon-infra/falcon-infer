@@ -1,6 +1,7 @@
 # 原生目录整改与安装
 
-本分支从 `p4-frozen-20261004` 派生，只调整仓库目录、构建入口、测试与文档。
+目录整改已冻结于 `native-layout-frozen-20261005`。当前 P5/P6 从此点派生，
+只调整发布候选元数据、检查与交付工具，不改模型、缓存或原生实现。
 运行时 Python 和原生实现的冻结指纹由 `tools/check_native_layout.py` 校验。
 冻结 P4 是回退点，不代表完整验收矩阵已经通过。
 
@@ -22,7 +23,7 @@
 ## 内网安装
 
 使用独立验证容器及新 checkout，保留冻结 P4 环境。配对安装
-`vllm==0.18.0+ascend.layout1` 与 `lmcache==0.4.3+ascend.layout1`。
+`vllm==0.18.0+ascend.p5p6rc1` 与 `lmcache==0.4.3+ascend.p5p6rc1`。
 沿用 Python 3.11/aarch64、CANN 8.5.1、torch 2.9.0、torch-npu 2.9.0.post2、
 transformers 5.2.0 和 triton-ascend 3.2.0.dev20260322，不隐式升级依赖。
 
@@ -64,5 +65,6 @@ CATLASS 固定提交为 `716fd7baa7fb7f6cac0488bb628fd1dd0e875641`。
 再按 P4 已验证参数启动，DSA 双组/MTP 开启、C8 关闭，保持 TP8/DP2、TP4/DP4 验收项。
 新的 proxy 路径是 `examples/disaggregated_prefill_v1/`，其余服务参数不应因目录调整改变。
 
-回退须两仓一起使用 `p4-frozen-20261004` 的独立环境，不混用版本。
+回退须两仓一起使用 `native-layout-frozen-20261005` 的独立环境，不混用版本。
+P5/P6 使用最终 P6 配对执行一次完整内网验收，安装命令不变但两仓必须重装。
 此处只说明目录整改，不承诺尚未执行的 NPU/性能验收结果。
