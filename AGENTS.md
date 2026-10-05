@@ -1,5 +1,16 @@
 # Agent Instructions for vLLM
 
+## Standard packaging entrypoints (2026-10-05)
+
+The user explicitly requires baseline-compatible `pip install -e .`,
+`python setup.py bdist_wheel` and `python setup.py sdist` on current `p6`.
+Keep the build implementation in root `setup.py`; do not reintroduce
+`p1_build.py`, `p1_dev.py` or another required install wrapper. Preserve the
+native build flags, artifacts, pinned materials and runtime implementations.
+Editable defaults to strict mode. Prepared intranet installs use
+`--no-build-isolation --no-deps --no-index` to preserve the foundation.
+Frozen refs remain immutable. This supersedes historical helper instructions.
+
 ## Current fork: P5 and P6 joint qualification (2026-10-05)
 
 The user authorized freezing native-layout and preparing P5/P6 together.
@@ -106,11 +117,13 @@ Use available tooling for host-only checks on this workstation.
 
 ### Installing dependencies
 
-In a dedicated intranet test container, prepare pinned materials, run
-`p1_dev.py doctor`, then use `p1_dev.py editable --isolated-env --output <new-dir>`
-for both repositories. Reinstall both after a phase/version change; preserve
-live editable build directories. Do not enable `VLLM_USE_PRECOMPILED=1`.
-For ordinary wheels use the same helper's build/install subcommands.
+In a dedicated intranet test container, initialize pinned Git submodules and use
+`python -m pip install -e . --no-build-isolation --no-deps --no-index` in each repo.
+Root setup.py automatically validates/registers materials during native builds
+and sdist generation; it never downloads them. Reinstall both after a phase/version
+change; preserve live editable build directories. Do not enable precompiled wheels.
+Use `python setup.py bdist_wheel` / `python setup.py sdist` for artifacts and
+`tools/check_native_layout.py --installed editable` (or `wheel`) for read-only checks.
 
 ### Running tests
 

@@ -29,17 +29,18 @@
 沿用 Python 3.11/aarch64、CANN 8.5.1、torch 2.9.0、torch-npu 2.9.0.post2、
 transformers 5.2.0 和 triton-ascend 3.2.0.dev20260322，不隐式升级依赖。
 
-沿用根 `p1_dev.py` 的 materials、doctor、editable、verify 命令。
+沿用标准 `pip install -e .` 与根 `setup.py`，不再使用阶段安装包装脚本。
 完整成对命令、CANN 环境初始化、旧安装处理及四容器检查统一见安装指南，
-不要仅装本仓而遗漏 LMCache。verify 和冷导入从 `/tmp` 等源码外目录执行。
+不要仅装本仓而遗漏 LMCache。安装路径检查和冷导入从 `/tmp` 等源码外目录执行。
 Git 子模块获取可通过已配置的内网 proxy；构建不自动下载。
 
 CATLASS 固定提交为 `716fd7baa7fb7f6cac0488bb628fd1dd0e875641`。
-也可用 `materials --from-submodule /已审核的本地子模块路径`，禁止覆盖已有漂移材料。
+通过标准 Git 子模块流程准备本地固定材料，禁止覆盖已有漂移材料。
 材料记录现在位于根 `submodule-materials.json`，sdist 必须携带该记录及实际材料文件。
-`p1_dev.py build --output <新目录>` 保留普通 wheel 构建能力。
+`setup.py` 在构建或 sdist 时自动核验并首次登记材料，不自动下载。
+`python setup.py bdist_wheel`、`python setup.py sdist` 保留标准制品构建能力。
 
-`--isolated-env` 表示当前是专用调测环境，并非绕过包版本冲突。
+内网标准 pip 安装须保留 `--no-build-isolation --no-deps --no-index`。
 若环境仍装有 P4/旧插件，先准备干净验证容器。不要在运行着基线服务的环境卸载或切换源码。
 原位切换旧 checkout 会留下未跟踪的 `ascend/` 材料/构建文件，源检查将拒绝该目录；
 优先使用新 checkout，不要用 `git clean` 或递归删除处理它。
