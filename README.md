@@ -11,7 +11,8 @@ Python 实现在 `vllm/`，原生实现和构建配置在
 `csrc/`、`cmake/`，测试、工具和部署示例归入各自的根目录。
 包内按功能划分的 Ascend 后端及已有 ABI 名称保持不变。
 
-阅读[目录与安装指南](docs/design/native-layout.md)。
+阅读[目录与安装指南](docs/design/native-layout.md)和
+[联合验收及成对切换](docs/design/release-operations.md)。
 `p1_dev.py` 名称保留，但须使用当前分支的脚本，重新编译并安装两仓 strict editable。
 四节点每个容器都要核对配对版本；不要复用 P4/layout1 的安装链接树或原生制品。
 P5 的发布准备由 P6 完整继承，最终只验证一次 P6 配对；
