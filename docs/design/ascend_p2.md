@@ -1,5 +1,9 @@
 # Native Ascend P2
 
+> Historical P2 record. For the current paired P6 installation and deployment,
+> use [the baseline-compatible guide](baseline-validation.md). Do not install
+> the old phase pair or reuse its plugin paths with the current checkout.
+
 For the P3 branch and paired LMCache work, see [P3 status](ascend_p3.md).
 The following records the preserved P2 delivery, not the current P3 package pair.
 

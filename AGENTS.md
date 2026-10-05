@@ -11,6 +11,12 @@ Do not claim qualification, switch live services, or retire original checkouts
 before evidence and recovery gates pass. No native builds on this source host.
 This supersedes earlier working-branch instructions below.
 
+Current installation/deployment instructions are in
+`docs/design/baseline-validation.md`. Keep the native-layout command interface
+and validated serving arguments. Paired strict editable remains valid for this
+baseline comparison; wheel/image release evidence is a separate requirement.
+Historical phase notes below are provenance, not current installation steps.
+
 ## Current fork: native repository layout (2026-10-04)
 
 Work on `refactor/native-layout` from immutable `p4-frozen-20261004`.
@@ -93,41 +99,28 @@ If work is duplicate/trivial busywork, **do not proceed**. Return a short explan
 
 ### Environment setup
 
-```bash
-# Install `uv` if you don't have it already:
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Always use `uv` for Python environment management:
-uv venv --python 3.12
-source .venv/bin/activate
-
-# Always make sure `pre-commit` and its hooks are installed:
-uv pip install -r requirements/lint.txt
-pre-commit install
-```
+Use the existing intranet Python 3.11.14/aarch64, CANN 8.5.1 and pinned
+torch/torch-npu environment documented in the baseline guide. Do not create a
+Python 3.12 runtime, install torch or run an upstream CUDA setup command.
+Use available tooling for host-only checks on this workstation.
 
 ### Installing dependencies
 
-```bash
-# If you are only making Python changes:
-VLLM_USE_PRECOMPILED=1 uv pip install -e .
-
-# If you are also making C/C++ changes:
-uv pip install -e .
-```
+In a dedicated intranet test container, prepare pinned materials, run
+`p1_dev.py doctor`, then use `p1_dev.py editable --isolated-env --output <new-dir>`
+for both repositories. Reinstall both after a phase/version change; preserve
+live editable build directories. Do not enable `VLLM_USE_PRECOMPILED=1`.
+For ordinary wheels use the same helper's build/install subcommands.
 
 ### Running tests
 
-Tests require extra dependencies.
-All versions for test dependencies should be read from `requirements/test.txt`
+The current host subset is explicit; the historical full suite is not a
+declaration that removed devices/models are supported. Use the prepared test
+dependencies without upgrading the intranet framework environment.
 
 ```bash
-# Install bare minimum test dependencies:
-uv pip install pytest pytest-asyncio tblib
-
-# Install additional test dependencies as needed, or install them all as follows:
-uv pip install -r requirements/test.txt
-
+python -B tools/run_layout_host_checks.py --list
+python -B tools/run_layout_host_checks.py
 # Run specific test from specific test file
 pytest tests/path/to/test.py -v -s -k test_name
 

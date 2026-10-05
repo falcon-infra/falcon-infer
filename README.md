@@ -11,10 +11,13 @@ Python 实现在 `vllm/`，原生实现和构建配置在
 `csrc/`、`cmake/`，测试、工具和部署示例归入各自的根目录。
 包内按功能划分的 Ascend 后端及已有 ABI 名称保持不变。
 
-阅读[目录与安装指南](docs/design/native-layout.md)和
+内网安装部署请从[基线一致的安装与验证指南](docs/design/baseline-validation.md)开始。
+可以继续沿用 native-layout 的 `p1_dev.py editable --isolated-env --output <新目录>`、
+原 `vllm serve`、proxy 和客户端命令；只更新配对 SHA、包版本与报告路径。
+两仓都须重新编译安装，四节点每个容器都要检查；不复用旧 layout1 的安装链接树或原生制品。
+本轮可继续 strict editable 做功能/性能对照，不强制先换成 wheel/新镜像。
+目录职责见[原生目录说明](docs/design/native-layout.md)，正式发布与回退见
 [联合验收及成对切换](docs/design/release-operations.md)。
-`p1_dev.py` 名称保留，但须使用当前分支的脚本，重新编译并安装两仓 strict editable。
-四节点每个容器都要核对配对版本；不要复用 P4/layout1 的安装链接树或原生制品。
 P5 的发布准备由 P6 完整继承，最终只验证一次 P6 配对；
 `release-profile.json` 标明候选范围，尚不代表构建、功能、性能或切换通过。
 

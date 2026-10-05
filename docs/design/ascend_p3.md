@@ -1,5 +1,9 @@
 # P3 paired native LMCache integration
 
+> Historical P3 record. For the current paired P6 installation and deployment,
+> use [the baseline-compatible guide](baseline-validation.md). The versions,
+> compatibility paths and tools below describe that earlier phase only.
+
 P3 contains the complete retained P2 input
 `f1be323571e3ca2aab53992234045dd064d1967f`. P2/P1/main remain unchanged.
 LMCache native source integration is now delivered; native builds, ABI and

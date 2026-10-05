@@ -1,5 +1,11 @@
 # Mooncake connector deployment Guide
 
+> 历史上游示例，不是当前 P6 或 native-layout 基线的安装部署指令。
+> 下文的 CANN 8.3、torch 2.8、DeepSeek、vllm-ascend 和 MooncakeConnectorV1
+> 不属于当前验收配置。请使用[基线一致的安装与验证指南](../../docs/design/baseline-validation.md)，
+> 保留原 GLM-5.2、LMCacheConnectorV1 和 enhanced proxy 的已验证参数。
+> 本页仅保留历史依据，不要直接执行其中的启动示例。
+
 ## Environmental Dependencies
 
 * Software:
