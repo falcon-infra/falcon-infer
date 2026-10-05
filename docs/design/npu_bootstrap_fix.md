@@ -1,5 +1,9 @@
 # Native NPU bootstrap and KV cache binding
 
+> Historical P2 repair notes. Current installation, package pairing and probe
+> commands are in [the baseline-compatible guide](baseline-validation.md).
+> Do not recreate an earlier editable tree to apply fixes already inherited by P6.
+
 The 2026-09-29 fix applies to the P2 repair branch `fix/p2-npu-bootstrap` and
 is carried into P3. The original P2/P1/main inputs remain unchanged. Use the
 workspace delivery manifest for exact paired commits; a version suffix alone
