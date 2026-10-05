@@ -12,8 +12,9 @@ Python 实现在 `vllm/`，原生实现和构建配置在
 包内按功能划分的 Ascend 后端及已有 ABI 名称保持不变。
 
 内网安装部署请从[基线一致的安装与验证指南](docs/design/baseline-validation.md)开始。
-可以继续沿用 native-layout 的 `p1_dev.py editable --isolated-env --output <新目录>`、
-原 `vllm serve`、proxy 和客户端命令；只更新配对 SHA、包版本与报告路径。
+两仓均保留标准 `pip install -e .`、`python setup.py bdist_wheel` 和
+`python setup.py sdist`；构建逻辑直接位于根 `setup.py`，不再使用阶段包装脚本。
+内网沿用原 `vllm serve`、proxy 和客户端命令，更新配对 SHA、包版本与报告路径。
 两仓都须重新编译安装，四节点每个容器都要检查；不复用旧 layout1 的安装链接树或原生制品。
 本轮可继续 strict editable 做功能/性能对照，不强制先换成 wheel/新镜像。
 目录职责见[原生目录说明](docs/design/native-layout.md)，正式发布与回退见
@@ -24,7 +25,7 @@ P5 的发布准备由 P6 完整继承，最终只验证一次 P6 配对；
 ```bash
 python -B tools/check_native_layout.py --source-only
 python -B tools/run_layout_host_checks.py
-python -B p1_dev.py --help
+python setup.py --help-commands
 ```
 
 以上主机检查不等于 CANN 编译、ABI 或 2P2D 验收通过。

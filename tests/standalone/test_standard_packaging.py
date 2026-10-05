@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Host-only P1 build/install contracts; no backend, compiler, pip install or NPU.
+"""Host-only packaging contracts; synthetic native files, no compiler or NPU.
 
-Run directly: python -B tests/standalone/test_p1_development.py -v
+Run directly: python -B tests/standalone/test_standard_packaging.py -v
 Native build commands in this suite are mocks producing synthetic file fixtures.
 """
 
@@ -12,10 +12,13 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
+import tomllib
 import unittest
 import zipfile
 from importlib import util
@@ -37,16 +40,16 @@ def load(path: Path, name: str) -> object:
     return module
 
 
-BUILD = load(ROOT / "p1_build.py", "p1_build_test")
-with patch.dict(sys.modules, {"p1_build": BUILD}):
-    DEV = load(ROOT / "p1_dev.py", "p1_dev_test")
+BUILD = load(ROOT / "setup.py", "setup_contract_test")
+AUDIT = load(ROOT / "tools/check_native_layout.py", "install_audit_test")
+VERSIONS = json.loads((ROOT / "release-profile.json").read_text())["versions"]
 
 
 class DevelopmentContracts(unittest.TestCase):
     """Exercise both distribution layouts through their independent helpers."""
 
     def test_sdist_verifies_root_materials_without_environment_probe(self):
-        command = BUILD.P1Sdist(self.dist)
+        command = BUILD.AscendSdist(self.dist)
         with (
             patch.object(
                 BUILD, "verify_materials", return_value={"files": 1}
@@ -63,15 +66,15 @@ class DevelopmentContracts(unittest.TestCase):
         run.assert_called_once()
 
     def test_sdist_refuses_missing_materials_before_creating_archive(self):
-        command = BUILD.P1Sdist(self.dist)
+        command = BUILD.AscendSdist(self.dist)
         with (
             patch.object(
                 BUILD, "verify_materials", side_effect=RuntimeError("missing material")
             ),
             patch.object(BUILD.sdist, "run") as run,
+            self.assertRaisesRegex(RuntimeError, "missing material"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "missing material"):
-                command.run()
+            command.run()
         run.assert_not_called()
 
     def setUp(self) -> None:
@@ -79,12 +82,16 @@ class DevelopmentContracts(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="p1-contract-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.primary, self.version = DEV.project()
+        self.primary, self.version = AUDIT.project()
         self.addon = BUILD.resource_namespace(self.primary)
-        for module in (BUILD, DEV):
+        for module in (BUILD, AUDIT):
             self.enterContext(patch.object(module, "ROOT", self.root))
+        self.enterContext(patch.object(AUDIT, "build_contracts", return_value=BUILD))
+        (self.root / "release-profile.json").write_text(
+            json.dumps({"versions": VERSIONS})
+        )
         self.dist = Distribution({"name": self.primary, "version": self.version})
-        self.command = BUILD.P1BuildExt(self.dist)
+        self.command = BUILD.AscendBuildExt(self.dist)
         self.command.build_lib = str(self.root / "pip-temporary/lib")
         self.source = self.root / "source"
         self.source.mkdir()
@@ -123,20 +130,20 @@ class DevelopmentContracts(unittest.TestCase):
         return paths
 
     def test_build_names_are_unique_without_creating_directories(self) -> None:
-        first, second = BUILD.P1Build(self.dist), BUILD.P1Build(self.dist)
+        first, second = BUILD.AscendBuild(self.dist), BUILD.AscendBuild(self.dist)
         self.assertNotEqual(first.build_base, second.build_base)
         self.assertTrue(Path(first.build_base).is_relative_to(self.root / "build"))
         self.assertFalse((self.root / "build").exists())
 
     def test_editable_only_maps_python_without_environment_probe(self) -> None:
-        command = BUILD.P1BuildPy(self.dist)
+        command = BUILD.AscendBuildPy(self.dist)
         command.editable_mode = True
         with patch.object(BUILD, "check_environment") as check:
             command.run()
         check.assert_not_called()
 
     def test_editable_enforces_strict_mode(self) -> None:
-        command = BUILD.P1EditableWheel(self.dist)
+        command = BUILD.AscendEditableWheel(self.dist)
         with patch.object(BUILD.editable_wheel, "run") as backend:
             command.run()
             self.assertEqual(command.mode, "strict")
@@ -201,88 +208,6 @@ class DevelopmentContracts(unittest.TestCase):
         (self.source / "unexpected.o").write_bytes(b"old executable")
         self.assertNotEqual(BUILD.material_inventory(self.source), expected)
 
-    def test_pip_plans_never_fetch_or_resolve_dependencies(self) -> None:
-        output = self.root / "not-created"
-        for action in ("build", "editable", "install"):
-            plan = DEV.pip_plan(action, output, self.root / "candidate.whl")
-            self.assertIn("--no-index", plan)
-            self.assertIn("--no-deps", plan)
-            self.assertIn("--no-cache-dir", plan)
-            if action != "install":
-                self.assertIn("--no-build-isolation", plan)
-        self.assertIn("editable_mode=strict", DEV.pip_plan("editable", output))
-        self.assertFalse(output.exists())
-
-    def test_dry_run_does_not_check_environment_or_create_outputs(self) -> None:
-        output = self.root / "not-created"
-        with (
-            patch.object(DEV, "doctor") as check,
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            code = DEV.main(["editable", "--output", str(output), "--dry-run"])
-        self.assertEqual(code, 0)
-        check.assert_not_called()
-        self.assertFalse(output.exists())
-
-    def test_mutating_install_requires_dedicated_environment_confirmation(self) -> None:
-        with self.assertRaisesRegex(ValueError, "isolated-env"):
-            DEV.check_install_target(False)
-
-    def test_existing_baseline_plugin_or_wrong_version_is_rejected(self) -> None:
-        for name in ("vllm-ascend", "lmcache-ascend", "vllm", "lmcache"):
-
-            def installed(candidate: str, name: str = name) -> str:
-                if candidate == name:
-                    return "old-baseline-version"
-                raise DEV.metadata.PackageNotFoundError(candidate)
-
-            with patch.object(DEV.metadata, "version", side_effect=installed):
-                with self.assertRaisesRegex(RuntimeError, "Old/conflicting"):
-                    DEV.check_install_target(True)
-
-    def test_install_accepts_p3_pair_and_rejects_p1_p2_mixtures(self) -> None:
-        versions = {"vllm": "0.18.0+ascend.p5p6rc1", "lmcache": "0.4.3+ascend.p5p6rc1"}
-
-        def installed(name: str) -> str:
-            if name in versions:
-                return versions[name]
-            raise DEV.metadata.PackageNotFoundError(name)
-
-        with patch.object(DEV.metadata, "version", side_effect=installed):
-            DEV.check_install_target(True)
-            for name, old_version in (
-                ("vllm", "0.18.0+ascend.p1"),
-                ("vllm", "0.18.0+ascend.p2"),
-                ("lmcache", "0.4.3+ascend.p1"),
-            ):
-                with self.subTest(name=name, version=old_version):
-                    current = versions[name]
-                    versions[name] = old_version
-                    with self.assertRaisesRegex(
-                        RuntimeError, f"Old/conflicting.*{name}"
-                    ):
-                        DEV.check_install_target(True)
-                    versions[name] = current
-
-    def test_command_failure_preserves_log_and_exit_status(self) -> None:
-        output = self.root / "logs"
-        output.mkdir()
-        # Harmless interpreter fixture, not a build or an installation.
-        command = [
-            sys.executable,
-            "-B",
-            "-c",
-            "print('fixture failure'); raise SystemExit(7)",
-        ]
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(DEV.run_logged(command, output), 7)
-        self.assertIn("fixture failure", (output / "command.log").read_text())
-        self.assertEqual(
-            json.loads((output / "command-result.json").read_text())["returncode"], 7
-        )
-        with self.assertRaises(FileExistsError):
-            DEV.run_logged(command, output)
-
     def make_wheel(self, path: Path, *, omit: str = "", mode: str = "wheel") -> None:
         """Write a synthetic ZIP; never invoke a wheel backend."""
         self.populate(self.staging, mode)
@@ -304,7 +229,7 @@ class DevelopmentContracts(unittest.TestCase):
     def test_wheel_identity_and_resources_are_checked_without_loading(self) -> None:
         wheel = self.root / "fixture.whl"
         self.make_wheel(wheel)
-        report = DEV.wheel_info(wheel)
+        report = AUDIT.wheel_info(wheel)
         self.assertEqual(report["distribution"], self.primary)
         self.assertFalse(report["ABI_tested"])
 
@@ -312,10 +237,10 @@ class DevelopmentContracts(unittest.TestCase):
         wheel = self.root / "fixture.whl"
         self.make_wheel(wheel, omit="_build_info.py")
         with self.assertRaisesRegex(ValueError, "Missing wheel resource"):
-            DEV.wheel_info(wheel)
+            AUDIT.wheel_info(wheel)
         self.make_wheel(wheel, mode="strict-editable")
         with self.assertRaisesRegex(ValueError, "regular wheel"):
-            DEV.wheel_info(wheel)
+            AUDIT.wheel_info(wheel)
 
     def test_native_wheel_rejects_old_namespace_and_patch_archives(self) -> None:
         for member in (
@@ -331,22 +256,7 @@ class DevelopmentContracts(unittest.TestCase):
                 with zipfile.ZipFile(wheel, "a") as archive:
                     archive.writestr(member, "# must not be installed")
                 with self.assertRaisesRegex(ValueError, "retired plugin namespace"):
-                    DEV.wheel_info(wheel)
-
-    def test_metadata_failure_does_not_import_torch_or_run_compilers(self) -> None:
-        with (
-            patch.object(
-                DEV.metadata,
-                "version",
-                side_effect=DEV.metadata.PackageNotFoundError("torch"),
-            ),
-            patch.object(BUILD, "check_environment") as check,
-            patch.object(DEV.subprocess, "run") as process,
-        ):
-            report = DEV.doctor()
-        self.assertFalse(report["passed"])
-        check.assert_not_called()
-        process.assert_not_called()
+                    AUDIT.wheel_info(wheel)
 
     def test_mocked_native_rebuild_uses_fresh_work_and_install_directories(
         self,
@@ -414,10 +324,8 @@ class DevelopmentContracts(unittest.TestCase):
         ):
             for primary in ("lmcache", "vllm"):
                 for _ in range(2):
-                    command = BUILD.P1BuildExt(
-                        Distribution(
-                            {"name": primary, "version": DEV.VERSIONS[primary]}
-                        )
+                    command = BUILD.AscendBuildExt(
+                        Distribution({"name": primary, "version": VERSIONS[primary]})
                     )
                     command.build_lib = str(self.root / "wheel-lib")
                     command.run()
@@ -436,9 +344,9 @@ class DevelopmentContracts(unittest.TestCase):
             patch.object(BUILD, "check_environment", return_value={}),
             patch.dict(os.environ, {"MAX_JOBS": "0"}),
             patch.object(BUILD.subprocess, "run") as process,
+            self.assertRaisesRegex(RuntimeError, "MAX_JOBS"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "MAX_JOBS"):
-                self.command.run()
+            self.command.run()
         process.assert_not_called()
 
     def test_native_failure_does_not_publish_or_reuse_old_payload(self) -> None:
@@ -455,7 +363,7 @@ class DevelopmentContracts(unittest.TestCase):
             "torch_npu_path": "/fixture/npu",
             "torch": {"path": "/fixture/torch", "cmake": "/fixture/cmake", "abi": 1},
         }
-        command = BUILD.P1BuildExt(
+        command = BUILD.AscendBuildExt(
             Distribution({"name": "lmcache", "version": "0.4.3+ascend.p1"})
         )
         command.build_lib = str(self.root / "lib")
@@ -475,9 +383,9 @@ class DevelopmentContracts(unittest.TestCase):
                 os.environ, {"MAX_JOBS": "1", "BUILD_MOONCAKE": "0"}, clear=True
             ),
             contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaises(subprocess.CalledProcessError),
         ):
-            with self.assertRaises(subprocess.CalledProcessError):
-                command.run()
+            command.run()
         self.assertEqual(command.native_output_mapping, {})
         self.assertFalse(Path(command.build_lib).exists())
         self.assertEqual(len(list((self.root / "build/p1-native").glob("run-*"))), 1)
@@ -490,48 +398,19 @@ class DevelopmentContracts(unittest.TestCase):
             read_text=lambda _: json.dumps({"dir_info": {"editable": True}}),
         )
         with (
-            patch.object(DEV, "check_install_target"),
-            patch.object(DEV.metadata, "distribution", return_value=distribution),
+            patch.object(AUDIT, "check_installed_versions"),
+            patch.object(AUDIT.metadata, "distribution", return_value=distribution),
             patch.object(
-                DEV.PathFinder,
+                AUDIT.PathFinder,
                 "find_spec",
                 side_effect=lambda name: SimpleNamespace(
                     origin=str(tree / name / "__init__.py")
                 ),
             ),
         ):
-            self.assertTrue(DEV.verify("editable")["passed"])
+            self.assertTrue(AUDIT.verify("editable")["passed"])
             with self.assertRaisesRegex(RuntimeError, "mode"):
-                DEV.verify("wheel")
-
-    def test_material_snapshot_registers_only_pinned_archive(self) -> None:
-        relative, commit = BUILD.MATERIALS[self.primary]
-        archive = io.BytesIO()
-        with tarfile.open(fileobj=archive, mode="w") as stream:
-            item = tarfile.TarInfo("kernel.cpp")
-            item.size = len(b"// fixture")
-            stream.addfile(item, io.BytesIO(b"// fixture"))
-
-        def query(source: Path, *args: str) -> str:
-            return (
-                {("--show-toplevel",): str(self.source)}.get(args[1:], commit)
-                if args[0] == "rev-parse"
-                else ""
-            )
-
-        with (
-            patch.object(DEV, "git", side_effect=query),
-            patch.object(
-                DEV.subprocess, "check_output", return_value=archive.getvalue()
-            ),
-        ):
-            report = DEV.materials(self.source)
-        self.assertEqual(report["commit"], commit)
-        self.assertEqual(report["files"], 1)
-        self.assertEqual(
-            (self.root / relative / "kernel.cpp").read_text(), "// fixture"
-        )
-        self.assertEqual(BUILD.verify_materials(self.primary), report)
+                AUDIT.verify("wheel")
 
     def test_install_path_verification_rejects_source_shadowing(self) -> None:
         paths = {
@@ -545,30 +424,267 @@ class DevelopmentContracts(unittest.TestCase):
             locate_file=lambda name: paths[name],
         )
         with (
-            patch.object(DEV, "check_install_target"),
-            patch.object(DEV.metadata, "distribution", return_value=distribution),
+            patch.object(AUDIT, "check_installed_versions"),
+            patch.object(AUDIT.metadata, "distribution", return_value=distribution),
             patch.object(
-                DEV.PathFinder,
+                AUDIT.PathFinder,
                 "find_spec",
                 side_effect=lambda name: SimpleNamespace(
                     origin=str(paths[name] / "__init__.py")
                 ),
             ),
         ):
-            self.assertTrue(DEV.verify("wheel")["passed"])
+            self.assertTrue(AUDIT.verify("wheel")["passed"])
         with (
-            patch.object(DEV, "check_install_target"),
-            patch.object(DEV.metadata, "distribution", return_value=distribution),
+            patch.object(AUDIT, "check_installed_versions"),
+            patch.object(AUDIT.metadata, "distribution", return_value=distribution),
             patch.object(
-                DEV.PathFinder,
+                AUDIT.PathFinder,
                 "find_spec",
                 return_value=SimpleNamespace(
                     origin=str(self.root / self.primary / "__init__.py")
                 ),
             ),
+            self.assertRaisesRegex(RuntimeError, "shadowed"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "shadowed"):
-                DEV.verify("wheel")
+            AUDIT.verify("wheel")
+
+    def pinned_material(self):
+        """Create a real local Git fixture; never contact a remote."""
+        relative, _ = BUILD.MATERIALS[self.primary]
+        target = self.root / relative
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "kernel.cpp").write_text("// pinned fixture\n")
+        for args in (
+            ("init", "-q"),
+            ("add", "kernel.cpp"),
+            (
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ),
+        ):
+            subprocess.run(["git", "-C", str(target), *args], check=True)
+        commit = subprocess.check_output(
+            ["git", "-C", str(target), "rev-parse", "HEAD"], text=True
+        ).strip()
+        self.enterContext(
+            patch.dict(BUILD.MATERIALS, {self.primary: (relative, commit)})
+        )
+        return target, commit
+
+    def test_materials_auto_register_only_clean_pin_and_verify_sdist_payload(self):
+        target, commit = self.pinned_material()
+        report = BUILD.verify_materials(self.primary)
+        self.assertEqual(report["commit"], commit)
+        self.assertEqual(report["files"], 1)
+        shutil.rmtree(target / ".git")  # disposable fixture only
+        self.assertEqual(BUILD.verify_materials(self.primary), report)
+        (target / "kernel.cpp").write_text("// changed")
+        with self.assertRaisesRegex(RuntimeError, "missing or changed"):
+            BUILD.verify_materials(self.primary)
+
+    def test_materials_reject_dirty_untracked_ignored_or_wrong_pin(self):
+        target, commit = self.pinned_material()
+        for relative in ("kernel.cpp", "extra.cpp", ".gitignore"):
+            old = (
+                (target / relative).read_bytes()
+                if (target / relative).exists()
+                else None
+            )
+            (target / relative).write_text("changed")
+            with self.assertRaisesRegex(RuntimeError, "clean material"):
+                BUILD.verify_materials(self.primary)
+            if old is None:
+                (target / relative).unlink()
+            else:
+                (target / relative).write_bytes(old)
+        (target / ".git/info/exclude").write_text("ignored.o\n")
+        (target / "ignored.o").write_bytes(b"stale native")
+        with self.assertRaisesRegex(RuntimeError, "extra or changed"):
+            BUILD.verify_materials(self.primary)
+        (target / "ignored.o").unlink()
+        with (
+            patch.dict(
+                BUILD.MATERIALS,
+                {self.primary: (str(target.relative_to(self.root)), "0" * 40)},
+            ),
+            self.assertRaisesRegex(RuntimeError, "clean material"),
+        ):
+            BUILD.verify_materials(self.primary)
+        self.assertFalse((self.root / "submodule-materials.json").exists())
+
+    def test_materials_fail_closed_without_git_or_registered_manifest(self):
+        relative, _ = BUILD.MATERIALS[self.primary]
+        target = self.root / relative
+        target.mkdir(parents=True)
+        (target / "kernel.cpp").write_text("// unproven")
+        with self.assertRaises(RuntimeError):
+            BUILD.verify_materials(self.primary)
+        self.assertFalse((self.root / "submodule-materials.json").exists())
+
+    def test_install_audit_rejects_old_plugins_and_mixed_versions(self):
+        installed = dict(VERSIONS)
+
+        def version(name):
+            if name in installed:
+                return installed[name]
+            raise AUDIT.metadata.PackageNotFoundError(name)
+
+        with patch.object(AUDIT.metadata, "version", side_effect=version):
+            AUDIT.check_installed_versions()
+            for name in ("vllm", "lmcache", "vllm-ascend", "lmcache-ascend"):
+                previous = installed.get(name)
+                installed[name] = "old"
+                with self.assertRaisesRegex(RuntimeError, "Old/conflicting"):
+                    AUDIT.check_installed_versions()
+                if previous:
+                    installed[name] = previous
+                else:
+                    del installed[name]
+
+    def test_setup_entry_is_self_contained_and_build_requirements_are_mirrored(self):
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+        requirements = [
+            line.split("#", 1)[0].strip()
+            for line in (ROOT / "requirements/build.txt").read_text().splitlines()
+            if line.split("#", 1)[0].strip()
+        ]
+        self.assertEqual(set(config["build-system"]["requires"]), set(requirements))
+        self.assertEqual(
+            config["build-system"]["build-backend"], "setuptools.build_meta"
+        )
+        for retired in ("p1_build.py", "p1_dev.py"):
+            self.assertFalse((ROOT / retired).exists())
+            self.assertNotIn(retired, (ROOT / "setup.py").read_text())
+        if self.primary == "vllm":
+            self.assertIn("triton-ascend==" + BUILD.TRITON_VERSION, requirements)
+
+    def test_standard_setup_commands_and_pep660_backend_with_synthetic_native(self):
+        """Real setuptools CLI/backend; only native compilation is replaced."""
+        target, commit = self.pinned_material()
+        package = self.root / self.primary
+        package.mkdir()
+        (package / "__init__.py").write_text("# synthetic import-free package\n")
+        (package / "example.py").write_text("value = 1\n")
+        (self.root / "README.md").write_text("Synthetic packaging fixture\n")
+        (self.root / "MANIFEST.in").write_text(
+            "include setup.py pyproject.toml README.md submodule-materials.json\n"
+            "graft requirements\n"
+            f"graft {target.relative_to(self.root)}\n"
+            f"graft {self.primary}\n"
+            "global-exclude .git .git/**\n"
+            f"prune {target.relative_to(self.root)}/.git\n"
+        )
+        # No real framework or native dependency is imported by this fixture.
+        script = (ROOT / "setup.py").read_text()
+        relative, original_commit = json.loads(
+            json.dumps(
+                load(ROOT / "setup.py", "setup_original_pin").MATERIALS[self.primary]
+            )
+        )
+        script = script.replace(original_commit, commit)
+        patch_native = textwrap.dedent("""
+            def _synthetic_native(self):
+                info = {"cann_version": "8.5.1", "use_hixl": True,
+                        "build_mooncake": False,
+                        "install_mode": (
+                            "strict-editable" if self.editable_mode else "wheel")}
+                primary = self.distribution.get_name()
+                verify_materials(primary)
+                staging = ROOT / "build" / ("fixture-" + uuid4().hex)
+                for namespace, patterns in required_artifacts(primary, info).items():
+                    for pattern in patterns:
+                        output = staging / namespace / pattern.replace("*", ".fixture")
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        output.write_bytes(b"SYNTHETIC NOT ELF")
+                write_build_metadata(
+                    staging, primary, primary, self.distribution.get_version(), info)
+                self.publish_outputs(staging)
+            AscendBuildExt.run = _synthetic_native
+            check_environment = lambda: {"cann_version": "8.5.1"}
+        """)
+        script = script.replace(
+            'if __name__ == "__main__":', patch_native + '\nif __name__ == "__main__":'
+        )
+        (self.root / "setup.py").write_text(script)
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        env.pop("PYTHONPATH", None)
+
+        def execute(*args):
+            process = subprocess.run(
+                [sys.executable, "-B", *args],
+                cwd=self.root,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(process.returncode, 0, process.stdout[-15000:])
+            return process.stdout
+
+        execute("setup.py", "--name")
+        self.assertFalse((self.root / "submodule-materials.json").exists())
+        self.assertFalse((self.root / "build").exists())
+        execute("setup.py", "sdist", "--dist-dir", "sdist")
+        archive = next((self.root / "sdist").glob("*.tar.gz"))
+        with tarfile.open(archive) as stream:
+            names = stream.getnames()
+            self.assertTrue(
+                any(name.endswith("/submodule-materials.json") for name in names)
+            )
+            self.assertTrue(any(name.endswith("/kernel.cpp") for name in names))
+            self.assertFalse(
+                any("/.git/" in name or name.endswith("/.git") for name in names)
+            )
+            self.assertFalse(
+                any(name.endswith(("p1_build.py", "p1_dev.py")) for name in names)
+            )
+            stream.extractall(self.root / "unpacked", filter="data")
+        execute("setup.py", "bdist_wheel", "--dist-dir", "wheels")
+        self.assertEqual(len(list((self.root / "wheels").glob("*.whl"))), 1)
+        # Backend metadata must not need NPU or a native compilation.
+        (self.root / "metadata").mkdir()
+        execute(
+            "-c",
+            "from setuptools import build_meta; "
+            "build_meta.prepare_metadata_for_build_wheel('metadata')",
+        )
+        (self.root / "editable").mkdir()
+        execute(
+            "-c",
+            "from setuptools import build_meta; build_meta.build_editable('editable')",
+        )
+        self.assertEqual(len(list((self.root / "editable").glob("*.whl"))), 1)
+        trees = list((self.root / "build").glob("__editable__.*"))
+        self.assertEqual(len(trees), 1)
+        tree = trees[0] / self.primary
+        self.assertEqual((tree / "example.py").read_text(), "value = 1\n")
+        (package / "example.py").write_text("value = 2\n")
+        self.assertEqual((tree / "example.py").read_text(), "value = 2\n")
+        info = json.loads((tree / "p1_build_info.json").read_text())
+        self.assertEqual(info["install_mode"], "strict-editable")
+        for namespace, patterns in BUILD.required_artifacts(self.primary, info).items():
+            for pattern in patterns:
+                self.assertTrue(any((trees[0] / namespace).glob(pattern)), pattern)
+        # Building the sdist extraction must not depend on the original Git tree.
+        unpacked = next((self.root / "unpacked").iterdir())
+        self.assertFalse((unpacked / relative / ".git").exists())
+        process = subprocess.run(
+            [sys.executable, "-B", "setup.py", "bdist_wheel", "--dist-dir", "rebuilt"],
+            cwd=unpacked,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(process.returncode, 0, process.stdout[-15000:])
+        self.assertEqual(len(list((unpacked / "rebuilt").glob("*.whl"))), 1)
 
 
 if __name__ == "__main__":

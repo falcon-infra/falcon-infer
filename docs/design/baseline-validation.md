@@ -1,6 +1,6 @@
 # 基线一致的安装部署与验证
 
-本页用于在内网使用与 native-layout 基线相同的指令安装当前 P6 配对，
+本页用于在内网使用基线的标准 pip/setup.py 入口安装当前 P6 配对，
 然后沿用原有启动自动化做功能、性能验证。不是重新执行 P1 合仓，也不是重新配置模型。
 两仓 README 均以本页为安装入口；以下步骤在四个实际运行容器中分别执行一次。
 
@@ -11,7 +11,7 @@
 | Git 入口 | `native-layout-frozen-20261005` | 两仓 `p6`，完整包含 `p5` |
 | vLLM | `0.18.0+ascend.layout1` | `0.18.0+ascend.p5p6rc1` |
 | LMCache | `0.4.3+ascend.layout1` | `0.4.3+ascend.p5p6rc1` |
-| 安装入口 | 根 `p1_dev.py` | 同名脚本、相同子命令和参数 |
+| 安装入口 | `pip install -e .`、根 `setup.py` | 相同标准入口，不再需要阶段包装脚本 |
 | 部署入口 | `vllm serve`、原 proxy、原客户端 | 原入口及原参数不变 |
 
 冻结基线提交：vLLM `18fde02dc54a432f81ce5350c3358429a40f4bd3`，
@@ -19,10 +19,28 @@ LMCache `e8236d8e1c41cd10752204d8cb9ef3b6074f999e`。
 当前两个精确提交取本批审核的 `design/p6/baseline/pair.json`，不要只按分支名、
 包版本或另一节点的报告判断身份。发布者须同时交付匹配的两仓源码与配对清单。
 
-已核对：相对冻结基线，两仓 `p1_build.py`、根 CMake、`cmake/`、
-`requirements/`、产品 Python 和 native 实现不变；`p1_dev.py` 只更新
-`VERSIONS`，`pyproject.toml` 只更新产品版本。构建方式、固定材料、
-native ABI、CLI 和缓存协议继承基线。源码一致不等于本轮编译或性能已经验收。
+已核对：根 CMake、`cmake/`、产品 Python、native 实现、固定材料和 ABI
+继承冻结基线；本次只调整打包入口、验证工具及说明，不改变推理算法或部署参数。
+构建逻辑现直接位于根 `setup.py`，通过 `setuptools.build_meta` 接入 pip；
+已删除 `p1_build.py`、`p1_dev.py`，无需新安装器。
+vLLM 的隔离构建依赖补齐同版本的 `triton-ascend==3.2.0.dev20260322`，
+没有改变运行依赖版本。源码一致不等于本轮编译或性能已经验收。
+
+两仓在准备好下文环境和固定材料后，均可在各自仓根直接执行：
+
+```bash
+python -m pip install -e . --no-build-isolation --no-deps --no-index
+python setup.py bdist_wheel
+python setup.py sdist
+```
+
+`pip install -e .` 本身受支持，默认自动选择 strict editable，不必额外指定
+`editable_mode=strict`。不加上述 pip 参数时，pip 按标准行为解析运行依赖、
+创建隔离构建环境并获取构建依赖，需要可用的索引/完整制品源；
+它不会自动复用已安装的全部构建依赖。内网基线验证请保留上述三个参数，
+不升级 torch/torch_npu 等现有基础环境。普通 wheel 和 sdist 默认输出到 `dist/`。
+`setup.py` 命令兼容本次固定的 setuptools；也支持标准 PEP 517 前端，
+无需把既有打包自动化改成新的脚本。
 
 可以继续用 strict editable 完成本轮基线对比，不强制先改用 wheel 或新镜像。
 正式发布仍需普通 wheel、sdist 重建、镜像和恢复证据；不能以 editable 结果替代它们。
@@ -34,6 +52,10 @@ P5 不单独重复整轮测试，使用最终 P6 配对统一验证。
 torch 2.9.0+cpu、torch-npu 2.9.0.post2、transformers 5.2.0、
 triton-ascend 3.2.0.dev20260322。torch 的 `+cpu` 后缀不表示 CPU 推理，
 NPU 能力由 torch_npu 提供。不升级依赖，不运行旧插件 patch/install 脚本。
+
+构建工具也须预先满足 `requirements/build.txt`，沿用内网的 setuptools 79.0.1、
+packaging 26.0 及已有 wheel/CMake/Ninja/pybind11；`setup.py` 不会替你安装依赖。
+setuptools 68 等旧版本无法解析当前许可证元数据，不属于本候选构建环境。
 
 使用独立验证容器，保留冻结基线服务及其源码。若复用已停止测试的专用容器，
 先归档旧安装，再按下文卸载旧框架；不能改动仍承载基线服务的环境。
@@ -70,7 +92,8 @@ cd /tmp
 ```
 
 若已装相同 P6 配对且安装来源就是本次源码，后续直接重装即可。
-若存在 layout1/P4 等旧版本或独立 `vllm-ascend/lmcache-ascend`，安装脚本会拒绝。
+标准 pip 会替换同名旧产品包，但不会替你清除独立的旧插件或检查成对版本。
+不能保留独立 `vllm-ascend/lmcache-ascend`；安装后的配对/路径检查会拒绝混装。
 仅在确认本容器不承载保留服务且测试进程已停止后，才执行下面的可选卸载块：
 
 ```bash
@@ -80,7 +103,7 @@ cd /tmp
 ```
 
 不卸载 torch/CANN 等基础依赖，不删除模型、缓存、源码或构建目录。
-`--isolated-env` 是专用环境声明，不会创建环境、卸载旧包或忽略冲突。
+标准安装没有 `--isolated-env` 参数；专用容器由操作者提前准备，pip 不负责创建。
 保留 CANN 所需的 `PYTHONPATH`，只核查自己添加的旧框架路径；
 不要通过添加源码路径来绕过缺模块/旧链接树问题。
 
@@ -122,13 +145,10 @@ test "$(git -C "$P56_REPOS/LMCache" rev-parse HEAD)" = "$P56_LMC_REF"
 
 git -C "$P56_REPOS/vllm" submodule update --init -- csrc/third_party/catlass
 git -C "$P56_REPOS/LMCache" submodule update --init -- third_party/kvcache-ops
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" materials \
-  --from-submodule "$P56_REPOS/vllm/csrc/third_party/catlass" \
-  | tee "$P56_REPORT/materials-vllm.json"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" materials \
-  --from-submodule "$P56_REPOS/LMCache/third_party/kvcache-ops" \
-  | tee "$P56_REPORT/materials-lmcache.json"
 for P56_NAME in vllm LMCache; do
+  (cd "$P56_REPOS/$P56_NAME" && \
+    "$P56_PY" -B setup.py sdist --dist-dir "$P56_REPORT/sdist-$P56_NAME") \
+    2>&1 | tee "$P56_REPORT/sdist-$P56_NAME.log"
   "$P56_PY" -B "$P56_REPOS/$P56_NAME/tools/check_native_layout.py" \
     | tee "$P56_REPORT/layout-$P56_NAME.json"
 done
@@ -137,9 +157,12 @@ done
 Git 获取可使用已批准的代理；构建/安装不访问包索引。
 CATLASS 固定 `716fd7baa7fb7f6cac0488bb628fd1dd0e875641`，
 kvcache-ops 固定 `9f18d2339bc58a43429f7d5bdaef1628c820eff5`。
-也可跳过相应 submodule update，给 `--from-submodule` 传已审核的本地 Git 材料路径。
-不要覆盖漂移材料。清单位于根 `submodule-materials.json`，不能用
-`--source-only` 放过内网构建材料缺失。
+不再运行独立 materials 子命令。`setup.py` 在 sdist/编译时自动核验本地材料并首次生成
+根 `submodule-materials.json`，不会自动下载、覆盖材料或重写已有清单。
+未初始化、非固定提交、不干净或内容漂移均阻断；sdist 自带已核验材料和清单，
+解包构建不需要 Git。上面的 sdist 命令也可提前发现材料问题且不编译 native。
+使用已审核本地 Git 镜像时，按原 Git 子模块流程初始化到相同路径、相同固定提交。
+不能用 `--source-only` 放过内网构建材料缺失。
 
 ## 沿用基线的 editable 安装
 
@@ -160,27 +183,28 @@ cd /tmp
 
 "$P56_PY" -B "$P56_DESIGN/p1/tools/check_pip_dependencies.py" \
   --output "$P56_REPORT/pip-before"
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" doctor \
-  --output "$P56_REPORT/vllm-doctor.json"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" doctor \
-  --output "$P56_REPORT/lmcache-doctor.json"
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" editable --isolated-env \
-  --output "$P56_REPORT/vllm-editable"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" editable --isolated-env \
-  --output "$P56_REPORT/lmcache-editable"
+for P56_NAME in vllm LMCache; do
+  (cd "$P56_REPOS/$P56_NAME" && \
+    "$P56_PY" -B -m pip install -e . \
+      --no-index --no-deps --no-build-isolation --force-reinstall) \
+    2>&1 | tee "$P56_REPORT/editable-$P56_NAME.log"
+done
 ```
 
 两个包版本已变，必须成对重新编译安装，不能复用 layout1 的安装链接树或手工复制旧
 `.so`。脚本自动使用新 native 构建目录，自动安装自定义算子，不用手工 mkdir/patch。
 成功后保留 `build/p1-native/run-*` 和 `build/__editable__.*`。
-安装日志在各输出目录的 `command.log`、`command-result.json`。
+安装日志在本次报告目录的 `editable-vllm.log`、`editable-LMCache.log`；
+`set -euo pipefail` 保留失败退出语义，失败时停止，不继续启动服务。
 重试时新建报告目录，不删除失败证据来复用路径。
 
-实际 pip 参数仍为 `--no-index --no-deps --no-build-isolation --force-reinstall`
-和 `--config-settings editable_mode=strict --editable <仓根>`。
-可给上述 editable 命令追加 `--dry-run` 查看完整命令；它不安装也不执行 doctor。
-若既有自动化直接使用这些 pip 参数，可以保留，但仍需先执行材料/doctor/旧包门槛，
-再执行下节安装核对；不能省略 `--no-deps` 或改成 CUDA 预编译安装。
+strict editable 中已有 Python 文件的修改可被新进程读到；新增/删除文件、切分支、
+改版本或 native 源码后须重新执行安装。原生库始终重新编译，不复用旧 `.so`。
+生成数据文件 `p1_build_info.json` 和内部构建目录名保持历史兼容，
+不是安装脚本，也不代表运行在 P1 版本。
+原来显式传入 `--config-settings editable_mode=strict` 的标准 pip 自动化仍可沿用；
+不再调用 materials/doctor/editable/install 等阶段脚本子命令。
+
 pip 审核仅允许 op-compile-tool 0.1.0 错报缺失的
 `getopt`、`inspect`、`multiprocessing` 三个标准库，且标准库必须实际可用；
 其余错误继续阻断，不用 `pip check || true` 跳过。
@@ -191,10 +215,10 @@ pip 审核仅允许 op-compile-tool 0.1.0 错报缺失的
 
 ```bash
 cd /tmp
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" verify --mode editable \
-  --output "$P56_REPORT/vllm-installed.json"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" verify --mode editable \
-  --output "$P56_REPORT/lmcache-installed.json"
+"$P56_PY" -B "$P56_REPOS/vllm/tools/check_native_layout.py" --installed editable \
+  | tee "$P56_REPORT/vllm-installed.json"
+"$P56_PY" -B "$P56_REPOS/LMCache/tools/check_native_layout.py" --installed editable \
+  | tee "$P56_REPORT/lmcache-installed.json"
 "$P56_PY" -B "$P56_DESIGN/p4/tools/check_pair.py" \
   --workspace "$P56_REPOS" --pair "$P56_PAIR" \
   --output "$P56_REPORT/pair-installed.json"
@@ -285,25 +309,38 @@ head -n 1 "$(command -v vllm)" | tee "$P56_REPORT/vllm-cli-shebang.txt"
 
 ## 普通 wheel 和回退
 
-若基线使用 editable，本轮继续 editable；若使用普通 wheel，沿用同名 build/install，
-将 wheel 文件名换成本批版本。以下是另一种安装模式，不在已运行的 editable 服务上执行：
+若基线使用 editable，本轮可继续 editable。普通 wheel 同样由根 `setup.py` 打包，
+无需额外构建脚本。先完成前面的环境、材料和依赖检查，再按以下方式生成 wheel/sdist。
+这是另一种安装模式，不在仍运行的 editable 服务上执行：
 
 ```bash
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" build \
-  --output "$P56_REPORT/wheel-vllm"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" build \
-  --output "$P56_REPORT/wheel-lmcache"
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" install --isolated-env \
-  --wheel "$P56_REPORT/wheel-vllm/wheels/vllm-0.18.0+ascend.p5p6rc1-cp311-cp311-linux_aarch64.whl" \
-  --output "$P56_REPORT/install-wheel-vllm"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" install --isolated-env \
-  --wheel "$P56_REPORT/wheel-lmcache/wheels/lmcache-0.4.3+ascend.p5p6rc1-cp311-cp311-linux_aarch64.whl" \
-  --output "$P56_REPORT/install-wheel-lmcache"
-"$P56_PY" -B "$P56_REPOS/vllm/p1_dev.py" verify --mode wheel \
-  --output "$P56_REPORT/vllm-wheel-installed.json"
-"$P56_PY" -B "$P56_REPOS/LMCache/p1_dev.py" verify --mode wheel \
-  --output "$P56_REPORT/lmcache-wheel-installed.json"
+for P56_NAME in vllm LMCache; do
+  (cd "$P56_REPOS/$P56_NAME" && \
+    "$P56_PY" -B setup.py bdist_wheel --dist-dir "$P56_REPORT/wheel-$P56_NAME") \
+    2>&1 | tee "$P56_REPORT/wheel-$P56_NAME.log"
+done
+P56_VLLM_WHEEL="$P56_REPORT/wheel-vllm/vllm-0.18.0+ascend.p5p6rc1-cp311-cp311-linux_aarch64.whl"
+P56_LMC_WHEEL="$P56_REPORT/wheel-LMCache/lmcache-0.4.3+ascend.p5p6rc1-cp311-cp311-linux_aarch64.whl"
+"$P56_PY" -B "$P56_REPOS/vllm/tools/check_native_layout.py" --wheel "$P56_VLLM_WHEEL" \
+  | tee "$P56_REPORT/wheel-contents-vllm.json"
+"$P56_PY" -B "$P56_REPOS/LMCache/tools/check_native_layout.py" --wheel "$P56_LMC_WHEEL" \
+  | tee "$P56_REPORT/wheel-contents-lmcache.json"
+"$P56_PY" -B -m pip install --no-index --no-deps --force-reinstall \
+  "$P56_VLLM_WHEEL" "$P56_LMC_WHEEL" \
+  2>&1 | tee "$P56_REPORT/install-wheels.log"
+cd /tmp
+for P56_NAME in vllm LMCache; do
+  "$P56_PY" -B "$P56_REPOS/$P56_NAME/tools/check_native_layout.py" --installed wheel \
+    | tee "$P56_REPORT/wheel-installed-$P56_NAME.json"
+done
 ```
+
+前面的 `setup.py sdist` 已生成两份源码包。标准 `sdist` 不编译、不探测 NPU，
+但必须包含固定第三方材料和清单；它不是“下载依赖后才能用”的空壳源码包。
+正式发布须再从两份 sdist 的独立解包目录执行相同 `python setup.py bdist_wheel`，
+不得借用原 checkout、其 `build/` 或另一个包的源码。
+工作区 `design/p5/tools/qualify.py build` 已改为调用上述标准命令并检查两轮 wheel；
+该工具用于批量归档，不是安装或打包的必要入口。
 
 wheel 可以在一台内网容器构建，审核并复制同一对制品到四容器。
 保留并核对 SHA256，再成对安装；重复身份/pip/导入/NPU 检查时使用新的报告路径。

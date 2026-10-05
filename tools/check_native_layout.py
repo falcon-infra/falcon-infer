@@ -7,11 +7,168 @@ from __future__ import annotations
 # Standard
 import argparse
 import ast
+import fnmatch
 import hashlib
 import json
 import subprocess
 import tomllib
+import zipfile
+from email.parser import BytesParser
+from importlib import metadata, util
+from importlib.machinery import PathFinder
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def project() -> tuple[str, str]:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    return config["name"], config["version"]
+
+
+def build_contracts():
+    """Read setup.py's artifact contract without running setup or a build."""
+    spec = util.spec_from_file_location("_ascend_setup_audit", ROOT / "setup.py")
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def check_installed_versions() -> None:
+    """Reject retired plugins and mixed release versions, without uninstalling."""
+    versions = json.loads((ROOT / "release-profile.json").read_text())["versions"]
+    for name in ("vllm-ascend", "lmcache-ascend", *versions):
+        try:
+            installed = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        if name not in versions or installed != versions[name]:
+            raise RuntimeError(f"Old/conflicting distribution: {name}=={installed}")
+
+
+def wheel_info(path: Path) -> dict:
+    """Validate this project's native wheel identity, resources and build provenance."""
+    primary, version = project()
+    builder = build_contracts()
+    addon = builder.resource_namespace(primary)
+    with zipfile.ZipFile(path) as wheel:
+        names = wheel.namelist()
+        metas = [name for name in names if name.endswith(".dist-info/METADATA")]
+        if len(metas) != 1 or len(names) != len(set(names)) or wheel.testzip():
+            raise ValueError("Invalid wheel metadata or duplicate/corrupt entries")
+        if any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
+            raise ValueError("Unsafe wheel member")
+        if any(
+            name.startswith(
+                (
+                    "vllm_ascend/",
+                    "lmcache_ascend/",
+                    "ascend/legacy_patches/",
+                    "ascend/legacy_plugin/",
+                    "ascend/legacy-p3/",
+                )
+            )
+            for name in names
+        ):
+            raise ValueError(
+                "P4 wheel contains a retired plugin namespace or patch archive"
+            )
+        meta = BytesParser().parsebytes(wheel.read(metas[0]))
+        if meta["Name"].lower() != primary or meta["Version"] != version:
+            raise ValueError("Wheel identity does not match this checkout")
+        dist_info = metas[0].rsplit("/", 1)[0]
+        tags = BytesParser().parsebytes(wheel.read(dist_info + "/WHEEL"))
+        if tags["Root-Is-Purelib"] != "false" or tags.get_all("Tag") != [
+            "cp311-cp311-linux_aarch64"
+        ]:
+            raise ValueError("Expected a native cp311-cp311-linux_aarch64 wheel")
+        info = json.loads(wheel.read(addon + "/p1_build_info.json"))
+        if info.get("install_mode") != "wheel":
+            raise ValueError(
+                "Only a regular wheel is accepted here, not editable metadata"
+            )
+        required = builder.required_artifacts(primary, info)
+        required.setdefault(primary, []).extend(["__init__.py", "_version.py"])
+        required.setdefault(addon, []).extend(
+            ["__init__.py", "_version.py", "_build_info.py"]
+        )
+        for namespace, patterns in required.items():
+            for pattern in patterns:
+                if not any(
+                    fnmatch.fnmatchcase(name, namespace + "/" + pattern)
+                    for name in names
+                ):
+                    raise ValueError(f"Missing wheel resource: {namespace}/{pattern}")
+    return {
+        "distribution": primary,
+        "version": version,
+        "wheel": str(path),
+        "sha256": digest(path),
+        "ABI_tested": False,
+    }
+
+
+def verify(mode: str) -> dict:
+    """Check distribution/import paths and native files without loading an NPU."""
+    primary, version = project()
+    builder = build_contracts()
+    addon = builder.resource_namespace(primary)
+    check_installed_versions()
+    distribution = metadata.distribution(primary)
+    if distribution.version != version:
+        raise RuntimeError("Unexpected installed distribution version")
+    direct = json.loads(distribution.read_text("direct_url.json") or "{}")
+    editable = bool(direct.get("dir_info", {}).get("editable"))
+    if editable != (mode == "editable"):
+        raise RuntimeError(
+            "Installed wheel/editable mode does not match the requested mode"
+        )
+    paths = {}
+    for namespace in dict.fromkeys((primary, addon)):
+        spec = PathFinder.find_spec(namespace)
+        if spec is None or spec.origin is None:
+            raise RuntimeError(f"Missing namespace: {namespace}")
+        directory = Path(spec.origin).absolute().parent
+        expected = (
+            ROOT / "build"
+            if editable
+            else Path(distribution.locate_file(namespace)).resolve()
+        )
+        if (editable and not directory.is_relative_to(expected)) or (
+            not editable and directory.resolve() != expected
+        ):
+            raise RuntimeError(
+                f"Import shadowed by another checkout: {namespace}: {directory}"
+            )
+        paths[namespace] = directory
+    info = json.loads((paths[addon] / "p1_build_info.json").read_text())
+    expected_mode = "strict-editable" if editable else "wheel"
+    if info.get("install_mode") != expected_mode:
+        raise RuntimeError("Generated build metadata does not match installed mode")
+    for namespace, patterns in builder.required_artifacts(primary, info).items():
+        for pattern in patterns:
+            if not any(path.is_file() for path in paths[namespace].glob(pattern)):
+                raise RuntimeError(
+                    f"Missing installed native resource: {namespace}/{pattern}"
+                )
+    for namespace in dict.fromkeys((primary, addon)):
+        if not (paths[namespace] / "_version.py").is_file():
+            raise RuntimeError(f"Missing generated version: {namespace}")
+    if not (paths[addon] / "_build_info.py").is_file():
+        raise RuntimeError("Missing generated Ascend build metadata")
+    return {
+        "scope": "installation_paths_and_files_not_ABI_or_NPU",
+        "distribution": primary,
+        "version": version,
+        "mode": mode,
+        "namespaces": {key: str(value) for key, value in paths.items()},
+        "passed": True,
+    }
 
 
 def test_contracts(source: str) -> list[str]:
@@ -142,8 +299,7 @@ def audit(root: Path, *, source_only: bool = False) -> dict:
         "CMakeLists.txt",
         "MANIFEST.in",
         ".gitmodules",
-        "p1_build.py",
-        "p1_dev.py",
+        "setup.py",
         "cmake/npu_extensions.cmake",
     ):
         source = (root / relative).read_text()
@@ -157,6 +313,9 @@ def audit(root: Path, *, source_only: bool = False) -> dict:
         ):
             if old in source:
                 errors.append(f"Stale build path in {relative}: {old}")
+    for retired in ("p1_build.py", "p1_dev.py"):
+        if (root / retired).exists():
+            errors.append(f"Retired packaging entry must not exist: {retired}")
     release_path = root / "release-profile.json"
     expected_version = manifest["layout_version"]
     if release_path.is_file():
@@ -188,8 +347,32 @@ def main() -> None:
         action="store_true",
         help="Allow uninitialized pinned materials; not a build gate",
     )
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--installed", choices=("editable", "wheel"))
+    selection.add_argument(
+        "--wheel", type=Path, help="Inspect a regular wheel without installing"
+    )
     args = parser.parse_args()
-    report = audit(args.root.resolve(), source_only=args.source_only)
+    if args.source_only and (args.installed or args.wheel):
+        parser.error("--source-only applies only to the source audit")
+    global ROOT
+    ROOT = args.root.resolve()
+    try:
+        if args.installed:
+            report = verify(args.installed)
+        elif args.wheel:
+            report = {"passed": True, **wheel_info(args.wheel)}
+        else:
+            report = audit(ROOT, source_only=args.source_only)
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        KeyError,
+        zipfile.BadZipFile,
+        metadata.PackageNotFoundError,
+    ) as exc:
+        report = {"passed": False, "errors": [str(exc)]}
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if report["passed"] else 1)
 

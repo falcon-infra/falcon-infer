@@ -35,8 +35,7 @@ def checkout(tmp_path: Path) -> Path:
         "CMakeLists.txt",
         "MANIFEST.in",
         ".gitmodules",
-        "p1_build.py",
-        "p1_dev.py",
+        "setup.py",
         "cmake/npu_extensions.cmake",
     ):
         (tmp_path / name).write_text("")
@@ -87,7 +86,7 @@ def test_gate_detects_lost_test_contract(checkout: Path) -> None:
 
 
 def test_gate_detects_stale_builder_path(checkout: Path) -> None:
-    (checkout / "p1_build.py").write_text(
+    (checkout / "setup.py").write_text(
         'manifest = ROOT / "ascend/submodule-materials.json"\n'
     )
     assert not GATE.audit(checkout, source_only=True)["passed"]
@@ -154,8 +153,6 @@ def test_sdist_manifest_keeps_native_inputs_but_not_old_tree_or_git_control(
         "README.md",
         "pyproject.toml",
         "setup.py",
-        "p1_build.py",
-        "p1_dev.py",
         "CMakeLists.txt",
         ".gitmodules",
         "csrc/kernel.cpp",
@@ -194,6 +191,7 @@ def test_sdist_manifest_keeps_native_inputs_but_not_old_tree_or_git_control(
         assert "third_party/kvcache-ops/kernel.cpp" in names
     else:
         assert "csrc/third_party/catlass/include/header.h" in names
+    assert not {"p1_build.py", "p1_dev.py"} & names
     assert not any(
         name.startswith(
             ("ascend/", "build/", "dist/", "tests/", "csrc/build/", "csrc/output/")

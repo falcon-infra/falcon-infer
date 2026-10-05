@@ -9,7 +9,8 @@
 可直接执行[基线一致的安装与验证指南](baseline-validation.md)，在四容器成对重装后，
 沿用 native-layout 的 strict editable 和原启动命令进行本轮功能/性能对照。
 不要求先改成 wheel 或新镜像；不要为了本轮比较改变部署方式或推理参数。
-沿用 `p1_dev.py` 的 materials、doctor、build、editable、install 和 verify 子命令。
+使用标准 pip editable/wheel 安装和 `setup.py bdist_wheel/sdist`，
+构建逻辑已收回根 `setup.py`；只读路径/制品核查由 `tools/check_native_layout.py` 提供。
 不能在运行中的 editable checkout 切分支，不能只更新 vLLM。
 正式发布资格仍要求普通 wheel、sdist 解包重建和干净镜像验证；editable 报告须标明安装模式，
 不冒充 wheel/镜像结果。已完成的功能用例是否可复用由验收负责人按来源和模式差异审核。
