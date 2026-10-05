@@ -291,7 +291,7 @@ class NativePlatformTests(unittest.TestCase):
 
     def test_metadata_no_longer_requires_ascend_entry_points(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-        self.assertEqual(project["version"], "0.18.0+ascend.layout1")
+        self.assertEqual(project["version"], "0.18.0+ascend.p5p6rc1")
         entries = project.get("entry-points", {})
         self.assertNotIn("vllm.platform_plugins", entries)
         self.assertFalse(

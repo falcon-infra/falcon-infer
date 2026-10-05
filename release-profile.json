@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "candidate": "p5p6-rc1-20261005",
+  "status": "qualification_pending_intranet",
+  "frozen_input_tag": "native-layout-frozen-20261005",
+  "versions": {
+    "vllm": "0.18.0+ascend.p5p6rc1",
+    "lmcache": "0.4.3+ascend.p5p6rc1"
+  },
+  "environment": {
+    "machine": "aarch64",
+    "python": "3.11",
+    "soc": "Ascend910B3",
+    "cann": "8.5.1",
+    "torch": "2.9.0",
+    "torch_npu": "2.9.0.post2",
+    "transformers": "5.2.0",
+    "triton_ascend": "3.2.0.dev20260322"
+  },
+  "scope": {
+    "model": "GLM-5.2 native text",
+    "topologies": [
+      "TP8/DP2",
+      "TP4/DP4"
+    ],
+    "dsa_two_groups": true,
+    "mtp": true,
+    "c8": false,
+    "kv_connector": "LMCacheConnectorV1",
+    "capabilities": [
+      "offline",
+      "online",
+      "CPU KV",
+      "cross-instance cache",
+      "2P2D",
+      "RemoteFill",
+      "checkpoint",
+      "recovery"
+    ]
+  },
+  "validation": "One combined P5/P6 intranet campaign on the final p6 pair; no automatic release or cutover.",
+  "runtime_change": false
+}

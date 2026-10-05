@@ -157,7 +157,12 @@ def audit(root: Path, *, source_only: bool = False) -> dict:
         ):
             if old in source:
                 errors.append(f"Stale build path in {relative}: {old}")
-    if project["version"] != manifest["layout_version"]:
+    release_path = root / "release-profile.json"
+    expected_version = manifest["layout_version"]
+    if release_path.is_file():
+        release = json.loads(release_path.read_text())
+        expected_version = release["versions"][project["name"]]
+    if project["version"] != expected_version:
         errors.append("Project version does not identify this layout")
     return {
         "scope": "source_layout_not_native_build_ABI_or_NPU",

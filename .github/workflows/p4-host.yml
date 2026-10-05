@@ -1,9 +1,9 @@
-name: Native layout source and host contracts
+name: P5 P6 candidate source and host contracts
 on:
   push:
-    branches: [refactor/native-layout]
+    branches: [p5, p6]
   pull_request:
-    branches: [refactor/native-layout]
+    branches: [p5, p6]
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zhangzhaoju/LMCache-dual
-          ref: refactor/native-layout
+          ref: p5
           path: LMCache
           fetch-depth: 0
       - uses: actions/setup-python@v5

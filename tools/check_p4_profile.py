@@ -17,7 +17,7 @@ except ModuleNotFoundError as exc:
         raise
     from check_python_exports import check
 
-VERSIONS = {"vllm": "0.18.0+ascend.layout1", "lmcache": "0.4.3+ascend.layout1"}
+VERSIONS = {"vllm": "0.18.0+ascend.p5p6rc1", "lmcache": "0.4.3+ascend.p5p6rc1"}
 FORBIDDEN_IMPORTS = (
     "vllm_ascend",
     "lmcache_ascend",

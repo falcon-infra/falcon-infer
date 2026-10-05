@@ -2,6 +2,7 @@ include LICENSE README.md pyproject.toml setup.py p1_build.py p1_dev.py CMakeLis
 include requirements/ascend.txt requirements/build.txt
 include submodule-materials.json
 include docs/design/layout-migration.json
+include release-profile.json
 graft vllm
 graft csrc
 graft cmake

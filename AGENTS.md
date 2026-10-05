@@ -1,5 +1,16 @@
 # Agent Instructions for vLLM
 
+## Current fork: P5 and P6 joint qualification (2026-10-05)
+
+The user authorized freezing native-layout and preparing P5/P6 together.
+Work on p5, then p6 inheriting all p5 changes. Keep native-layout-frozen-20261005
+and earlier refs immutable. Change release/validation/operations tooling only;
+preserve frozen runtime, native implementations, ABI and the 910B3/GLM-5.2 scope.
+Use one final intranet functionality/performance campaign on the p6 pair.
+Do not claim qualification, switch live services, or retire original checkouts
+before evidence and recovery gates pass. No native builds on this source host.
+This supersedes earlier working-branch instructions below.
+
 ## Current fork: native repository layout (2026-10-04)
 
 Work on `refactor/native-layout` from immutable `p4-frozen-20261004`.
