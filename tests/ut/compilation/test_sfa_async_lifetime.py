@@ -81,3 +81,13 @@ def test_invalid_owner_is_rejected_before_reference_increment(lifetime):
     with pytest.raises(RuntimeError, match="invalid"):
         lease_type((source(owner),))
     assert owner.ref_count == 1
+
+
+def test_lease_reuses_prevalidated_graph_owner_set(lifetime):
+    owner_type, _, lease_type = lifetime
+    owner = owner_type()
+    source = SimpleNamespace(graph_owners=(owner,))
+    lease = lease_type((source,))
+    assert owner.ref_count == 2
+    lease.close()
+    assert owner.ref_count == 1
