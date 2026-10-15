@@ -47,7 +47,7 @@ opentelemetry-exporter-otlp >= 1.27.0
 opentelemetry-semantic-conventions-ai >= 0.4.1
 numpy==1.26.4
 transformers==5.2.0
-fastapi[standard]>=0.115.0,<0.124.0
+fastapi[standard]>=0.143.0,<0.144.0
 xgrammar>=0.1.32,<1.0.0
 torch==2.9.0
 torch-npu==2.9.0.post2
