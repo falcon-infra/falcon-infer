@@ -511,7 +511,6 @@ class OpenAIServingChat(OpenAIServing):
         num_cached_tokens = None
         pass  # Unsupported P4 branch removed.
         tools_streamed = [False] * num_choices
-        streamed_tool_args: list[dict[int, str]] = [{} for _ in range(num_choices)]
 
         if isinstance(request.tool_choice, ChatCompletionNamedToolChoiceParam):
             tool_choice_function_name = request.tool_choice.function.name
@@ -548,8 +547,8 @@ class OpenAIServingChat(OpenAIServing):
                     )
 
                 tool_parsers: list[ToolParser | None] = [
-                    self.tool_parser(tokenizer)
-                ] * num_choices
+                    self.tool_parser(tokenizer) for _ in range(num_choices)
+                ]
             else:
                 tool_parsers = [None] * num_choices
         except Exception as e:
@@ -966,65 +965,22 @@ class OpenAIServingChat(OpenAIServing):
                     else:
                         self._raise_if_error(output.finish_reason, request_id)
 
-                        auto_tools_called = False
-                        if tool_parser:
-                            auto_tools_called = len(tool_parser.prev_tool_call_arr) > 0
-                            index = (
-                                len(tool_parser.prev_tool_call_arr) - 1
-                                if auto_tools_called
-                                else 0
-                            )
-                        else:
-                            index = 0
-
+                        auto_tools_called = bool(
+                            tool_parser and tool_parser.prev_tool_call_arr
+                        )
                         if (
-                            self._should_check_for_unstreamed_tool_arg_tokens(
-                                delta_message, output
-                            )
+                            self.enable_auto_tools
                             and tool_parser
+                            and delta_message
+                            and delta_message.tool_calls
+                            and auto_tools_called
                         ):
-                            remaining_call = self._compute_remaining_tool_args(
-                                expected_args=tool_parser.prev_tool_call_arr[index].get(
-                                    "arguments", {}
-                                ),
-                                streamed_args=streamed_tool_args[i].get(index, ""),
-                            )
-
-                            fallback_tool_call = (
-                                tool_parser.prev_tool_call_arr[index]
-                                if index < len(tool_parser.prev_tool_call_arr)
-                                else {}
-                            )
-                            fallback_tool_call_id = None
-                            fallback_tool_call_type = None
-                            fallback_tool_call_name = None
-                            if isinstance(fallback_tool_call, dict):
-                                fallback_tool_call_id = fallback_tool_call.get("id")
-                                fallback_tool_call_type = fallback_tool_call.get("type")
-                                fallback_tool_call_name = fallback_tool_call.get("name")
-
-                            tool_call_ids = getattr(tool_parser, "_tool_call_ids", None)
-                            if (
-                                fallback_tool_call_id is None
-                                and isinstance(tool_call_ids, list)
-                                and index < len(tool_call_ids)
-                            ):
-                                fallback_tool_call_id = tool_call_ids[index]
-
-                            if fallback_tool_call_type is None and (
-                                fallback_tool_call_id is not None
-                                or fallback_tool_call_name is not None
-                            ):
-                                fallback_tool_call_type = "function"
-
-                            delta_message = self._create_remaining_args_delta(
-                                delta_message,
-                                remaining_call,
-                                index,
-                                fallback_tool_call_id=fallback_tool_call_id,
-                                fallback_tool_call_type=fallback_tool_call_type,
-                                fallback_tool_call_name=fallback_tool_call_name,
-                            )
+                            remaining_call = tool_parser.get_remaining_unstreamed_args()
+                            if remaining_call:
+                                index = len(tool_parser.prev_tool_call_arr) - 1
+                                self._append_remaining_tool_args(
+                                    delta_message, remaining_call, index
+                                )
 
                         if (
                             auto_tools_called
@@ -1052,10 +1008,6 @@ class OpenAIServingChat(OpenAIServing):
                         finish_reason_sent[i] = True
 
                     choice_data = maybe_filter_parallel_tool_calls(choice_data, request)
-                    self._record_streamed_tool_args(
-                        choice_data.delta,
-                        streamed_tool_args[i],
-                    )
                     chunk = ChatCompletionStreamResponse(
                         id=request_id,
                         object=chunk_object_type,
@@ -1288,76 +1240,21 @@ class OpenAIServingChat(OpenAIServing):
             and request.tool_choice in ["auto", None]
         )
 
-    def _should_check_for_unstreamed_tool_arg_tokens(
-        self,
-        delta_message: DeltaMessage | None,
-        output: CompletionOutput,
-    ) -> bool:
-        """
-        Check to see if we should check for unstreamed tool arguments tokens.
-        This is only applicable when auto tool parsing is enabled, the delta
-        is a tool call with arguments.
-        """
-
-        return bool(
-            # if there is a delta message that includes tool calls which
-            # include a function that has arguments
-            output.finish_reason is not None
-            and self.enable_auto_tools
-            and self.tool_parser
-            and delta_message
-            and delta_message.tool_calls
-            and delta_message.tool_calls[0]
-            and delta_message.tool_calls[0].function
-            and delta_message.tool_calls[0].function.arguments is not None
-        )
-
     @staticmethod
-    def _create_remaining_args_delta(
+    def _append_remaining_tool_args(
         delta_message: DeltaMessage,
         remaining_call: str,
         index: int,
-        fallback_tool_call_id: str | None = None,
-        fallback_tool_call_type: str | None = None,
-        fallback_tool_call_name: str | None = None,
-    ) -> DeltaMessage:
-        original_tc = next(
-            (tc for tc in delta_message.tool_calls if tc.index == index),
-            None,
-        )
-        original_fn = original_tc.function if original_tc else None
-
-        original_fn_name = None
-        if isinstance(original_fn, DeltaFunctionCall):
-            original_fn_name = original_fn.name
-        elif isinstance(original_fn, dict):
-            original_fn_name = original_fn.get("name")
-
-        return DeltaMessage(
-            tool_calls=[
-                DeltaToolCall(
-                    index=index,
-                    id=(
-                        original_tc.id
-                        if original_tc and original_tc.id is not None
-                        else fallback_tool_call_id
-                    ),
-                    type=(
-                        original_tc.type
-                        if original_tc and original_tc.type is not None
-                        else fallback_tool_call_type
-                    ),
-                    function=DeltaFunctionCall(
-                        name=(
-                            original_fn_name
-                            if original_fn_name is not None
-                            else fallback_tool_call_name
-                        ),
-                        arguments=remaining_call,
-                    ),
-                )
-            ]
-        )
+    ) -> None:
+        """Merge a parser suffix into an existing indexed tool-call delta."""
+        if not remaining_call:
+            return
+        for tool_call_delta in delta_message.tool_calls:
+            if tool_call_delta.index == index and tool_call_delta.function:
+                tool_call_delta.function.arguments = (
+                    tool_call_delta.function.arguments or ""
+                ) + remaining_call
+                return
 
     @staticmethod
     def _count_reasoning_tokens_for_usage(
