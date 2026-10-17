@@ -23,3 +23,5 @@ def test_glm_parser_owns_cumulative_argument_backfill():
     assert "get_remaining_unstreamed_args" in serving
     assert "_append_remaining_tool_args" in serving
     assert "_should_check_for_unstreamed_tool_arg_tokens" not in serving
+    assert "if content:" in parser
+    assert "DeltaMessage(content=content)" in parser
