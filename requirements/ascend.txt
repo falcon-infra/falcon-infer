@@ -24,6 +24,8 @@ lark == 1.2.2
 typing_extensions >= 4.10
 filelock >= 3.16.1
 partial-json-parser
+jsonschema >= 4.23.0
+referencing >= 0.35.1
 pyzmq >= 25.0.0
 msgspec
 pyyaml

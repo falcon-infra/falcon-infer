@@ -25,3 +25,9 @@ def test_glm_parser_owns_cumulative_argument_backfill():
     assert "_should_check_for_unstreamed_tool_arg_tokens" not in serving
     assert "if content:" in parser
     assert "DeltaMessage(content=content)" in parser
+
+
+def test_glm_schema_dependencies_are_declared_for_native_runtime():
+    requirements = (ROOT / "requirements/ascend.txt").read_text(encoding="utf-8")
+    assert "jsonschema >= 4.23.0" in requirements
+    assert "referencing >= 0.35.1" in requirements
