@@ -227,6 +227,12 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE": lambda: _strict_bool_env(
         "VLLM_ASCEND_LAYERWISE_PREFILL_P_NODE"
     ),
+    # Non-secret P-node overlap statistics. Default false; accepts true/false.
+    # Records NPU timing events without host synchronization; a background
+    # collector emits one summary per chunked-prefill step.
+    "VLLM_ASCEND_PREFILL_OVERLAP_STATS": lambda: _strict_bool_env(
+        "VLLM_ASCEND_PREFILL_OVERLAP_STATS"
+    ),
     # Select the exact resident union/state-update kernels at worker startup.
     # The selection is frozen before graph capture and requires a restart.
     "VLLM_ASCEND_DSA_RESIDENT_EXACT_KERNELS": lambda: bool(
