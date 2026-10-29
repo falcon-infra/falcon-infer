@@ -186,7 +186,12 @@ from vllm.compilation.ascend.sfa_fail_stop import (
 from vllm.compilation.ascend.sfa_full_graph import SFAFullGraph
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.selector import get_attn_backend  # type: ignore
-from vllm.v1.core.dsa_shared_pool import paired_bank_indexer_block_map
+from vllm.v1.core.dsa_shared_pool import (
+    DSABlockAllocationMode,
+    PrefillLayerRef,
+    build_prefill_layer_refs,
+    paired_bank_indexer_block_map,
+)
 from vllm.v1.worker.dsa_shared_pool import diagnose_indexer_metadata
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import (
@@ -225,7 +230,6 @@ from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
 from vllm.v1.structured_output.utils import apply_grammar_bitmask
 from vllm.v1.utils import record_function_or_nullcontext
 from vllm.v1.core.dsa_shared_pool import (
-    LAYERWISE_PREFILL_BANK_COUNT,
     DSABlockAllocationMode,
     PrefillLayerRef,
     build_prefill_layer_refs,
@@ -719,6 +723,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         # this host-side state separate from block allocation: a remote prefix
         # can start in bank 1 even when local computed-token state is zero.
         self._layerwise_prefill_bank_offsets_by_req: dict[str, int] = {}
+        self.layerwise_prefill_bank_count = envs_ascend.VLLM_ASCEND_LAYERWISE_PREFILL_NUM_BANKS
         self._layerwise_prefill_bank_phase_by_request_cpu: np.ndarray | None = None
         self._layerwise_prefill_bank_phase_by_token_cpu: np.ndarray | None = None
         if self.layerwise_prefill_p_node and not self.dsa_shared_pool:
@@ -726,6 +731,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 "Layerwise-prefill P nodes require DSA unbundle, two groups, "
                 "and the DSA shared pool"
             )
+        if self.layerwise_prefill_p_node:
+            logger.info(
+                "Layerwise-prefill P node enabled: %d-bank global DSA slab.",
+                self.layerwise_prefill_bank_count,
+            )
+        # Step B staging (1 = B2 compact-scratch decode read; 2 = +B1 freeing).
         self.dsa_shrink_latent = (
             int(envs_ascend.VLLM_ASCEND_DSA_SHRINK_LATENT) if self.dsa_two_groups else 0
         )
@@ -1332,9 +1343,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
         )
         if not self.layerwise_prefill_p_node:
             return tables
-        if len(tables) != LAYERWISE_PREFILL_BANK_COUNT:
+        if len(tables) != self.layerwise_prefill_bank_count:
             raise RuntimeError(
-                "Layerwise-prefill P node requires exactly two block tables"
+                "Layerwise-prefill block table count differs from the configured bank count"
             )
         for req_index, req_id in enumerate(self.input_batch.req_ids):
             request = self.requests[req_id]
@@ -1344,9 +1355,12 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     f"request_id={req_id}, mode={request.block_allocation_mode}"
                 )
             bank_ids = request.block_ids_by_bank
-            if bank_ids is None or len(bank_ids) != LAYERWISE_PREFILL_BANK_COUNT:
+            if (
+                bank_ids is None
+                or len(bank_ids) != self.layerwise_prefill_bank_count
+            ):
                 raise RuntimeError(
-                    "Layerwise-prefill request is missing its two physical "
+                    "Layerwise-prefill request is missing its configured physical "
                     f"block banks: request_id={req_id}"
                 )
             if bank_ids[0] != request.block_ids:
@@ -1354,7 +1368,8 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     "Layerwise-prefill primary block table differs from bank 0: "
                     f"request_id={req_id}"
                 )
-            tables[1].add_row(bank_ids[1], req_index)
+            for bank in range(1, self.layerwise_prefill_bank_count):
+                tables[bank].add_row(bank_ids[bank], req_index)
         return tables
 
     def _layerwise_prefill_refs(self) -> dict[str, PrefillLayerRef]:
@@ -1376,6 +1391,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             build_prefill_layer_refs(
                 latent_group.layer_names,
                 indexer_group.layer_names,
+                bank_count=self.layerwise_prefill_bank_count,
             )
         )
         self._lp_layer_refs = refs
@@ -1426,7 +1442,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     request, "layerwise_prefill_bank_offset", 0
                 )
                 try:
-                    offsets[str(req_id)] = int(raw_phase) & 1
+                    offsets[str(req_id)] = int(raw_phase) % self.layerwise_prefill_bank_count
                 except (TypeError, ValueError) as exc:
                     raise RuntimeError(
                         "invalid layerwise-prefill bank phase in connector "
@@ -1445,8 +1461,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
             self._layerwise_prefill_bank_phase_by_request_cpu = None
             self._layerwise_prefill_bank_phase_by_token_cpu = None
             return
-
-        request_phases = np.zeros(num_reqs, dtype=np.int8)
+        request_phases = np.zeros(num_reqs, dtype=np.int32)
         for req_index, req_id in enumerate(self.input_batch.req_ids[:num_reqs]):
             request_phases[req_index] = self._layerwise_prefill_bank_offsets_by_req.get(
                 str(req_id), 0
@@ -4451,6 +4466,9 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                 num_reqs,
             )
 
+        # P layers revisit the same (KV group, bank) views. Prepare their
+        # padding once per forward, not once per layer. Keep CP and routed-expert
+        # side effects on their existing path.
         prefill_bank_views = (
             {} if self.layerwise_prefill_p_node and not self.use_cp else None
         )
@@ -4476,7 +4494,7 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     and not mixed_bank_phase
                     else 0
                 )
-                physical_bank = bank ^ phase_value
+                physical_bank = (bank + phase_value) % self.layerwise_prefill_bank_count
                 cache_key = (kv_cache_gid, bank, phase_value, mixed_bank_phase)
                 if prefill_bank_views is not None:
                     cached = prefill_bank_views.get(cache_key)
@@ -4535,44 +4553,49 @@ class NPUModelRunner(ServingPerfMixin, NPUModelRunnerState):
                     if num_reqs < num_reqs_padded:
                         blk_table_tensor[num_reqs:num_reqs_padded].fill_(0)
                 if mixed_bank_phase and phase_by_token_cpu is not None:
-                    other_bank = physical_bank ^ 1
-                    other_table = block_tables_by_bank[other_bank][kv_cache_gid]
                     nonlocal phase_by_request_device, phase_by_token_device
                     if phase_by_request_device is None:
                         padded_request_phase = np.zeros(
-                            maybe_num_reqs_padded, dtype=np.bool_
+                            maybe_num_reqs_padded, dtype=np.int32
                         )
                         padded_request_phase[:num_reqs] = (
-                            phase_by_request_cpu.astype(np.bool_)
+                            phase_by_request_cpu
                         )
                         phase_by_request_device = torch.from_numpy(
                             padded_request_phase
                         ).to(self.device, non_blocking=True)
                     if phase_by_token_device is None:
                         padded_token_phase = np.zeros(
-                            maybe_pcp_full_tokens, dtype=np.bool_
+                            maybe_pcp_full_tokens, dtype=np.int32
                         )
                         token_count = min(
                             len(phase_by_token_cpu), maybe_pcp_full_tokens
                         )
                         padded_token_phase[:token_count] = (
-                            phase_by_token_cpu[:token_count].astype(np.bool_)
+                            phase_by_token_cpu[:token_count]
                         )
                         phase_by_token_device = torch.from_numpy(
                             padded_token_phase
                         ).to(self.device, non_blocking=True)
-                    other_table_tensor = other_table.get_device_tensor()[:maybe_num_reqs_padded]
-                    other_slot_mapping = other_table.slot_mapping.gpu[:maybe_pcp_full_tokens]
-                    blk_table_tensor = torch.where(
-                        phase_by_request_device[:, None],
-                        other_table_tensor,
-                        blk_table_tensor,
-                    )
-                    slot_mapping = torch.where(
-                        phase_by_token_device,
-                        other_slot_mapping,
-                        slot_mapping,
-                    )
+                    # Iterate over bank phases, never over tokens or prefix
+                    # elements. A uniform-phase batch takes the zero-copy path.
+                    for phase in np.unique(phase_by_request_cpu):
+                        if phase == 0:
+                            continue
+                        other_bank = (bank + int(phase)) % self.layerwise_prefill_bank_count
+                        other_table = block_tables_by_bank[other_bank][kv_cache_gid]
+                        other_table_tensor = other_table.get_device_tensor()[:maybe_num_reqs_padded]
+                        other_slot_mapping = other_table.slot_mapping.gpu[:maybe_pcp_full_tokens]
+                        blk_table_tensor = torch.where(
+                            phase_by_request_device[:, None] == int(phase),
+                            other_table_tensor,
+                            blk_table_tensor,
+                        )
+                        slot_mapping = torch.where(
+                            phase_by_token_device == int(phase),
+                            other_slot_mapping,
+                            slot_mapping,
+                        )
             if self.pcp_size > 1:
                 slot_mapping = self.pcp_manager.get_padded_slot_mapping(
                     num_tokens,
