@@ -19,9 +19,9 @@ from vllm.utils.hashing import sha256_cbor, xxhash_cbor
 from vllm.utils.math_utils import cdiv
 from vllm.utils.mem_utils import format_gib
 from vllm.v1.core.dsa_shared_pool import (
-    LAYERWISE_PREFILL_BANK_COUNT,
     DSABlockAllocationMode,
     dsa_shared_block_layout,
+    layerwise_prefill_bank_count,
     layerwise_prefill_bundle_multiplier,
 )
 from vllm.v1.kv_cache_interface import (
@@ -848,14 +848,14 @@ def dsa_required_bundles(
     latent_blocks_per_bundle: int,
     indexer_blocks_per_bundle: int,
 ) -> int:
-    """Return bundles required by one request in the selected layout."""
+    """Bundles for a full-context request, scaled by the P-node bank count."""
     if seq_len <= 0:
         return 0
     full_bundles = cdiv(
         cdiv(seq_len, latent_block_size), latent_blocks_per_bundle
     ) + cdiv(cdiv(seq_len, indexer_block_size), indexer_blocks_per_bundle)
     if mode == "prefill_child":
-        return LAYERWISE_PREFILL_BANK_COUNT * full_bundles
+        return layerwise_prefill_bank_count() * full_bundles
     return full_bundles
 
 
@@ -1565,8 +1565,8 @@ def get_kv_cache_config_from_groups(
                 scratch_blocks, latent_blocks_per_bundle
             ) + cdiv(indexer_ctx_blocks, indexer_blocks_per_bundle)
             if residency_mode == "prefill_child":
-                full_context_bundles *= LAYERWISE_PREFILL_BANK_COUNT
-                sparse_decode_bundles *= LAYERWISE_PREFILL_BANK_COUNT
+                full_context_bundles *= layerwise_prefill_bank_count()
+                sparse_decode_bundles *= layerwise_prefill_bank_count()
             full_context_capacity = (
                 (
                     num_bundles * latent_layers
@@ -2095,7 +2095,7 @@ def _report_kv_cache_config(
             low, high = 0, child_capacity * latent_blocks_per_bundle
             while low < high:
                 mid = (low + high + 1) // 2
-                required = LAYERWISE_PREFILL_BANK_COUNT * (
+                required = layerwise_prefill_bank_count() * (
                     cdiv(mid, latent_blocks_per_bundle)
                     + cdiv(mid, indexer_blocks_per_bundle)
                 )
